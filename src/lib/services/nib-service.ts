@@ -137,23 +137,102 @@ export class NibService {
   /**
    * Parse extracted text and return only the body paragraphs (no intro text).
    * Intro paragraphs (blockType='introduction') are stripped out.
-   * Use this for sections like "1.1 What Is a Design Pattern?" that may have
-   * preceding intro text from the chapter start on the same pages.
+   *
+   * Problem: Extracted text for a section covers full PDF pages, but sections
+   * often start mid-page. So the text may contain "intro overflow" — text from
+   * the previous section/chapter intro that shares the same page. The text
+   * parser tags text before the first header as 'introduction'. But if the
+   * section header (e.g. "1.1 What Is a Design Pattern?") wasn't captured in
+   * the extracted text, the parser sees NO header and tags EVERYTHING as
+   * 'introduction', which then gets stripped — resulting in an empty page.
+   *
+   * Fix: When we have a sectionTitle that looks like a numbered header and
+   * it's missing from the extracted text, we find the best paragraph break
+   * to insert it. Text before the inserted header = intro overflow (stripped).
+   * Text after = actual section body (kept).
    */
   parseExtractedTextBodyOnly(
     text: string,
     title: string,
     author: string,
     pageNumber?: number,
+    sectionTitle?: string,
   ): NibDocument {
-    const data = this.textParser.parseText(text, title, author, pageNumber)
+    let textToParse = text
+
+    // If we have a numbered section title not present in the text, find the
+    // best paragraph break to insert it as a synthetic header.
+    if (sectionTitle && /^(\d+\.)+\d*\s/.test(sectionTitle) && !text.includes(sectionTitle)) {
+      textToParse = this.injectSectionHeader(text, sectionTitle)
+    }
+
+    const data = this.textParser.parseText(textToParse, title, author, pageNumber)
+
     // Strip introduction paragraphs from each page
     for (const page of data.pages) {
-      page.paragraphs = page.paragraphs
-        .filter(p => p.blockType !== 'introduction')
-        .map((p, i) => ({ ...p, index: i }))
+      const bodyParagraphs = page.paragraphs.filter(p => p.blockType !== 'introduction')
+      // If stripping intros leaves NO paragraphs, keep them all as a fallback
+      // (better to show everything than nothing)
+      if (bodyParagraphs.length > 0) {
+        page.paragraphs = bodyParagraphs.map((p, i) => ({ ...p, index: i }))
+      } else {
+        page.paragraphs = page.paragraphs.map((p, i) => ({
+          ...p, index: i, blockType: undefined,
+        }))
+      }
     }
     return NibDocument.fromData(data)
+  }
+
+  /**
+   * Find the best paragraph break in the text to insert a synthetic section
+   * header. Tries each `\n\n` position and picks the one that produces the
+   * best intro/body split (most body content while having some intro stripped).
+   * Falls back to prepending if no good split is found.
+   */
+  private injectSectionHeader(text: string, sectionTitle: string): string {
+    // Find all paragraph break positions
+    const breaks: number[] = []
+    let idx = 0
+    while ((idx = text.indexOf('\n\n', idx)) !== -1) {
+      breaks.push(idx)
+      idx += 2
+    }
+
+    if (breaks.length === 0) {
+      // No paragraph breaks — just prepend
+      return `${sectionTitle}\n\n${text}`
+    }
+
+    // Try each break position: insert header there and see which split
+    // gives us body paragraphs while stripping some intro.
+    // We want: some intro paragraphs stripped, and a good amount of body kept.
+    let bestBreak = breaks[0]
+    let bestScore = -1
+
+    for (const bp of breaks) {
+      const before = text.substring(0, bp).trim()
+      const after = text.substring(bp + 2).trim()
+
+      // Skip breaks too early (< 100 chars before) or too late (< 100 chars after)
+      if (before.length < 50 || after.length < 50) continue
+
+      // Score: prefer splits where the "after" portion is larger (more body content)
+      // but there's still a meaningful "before" portion (intro overflow exists).
+      // Also prefer breaks where the text before ends with sentence-ending punctuation.
+      const endsCleanly = /[.!?"\u201D]\s*$/.test(before)
+      const score = (endsCleanly ? 1000 : 0) + after.length
+
+      if (score > bestScore) {
+        bestScore = score
+        bestBreak = bp
+      }
+    }
+
+    // Insert the section title at the best break position
+    const beforeHeader = text.substring(0, bestBreak)
+    const afterHeader = text.substring(bestBreak + 2)
+    return `${beforeHeader}\n\n${sectionTitle}\n\n${afterHeader}`
   }
 
   /**

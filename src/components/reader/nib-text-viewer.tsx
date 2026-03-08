@@ -48,8 +48,8 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
 
         {nibDocument.pages.map((page) => (
           <div key={page.pageNumber} className="mb-6">
-            {/* Page header (detected from PDF — not shown in body) */}
-            {page.header && (
+            {/* Page header (detected from PDF — not shown if it matches section title) */}
+            {page.header && page.header.text !== sectionTitle && (
               <div className="mb-3">
                 {showIndicators && <NibElementBadge type="header" />}
                 <div className="text-xs text-muted-foreground/50 italic border-b border-muted pb-1">

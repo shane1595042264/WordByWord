@@ -89,6 +89,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         book.title,
         book.author,
         section.startPage,
+        section.title,
       )
     } catch {
       return null
