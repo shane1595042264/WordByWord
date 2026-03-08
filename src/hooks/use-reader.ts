@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { Book, Chapter, Section } from '@/lib/db/models'
 
 export type ViewMode = 'pdf' | 'text' | 'side-by-side'
@@ -10,6 +10,7 @@ export function useReader(bookId: string, sectionId: string) {
   const [section, setSection] = useState<Section | null>(null)
   const [chapter, setChapter] = useState<Chapter | null>(null)
   const [chapterSections, setChapterSections] = useState<Section[]>([])
+  const [allBookSections, setAllBookSections] = useState<Section[]>([])
   const [viewMode, setViewModeState] = useState<ViewMode>('side-by-side')
   const [readingMode, setReadingModeState] = useState<'scroll' | 'flip'>('scroll')
   const [loading, setLoading] = useState(true)
@@ -54,10 +55,12 @@ export function useReader(bookId: string, sectionId: string) {
     if (b && s) {
       const ch = await db.chapters.get(s.chapterId)
       const siblings = await sectionRepo.getByChapter(s.chapterId)
+      const allSections = await sectionRepo.getByBook(bookId)
       setBook(b)
       setSection(s)
       setChapter(ch ?? null)
       setChapterSections(siblings)
+      setAllBookSections(allSections)
       await bookRepo.updateLastRead(bookId)
     }
     setLoading(false)
@@ -81,9 +84,19 @@ export function useReader(bookId: string, sectionId: string) {
     }
   }, [sectionId, section?.chapterId])
 
+  // Chapter-level prev/next (for sidebar navigation within same chapter)
   const currentIndex = chapterSections.findIndex(s => s.id === sectionId)
-  const prevSection = currentIndex > 0 ? chapterSections[currentIndex - 1] : null
-  const nextSection = currentIndex < chapterSections.length - 1 ? chapterSections[currentIndex + 1] : null
+  const prevChapterSection = currentIndex > 0 ? chapterSections[currentIndex - 1] : null
+  const nextChapterSection = currentIndex < chapterSections.length - 1 ? chapterSections[currentIndex + 1] : null
+
+  // Book-level prev/next (crosses chapter boundaries)
+  const { prevSection, nextSection } = useMemo(() => {
+    const bookIndex = allBookSections.findIndex(s => s.id === sectionId)
+    return {
+      prevSection: bookIndex > 0 ? allBookSections[bookIndex - 1] : null,
+      nextSection: bookIndex < allBookSections.length - 1 ? allBookSections[bookIndex + 1] : null,
+    }
+  }, [allBookSections, sectionId])
 
   return {
     book, section, chapter, chapterSections,

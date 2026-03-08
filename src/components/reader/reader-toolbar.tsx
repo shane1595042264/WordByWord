@@ -128,17 +128,23 @@ export function ReaderToolbar({
               </BlockTooltip>
             </div>
           )}
-          {/* Page nav */}
+          {/* Page/Section nav */}
           <div className="flex items-center gap-2">
-            <BlockTooltip label="Previous Page" shortcut="⌃ ←">
+            <BlockTooltip label={viewMode === 'text' ? 'Previous Section' : 'Previous Page'} shortcut="⌃ ←">
               <Button variant="outline" size="sm" onClick={onPrevPage} disabled={!canGoPrev}>
                 &larr; Prev
               </Button>
             </BlockTooltip>
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {currentPage - startPage + 1}/{totalSectionPages} (p.{currentPage})
-            </span>
-            <BlockTooltip label="Next Page" shortcut="⌃ →">
+            {viewMode === 'text' ? (
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                p.{startPage}–{startPage + totalSectionPages - 1}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {currentPage - startPage + 1}/{totalSectionPages} (p.{currentPage})
+              </span>
+            )}
+            <BlockTooltip label={viewMode === 'text' ? 'Next Section' : 'Next Page'} shortcut="⌃ →">
               <Button variant="outline" size="sm" onClick={onNextPage} disabled={!canGoNext}>
                 Next &rarr;
               </Button>
@@ -147,7 +153,7 @@ export function ReaderToolbar({
         </div>
       </div>
       {/* Section progress bar */}
-      <Progress value={sectionProgress} className="h-1 rounded-none" />
+      <Progress value={sectionProgress} className="h-1.5 rounded-none" />
     </div>
   )
 }

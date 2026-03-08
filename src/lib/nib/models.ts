@@ -25,6 +25,10 @@ export interface NibWordData {
   index: number
   /** Whether this word was hyphenated across a line break in the source */
   wasHyphenated?: boolean
+  /** Whether this word appeared in a bold font in the source PDF */
+  bold?: boolean
+  /** Whether this word appeared in an italic font in the source PDF */
+  italic?: boolean
 }
 
 export interface NibSentenceData {
@@ -37,6 +41,7 @@ export interface NibSentenceData {
 export type NibBlockType =
   | 'body'            // Normal body text
   | 'introduction'    // Chapter/section intro text before the first sub-heading
+  | 'subheading'      // Sub-heading within body text (e.g. "Finding Appropriate Objects")
   | 'blockquote'      // Quoted block
   | 'list-item'       // An item in a list
   | 'figure-caption'  // Caption for a figure/table
@@ -111,6 +116,8 @@ export class NibWord {
   readonly text: string
   readonly index: number
   readonly wasHyphenated: boolean
+  readonly bold: boolean
+  readonly italic: boolean
   /** @internal set by NibSentence constructor */
   _sentence!: NibSentence
 
@@ -118,6 +125,8 @@ export class NibWord {
     this.text = data.text
     this.index = data.index
     this.wasHyphenated = data.wasHyphenated ?? false
+    this.bold = data.bold ?? false
+    this.italic = data.italic ?? false
   }
 
   /** The sentence this word belongs to */
@@ -171,7 +180,7 @@ export class NibWord {
   }
 
   toData(): NibWordData {
-    return { text: this.text, index: this.index, wasHyphenated: this.wasHyphenated || undefined }
+    return { text: this.text, index: this.index, wasHyphenated: this.wasHyphenated || undefined, bold: this.bold || undefined, italic: this.italic || undefined }
   }
 }
 

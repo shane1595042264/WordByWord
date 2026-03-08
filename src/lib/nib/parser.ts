@@ -95,8 +95,8 @@ export interface NibParserConfig {
 
 const DEFAULT_CONFIG: Required<NibParserConfig> = {
   paragraphGapFactor: 1.5,
-  headerRegionFraction: 0.08,
-  footerRegionFraction: 0.08,
+  headerRegionFraction: 0.1,
+  footerRegionFraction: 0.1,
   headingFontSizeRatio: 1.15,
   footnoteFontSizeRatio: 0.85,
   headerPatterns: [
@@ -104,7 +104,8 @@ const DEFAULT_CONFIG: Required<NibParserConfig> = {
     /^\d+\s+(chapter|part|section)/i,
     /^[IVXLC]+\.\s/,                           // Roman numeral headings
     /^(\d+\.)+\d*\s+\S/,                        // Numbered headings like "1.1 Title"
-    /^\d+\s+[A-Z][A-Z\s]+$/,                    // "2  INTRODUCTION  CHAPTER 1"
+    /^\d+\s+[A-Z][A-Z\s\d]+$/,                  // "14  INTRODUCTION  CHAPTER 1" (page# + ALL-CAPS)
+    /^[A-Z][A-Z\s]{10,}\d*$/,                   // ALL-CAPS running title, optional trailing page#
   ],
   footerPatterns: [
     /^\d+$/,                                     // Standalone page number
@@ -269,6 +270,23 @@ export class NibParser {
     const headerCutoff = raw.pageHeight * this.config.headerRegionFraction
     const footerCutoff = raw.pageHeight * (1 - this.config.footerRegionFraction)
 
+    // Determine the dominant body font from middle-region lines
+    // Running headers/footers often use a different font family (e.g., Arial vs Times)
+    const middleLines = lines.filter(l => l.y > headerCutoff && l.y < footerCutoff)
+    const fontCounts = new Map<string, number>()
+    for (const line of middleLines) {
+      for (const item of line.items) {
+        if (item.fontName) {
+          fontCounts.set(item.fontName, (fontCounts.get(item.fontName) ?? 0) + item.str.length)
+        }
+      }
+    }
+    let dominantFont = ''
+    let maxCount = 0
+    for (const [font, count] of fontCounts) {
+      if (count > maxCount) { dominantFont = font; maxCount = count }
+    }
+
     // ── Detect header ──
     const header = this.detectHeader(lines, medianHeight, headerCutoff)
 
@@ -283,20 +301,32 @@ export class NibParser {
     const footerLines = new Set<TextLine>()
     const footnoteLines = new Set<TextLine>()
 
-    if (header) {
-      for (const line of lines) {
-        if (line.y < headerCutoff && this.isHeaderLine(line, medianHeight)) {
+    // Header region: lines matching header patterns or using a non-body font
+    for (const line of lines) {
+      if (line.y < headerCutoff) {
+        if (this.isHeaderLine(line, medianHeight)) {
+          headerLines.add(line)
+        } else if (dominantFont && line.items.length > 0 &&
+          line.items.every(i => i.fontName !== dominantFont) && line.text.length < 100) {
+          // Short line in header region using a different font — running header
           headerLines.add(line)
         }
       }
     }
-    if (footer) {
-      for (const line of lines) {
-        if (line.y > footerCutoff && this.isFooterLine(line, medianHeight)) {
+
+    // Footer region: lines matching footer patterns or using a non-body font
+    for (const line of lines) {
+      if (line.y > footerCutoff) {
+        if (this.isFooterLine(line, medianHeight)) {
+          footerLines.add(line)
+        } else if (dominantFont && line.items.length > 0 &&
+          line.items.every(i => i.fontName !== dominantFont) && line.text.length < 100) {
+          // Short line in footer region using a different font — running footer
           footerLines.add(line)
         }
       }
     }
+
     if (footnotes.length > 0) {
       for (const line of lines) {
         if (line.y > footerCutoff && line.avgHeight < medianHeight * this.config.footnoteFontSizeRatio) {
@@ -305,25 +335,32 @@ export class NibParser {
       }
     }
 
+    // Construct header/footer data from detected lines
+    const finalHeaderLines = [...headerLines]
+    const finalHeader: NibHeaderData | null = finalHeaderLines.length > 0
+      ? { text: finalHeaderLines.map(l => l.text).join(' ').trim(), level: header?.level ?? 2 }
+      : header
+    const finalFooterLines = [...footerLines].filter(l => !footnoteLines.has(l))
+    const finalFooter: NibFooterData | null = finalFooterLines.length > 0
+      ? { text: finalFooterLines.map(l => l.text).join(' ').trim() }
+      : footer
+
     const bodyLines = lines.filter(
       l => !headerLines.has(l) && !footerLines.has(l) && !footnoteLines.has(l)
     )
 
     // ── Detect additional headings within the body ──
-    // Lines that are significantly larger than body text or match heading patterns
-    const headingDetected = this.detectInlineHeadings(bodyLines, medianHeight)
+    // Lines that are significantly larger than body text or match heading patterns.
+    // These become blockType: 'subheading' paragraphs (NOT merged into page header).
+    const inlineHeadingSet = new Set(this.detectInlineHeadings(bodyLines, medianHeight))
 
-    // Separate actual body content from detected inline headings
-    const finalHeader = this.mergeHeaders(header, headingDetected, lines, headerCutoff, medianHeight)
-    const contentLines = bodyLines.filter(l => !headingDetected.includes(l))
-
-    // ── Split body lines into paragraphs ──
-    const paragraphs = this.splitIntoParagraphs(contentLines, medianHeight)
+    // ── Split body lines into paragraphs, marking inline headings ──
+    const paragraphs = this.splitIntoParagraphs(bodyLines, medianHeight, inlineHeadingSet)
 
     return {
       pageNumber: raw.pageNumber,
       header: finalHeader,
-      footer,
+      footer: finalFooter,
       footnotes,
       paragraphs,
       figures: [],
@@ -450,8 +487,13 @@ export class NibParser {
     for (const pattern of this.config.footerPatterns) {
       if (pattern.test(line.text)) return true
     }
+    // Running headers that appear at the bottom of the page (even/odd page running titles)
+    // e.g., "12  INTRODUCTION  CHAPTER 1" or "SECTION 1.6 HOW DESIGN PATTERNS..."
+    for (const pattern of this.config.headerPatterns) {
+      if (pattern.test(line.text)) return true
+    }
     // Small text at bottom that's very short (page number, running title)
-    if (line.text.length < 50 && line.avgHeight <= medianHeight) return true
+    if (line.text.length < 80 && line.avgHeight <= medianHeight) return true
     return false
   }
 
@@ -490,6 +532,7 @@ export class NibParser {
   private splitIntoParagraphs(
     lines: TextLine[],
     medianHeight: number,
+    inlineHeadings?: Set<TextLine>,
   ): NibParagraphData[] {
     if (lines.length === 0) return []
 
@@ -504,12 +547,25 @@ export class NibParser {
     const medianGap = lineGaps.length > 0 ? median(lineGaps) : medianHeight * 1.5
     const paragraphThreshold = medianGap * this.config.paragraphGapFactor
 
+    const flushParagraph = () => {
+      if (currentParagraphLines.length === 0) return
+      const para = this.buildParagraph(currentParagraphLines, paragraphs.length)
+      // Check if ALL lines in this paragraph are inline headings
+      if (inlineHeadings && currentParagraphLines.every(l => inlineHeadings.has(l))) {
+        para.blockType = 'subheading'
+      }
+      paragraphs.push(para)
+      currentParagraphLines = []
+    }
+
     for (let i = 1; i < lines.length; i++) {
       const gap = lines[i].y - lines[i - 1].y
+      const lineIsHeading = inlineHeadings?.has(lines[i])
+      const prevIsHeading = inlineHeadings?.has(lines[i - 1])
 
-      if (gap > paragraphThreshold) {
-        // Large gap → new paragraph
-        paragraphs.push(this.buildParagraph(currentParagraphLines, paragraphs.length))
+      // Force paragraph break before/after inline headings
+      if (lineIsHeading !== prevIsHeading || gap > paragraphThreshold) {
+        flushParagraph()
         currentParagraphLines = [lines[i]]
       } else {
         currentParagraphLines.push(lines[i])
@@ -517,41 +573,105 @@ export class NibParser {
     }
 
     // Don't forget the last paragraph
-    if (currentParagraphLines.length > 0) {
-      paragraphs.push(this.buildParagraph(currentParagraphLines, paragraphs.length))
-    }
+    flushParagraph()
 
     return paragraphs
   }
 
   private buildParagraph(lines: TextLine[], index: number): NibParagraphData {
-    // Join line texts, handling hyphenation
-    let fullText = ''
+    // Build a list of { text, bold, italic } spans from individual PDF items,
+    // preserving font style information at word level.
+    const spans: { text: string; bold: boolean; italic: boolean }[] = []
+
+    // Determine which font names are bold/italic — collect all font names first
+    const allFontNames = new Set<string>()
+    for (const line of lines) {
+      for (const item of line.items) {
+        if (item.fontName) allFontNames.add(item.fontName)
+      }
+    }
+    const boldFontNames = new Set(
+      [...allFontNames].filter(fn => /bold|black|heavy|demi/i.test(fn))
+    )
+    const italicFontNames = new Set(
+      [...allFontNames].filter(fn => /italic|oblique/i.test(fn))
+    )
+
     for (let i = 0; i < lines.length; i++) {
-      const lineText = lines[i].text
       if (i > 0) {
-        // Check if previous line ended with a hyphen (hyphenated word)
-        if (fullText.endsWith('-')) {
-          // Remove hyphen and join directly (re-join the word)
-          fullText = fullText.slice(0, -1)
-          // Mark that a hyphenation join happened (we'll track this at word level)
+        // Check hyphenation: does previous span end with a hyphen?
+        const lastSpan = spans[spans.length - 1]
+        if (lastSpan && lastSpan.text.endsWith('-')) {
+          lastSpan.text = lastSpan.text.slice(0, -1)
         } else {
-          fullText += ' '
+          spans.push({ text: ' ', bold: false, italic: false })
         }
       }
-      fullText += lineText
+
+      for (let j = 0; j < lines[i].items.length; j++) {
+        const item = lines[i].items[j]
+        const isBold = boldFontNames.has(item.fontName)
+        const isItalic = italicFontNames.has(item.fontName)
+        if (j > 0) spans.push({ text: ' ', bold: false, italic: false })
+        spans.push({ text: item.str, bold: isBold, italic: isItalic })
+      }
     }
 
-    fullText = fullText.trim()
+    // Join all spans into full text, and build parallel style-flags arrays
+    // indexed by character position
+    const fullText = spans.map(s => s.text).join('').trim()
+    const charBold: boolean[] = []
+    const charItalic: boolean[] = []
+    for (const span of spans) {
+      for (let c = 0; c < span.text.length; c++) {
+        charBold.push(span.bold)
+        charItalic.push(span.italic)
+      }
+    }
+    // Trim may have removed leading whitespace; adjust flags accordingly
+    const rawText = spans.map(s => s.text).join('')
+    const leadingSpaces = rawText.length - rawText.trimStart().length
+    const boldFlags = charBold.slice(leadingSpaces, leadingSpaces + fullText.length)
+    const italicFlags = charItalic.slice(leadingSpaces, leadingSpaces + fullText.length)
 
     // Split into sentences
     const sentenceTexts = splitSentences(fullText)
+    let charOffset = 0
+
     const sentences: NibSentenceData[] = sentenceTexts.map((sentText, sIdx) => {
+      // Find where this sentence starts in fullText
+      const sentStart = fullText.indexOf(sentText, charOffset)
+      const sentOffset = sentStart >= 0 ? sentStart : charOffset
+
       const wordTexts = tokenizeWords(sentText)
-      const words: NibWordData[] = wordTexts.map((w, wIdx) => ({
-        text: w,
-        index: wIdx,
-      }))
+      let wordCharOffset = 0
+
+      const words: NibWordData[] = wordTexts.map((w, wIdx) => {
+        // Find word position within sentence text
+        const wordPos = sentText.indexOf(w, wordCharOffset)
+        const absPos = sentOffset + (wordPos >= 0 ? wordPos : wordCharOffset)
+
+        // A word is bold/italic if the majority of its characters have that style
+        let boldCount = 0
+        let italicCount = 0
+        for (let c = 0; c < w.length; c++) {
+          if (boldFlags[absPos + c]) boldCount++
+          if (italicFlags[absPos + c]) italicCount++
+        }
+        const isBold = boldCount > w.length / 2
+        const isItalic = italicCount > w.length / 2
+
+        wordCharOffset = (wordPos >= 0 ? wordPos : wordCharOffset) + w.length
+
+        return {
+          text: w,
+          index: wIdx,
+          bold: isBold || undefined,
+          italic: isItalic || undefined,
+        }
+      })
+
+      charOffset = sentOffset + sentText.length
       return { words, index: sIdx }
     })
 

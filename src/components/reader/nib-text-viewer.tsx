@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { NibElementBadge } from '@/components/ui/block-tooltip'
+import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
+import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
 import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
 
 interface NibTextViewerProps {
@@ -13,6 +14,80 @@ interface NibTextViewerProps {
   showIndicators?: boolean
   /** Called when a word is tapped — parent can use word.getAIContext() for translation */
   onWordSelect?: (word: NibWord) => void
+}
+
+/**
+ * Renders a paragraph, detecting LaTeX and falling back to LatexText rendering
+ * when math expressions are found. Otherwise uses word-level interactivity.
+ */
+function ParagraphRenderer({
+  para, pageNumber, selectedWord, onWordClick,
+}: {
+  para: any
+  pageNumber: number
+  selectedWord: NibWord | null
+  onWordClick: (word: NibWord) => void
+}) {
+  // Build the full paragraph text and check for special content
+  const fullText = para.sentences.map((s: any) => s.text).join(' ')
+  const hasLatexContent = containsLatex(fullText)
+  const hasTableContent = isTableBlock(fullText)
+
+  // Table rendering
+  if (hasTableContent) {
+    return <TableRenderer text={fullText} />
+  }
+
+  // LaTeX rendering (no word-level interaction for math paragraphs)
+  if (hasLatexContent) {
+    return (
+      <p className="leading-relaxed text-base">
+        <LatexText text={fullText} />
+      </p>
+    )
+  }
+
+  // Standard word-by-word rendering with hover/click
+  return (
+    <p className="leading-relaxed text-base">
+      {para.sentences.map((sentence: any) => (
+        <span key={`s${sentence.index}`} className="relative">
+          {sentence.words.map((word: NibWord, wIdx: number) => (
+            <span key={`w${wIdx}`}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
+                      selectedWord === word ? 'bg-primary/20 underline decoration-primary' : ''
+                    }${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
+                    onClick={() => onWordClick(word)}
+                  >
+                    {word.text}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  className="
+                    bg-background/80 backdrop-blur-xl
+                    border border-border/50
+                    rounded-lg shadow-lg shadow-black/10
+                    max-w-sm px-3 py-2
+                  "
+                >
+                  <p className="font-medium text-sm">{word.text}</p>
+                  <p className="text-muted-foreground text-xs mt-1">
+                    {sentence.text}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+              {wIdx < sentence.words.length - 1 ? ' ' : ''}
+            </span>
+          ))}
+          {' '}
+        </span>
+      ))}
+    </p>
+  )
 }
 
 /**
@@ -38,8 +113,7 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div className="max-w-none p-6 space-y-2">
+    <div className="p-6 space-y-2">
         {/* Section title */}
         <div className="mb-4">
           {showIndicators && <NibElementBadge type="section" />}
@@ -48,10 +122,10 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
 
         {nibDocument.pages.map((page) => (
           <div key={page.pageNumber} className="mb-6">
-            {/* Page header (detected from PDF — not shown if it matches section title) */}
-            {page.header && page.header.text !== sectionTitle && (
+            {/* Page header (detected from PDF — only shown in indicators mode) */}
+            {showIndicators && page.header && (
               <div className="mb-3">
-                {showIndicators && <NibElementBadge type="header" />}
+                <NibElementBadge type="header" />
                 <div className="text-xs text-muted-foreground/50 italic border-b border-muted pb-1">
                   {page.header.text}
                 </div>
@@ -64,6 +138,27 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
               const isIntro = blockType === 'introduction'
               const isQuote = blockType === 'blockquote'
               const isEpigraph = blockType === 'epigraph'
+              const isSubheading = blockType === 'subheading'
+
+              // Render sub-headings as styled h3 elements
+              if (isSubheading) {
+                const text = para.sentences.map((s: any) => s.text).join(' ')
+                // Skip if this subheading duplicates the section title
+                const normalizedText = text.replace(/^\d+(\.\d+)*\s+/, '').trim().toLowerCase()
+                const normalizedTitle = sectionTitle.replace(/^\d+(\.\d+)*\s+/, '').trim().toLowerCase()
+                if (normalizedText === normalizedTitle) return null
+
+                return (
+                  <div key={`${page.pageNumber}-p${para.index}`} className="mt-6 mb-3">
+                    {showIndicators && (
+                      <div className="mb-1">
+                        <NibElementBadge type={blockType} />
+                      </div>
+                    )}
+                    <h3 className="text-lg font-bold">{text}</h3>
+                  </div>
+                )
+              }
 
               return (
                 <div
@@ -84,44 +179,12 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
                       </span>
                     </div>
                   )}
-                  <p className="leading-relaxed text-base">
-                    {para.sentences.map((sentence) => (
-                      <span key={`s${sentence.index}`} className="relative">
-                        {sentence.words.map((word, wIdx) => (
-                          <span key={`w${wIdx}`}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span
-                                  className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
-                                    selectedWord === word ? 'bg-primary/20 underline decoration-primary' : ''
-                                  }`}
-                                  onClick={() => handleWordClick(word)}
-                                >
-                                  {word.text}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent
-                                side="top"
-                                className="
-                                  bg-background/80 backdrop-blur-xl
-                                  border border-border/50
-                                  rounded-lg shadow-lg shadow-black/10
-                                  max-w-sm px-3 py-2
-                                "
-                              >
-                                <p className="font-medium text-sm">{word.text}</p>
-                                <p className="text-muted-foreground text-xs mt-1">
-                                  {sentence.text}
-                                </p>
-                              </TooltipContent>
-                            </Tooltip>
-                            {wIdx < sentence.words.length - 1 ? ' ' : ''}
-                          </span>
-                        ))}
-                        {' '}
-                      </span>
-                    ))}
-                  </p>
+                  <ParagraphRenderer
+                    para={para}
+                    pageNumber={page.pageNumber}
+                    selectedWord={selectedWord}
+                    onWordClick={handleWordClick}
+                  />
                 </div>
               )
             })}
@@ -163,10 +226,10 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
               </div>
             )}
 
-            {/* Footer (usually page number — shown subtly) */}
-            {page.footer && (
+            {/* Footer (usually page number — only shown in indicators mode) */}
+            {showIndicators && page.footer && (
               <div className="mt-2">
-                {showIndicators && <NibElementBadge type="footer" />}
+                <NibElementBadge type="footer" />
                 <div className="text-xs text-muted-foreground/40 text-center">
                   {page.footer.text}
                 </div>
@@ -202,7 +265,6 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
             </p>
           </div>
         )}
-      </div>
-    </ScrollArea>
+    </div>
   )
 }

@@ -237,6 +237,14 @@ export class NibTextParser {
         continue
       }
 
+      // Check if it's a sub-heading (short title-like line within body text)
+      if (firstHeaderSeen && this.isSubheading(trimmed)) {
+        bodyLines.push({ text: '', blockType: 'body' }) // paragraph break before
+        bodyLines.push({ text: trimmed, blockType: 'subheading' })
+        bodyLines.push({ text: '', blockType: 'body' }) // paragraph break after
+        continue
+      }
+
       // Check if it's a blockquote
       const blockType: NibBlockType = this.isBlockquote(line) ? 'blockquote'
         : !firstHeaderSeen ? 'introduction'
@@ -333,6 +341,31 @@ export class NibTextParser {
       }
     }
     return null
+  }
+
+  /**
+   * Detect sub-headings: short title-like lines within body text.
+   * e.g. "Finding Appropriate Objects", "Delegation", "Toolkits"
+   * Criteria:
+   *  - 3-80 characters (not too short, not too long)
+   *  - Starts with a capital letter
+   *  - Does NOT end with a period, comma, colon, or semicolon (not a sentence)
+   *  - Does NOT look like a standalone number or page reference
+   *  - Has at least 1 word, but no more than ~10 words
+   */
+  private isSubheading(line: string): boolean {
+    if (line.length < 3 || line.length > 80) return false
+    if (!/^[A-Z]/.test(line)) return false
+    if (/[.,;:]$/.test(line)) return false
+    if (/^\d+$/.test(line)) return false
+    const words = line.split(/\s+/)
+    if (words.length < 1 || words.length > 10) return false
+    // Must have at least one capitalized word (title-case heuristic)
+    const capitalizedWords = words.filter(w => /^[A-Z]/.test(w))
+    if (capitalizedWords.length < words.length * 0.4) return false
+    // Should not contain parenthetical references like "(325)"
+    if (/\(\d+\)/.test(line)) return false
+    return true
   }
 
   private isBlockquote(line: string): boolean {

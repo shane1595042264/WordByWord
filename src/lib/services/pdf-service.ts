@@ -126,6 +126,31 @@ export class PDFService {
         const viewport = page.getViewport({ scale: 1 })
         const textContent = await page.getTextContent()
 
+        // Render the page off-screen to force PDF.js to resolve font objects.
+        // Only then can we access commonObjs.get(fontId).name for the real font name.
+        const offscreen = document.createElement('canvas')
+        offscreen.width = viewport.width
+        offscreen.height = viewport.height
+        const offCtx = offscreen.getContext('2d')!
+        await page.render({ canvasContext: offCtx, viewport, canvas: offscreen } as unknown as import('pdfjs-dist/types/src/display/api').RenderParameters).promise
+
+        // Build a map from font ID → actual font name (e.g. "TimesNewRomanPS-BoldMT")
+        const fontNameMap = new Map<string, string>()
+        const seenFontIds = new Set<string>()
+        for (const item of textContent.items as any[]) {
+          if (item.fontName) seenFontIds.add(item.fontName)
+        }
+        for (const fontId of seenFontIds) {
+          try {
+            const fontObj = page.commonObjs.get(fontId)
+            if (fontObj?.name) {
+              fontNameMap.set(fontId, fontObj.name)
+            }
+          } catch {
+            // Font not resolved — fall back to opaque ID
+          }
+        }
+
         const items: RawTextItem[] = textContent.items
           .filter((item: any) => item.str && item.str.trim().length > 0)
           .map((item: any) => ({
@@ -133,7 +158,7 @@ export class PDFService {
             transform: item.transform,
             width: item.width,
             height: item.height,
-            fontName: item.fontName ?? '',
+            fontName: fontNameMap.get(item.fontName) ?? item.fontName ?? '',
             hasEOL: item.hasEOL ?? false,
           }))
 

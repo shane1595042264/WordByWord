@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useCallback, useMemo, useRef, useState, useEffect } from 'react'
+import { use, useCallback, useRef, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
@@ -9,6 +9,7 @@ import { PDFViewer } from '@/components/reader/pdf-viewer'
 import { TextViewer } from '@/components/reader/text-viewer'
 import { NibTextViewer } from '@/components/reader/nib-text-viewer'
 import { SideBySideViewer } from '@/components/reader/side-by-side-viewer'
+import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
 import { ReaderToolbar } from '@/components/reader/reader-toolbar'
 import { NibService } from '@/lib/services/nib-service'
@@ -26,6 +27,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   } = useReader(bookId, sectionId)
 
   const contentRef = useRef<HTMLDivElement>(null)
+  const textScrollRef = useRef<HTMLDivElement>(null)
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
 
@@ -36,69 +38,115 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   const [currentPage, setCurrentPage] = useState(startPage)
 
-  // Reset page when section changes, resume from lastPageViewed if available
+  // Reset page/progress when section changes, resume from lastPageViewed if available
   useEffect(() => {
     if (section) {
       setCurrentPage(section.lastPageViewed ?? section.startPage)
+      setSectionProgress(section.scrollProgress ?? 0)
     }
   }, [section?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const canGoPrev = currentPage > startPage || !!prevSection
-  const canGoNext = currentPage < endPage || !!nextSection
+  // In text mode, all section text is shown at once — no page-level navigation.
+  // Prev/Next should jump directly to prev/next section.
+  const isTextMode = viewMode === 'text'
+  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
+  const canGoNext = isTextMode ? !!nextSection : (currentPage < endPage || !!nextSection)
 
   const goToPrevPage = useCallback(() => {
+    if (isTextMode) {
+      if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
+      return
+    }
     if (currentPage > startPage) {
       setCurrentPage(p => p - 1)
     } else if (prevSection) {
       router.push(`/book/${bookId}/read/${prevSection.id}`)
     }
-  }, [currentPage, startPage, prevSection, bookId, router])
+  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
 
   const goToNextPage = useCallback(() => {
+    if (isTextMode) {
+      if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
+      return
+    }
     if (currentPage < endPage) {
       setCurrentPage(p => p + 1)
     } else if (nextSection) {
       router.push(`/book/${bookId}/read/${nextSection.id}`)
     }
-  }, [currentPage, endPage, nextSection, bookId, router])
+  }, [isTextMode, currentPage, endPage, nextSection, bookId, router])
 
   const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page)
   }, [])
 
   // Parse section text through .nib pipeline
-  // If this is an "Introduction" section, show only intro paragraphs.
-  // Otherwise, strip intro paragraphs (they belong to a separate intro section).
-  const nibDocument: NibDocument | null = useMemo(() => {
-    if (!section?.extractedText || !book) return null
-    try {
+  // Prefer rich PDF parsing (with font/bold info) when PDF blob is available.
+  // Falls back to flat text parsing for scanned/AI-extracted text.
+  const [nibDocument, setNibDocument] = useState<NibDocument | null>(null)
+
+  useEffect(() => {
+    if (!section?.extractedText || !book) { setNibDocument(null); return }
+
+    let cancelled = false
+    const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
+
+    // Try rich PDF parsing first (preserves bold/italic font info)
+    if (book.pdfBlob && !isIntroSection) {
       const nibService = new NibService()
-      const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
-
-      if (isIntroSection) {
-        return nibService.parseExtractedTextIntroOnly(
-          section.extractedText,
-          book.title,
-          book.author,
-          section.startPage,
-        )
-      }
-
-      return nibService.parseExtractedTextBodyOnly(
-        section.extractedText,
+      nibService.parsePages(
+        book.pdfBlob,
+        section.startPage,
+        section.endPage,
         book.title,
         book.author,
-        section.startPage,
-        section.title,
-      )
-    } catch {
-      return null
+      ).then(doc => {
+        if (!cancelled) setNibDocument(doc)
+      }).catch(() => {
+        // Fallback to text-based parsing
+        if (!cancelled) {
+          try {
+            const fallbackService = new NibService()
+            setNibDocument(fallbackService.parseExtractedTextBodyOnly(
+              section.extractedText!,
+              book.title,
+              book.author,
+              section.startPage,
+              section.title,
+            ))
+          } catch { setNibDocument(null) }
+        }
+      })
+    } else {
+      // Text-based parsing (for intro sections or when no PDF blob)
+      try {
+        const nibService = new NibService()
+        if (isIntroSection) {
+          setNibDocument(nibService.parseExtractedTextIntroOnly(
+            section.extractedText,
+            book.title,
+            book.author,
+            section.startPage,
+          ))
+        } else {
+          setNibDocument(nibService.parseExtractedTextBodyOnly(
+            section.extractedText,
+            book.title,
+            book.author,
+            section.startPage,
+            section.title,
+          ))
+        }
+      } catch { setNibDocument(null) }
     }
-  }, [section?.extractedText, section?.title, book, section?.startPage])
+
+    return () => { cancelled = true }
+  }, [section?.extractedText, section?.title, book, section?.startPage, section?.endPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
 
-  useAutoTrack(sectionId, section?.isRead ?? false, handleMarkedRead, contentRef)
+  // Only track after loading completes to ensure scroll containers are mounted
+  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode)
 
   const handlePageProgress = useCallback((currentPage: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
@@ -109,6 +157,43 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       })
     })
   }, [sectionId])
+
+  // ── Text mode scroll tracking ──
+  const handleTextScroll = useCallback(() => {
+    const el = textScrollRef.current
+    if (!el) return
+    const { scrollTop, scrollHeight, clientHeight } = el
+    const maxScroll = scrollHeight - clientHeight
+    if (maxScroll <= 0) {
+      // Content fits without scrolling — 100% immediately
+      setSectionProgress(100)
+      return
+    }
+    const percent = Math.min(100, Math.round((scrollTop / maxScroll) * 100))
+    setSectionProgress(percent)
+    // Persist scroll progress
+    import('@/lib/db/database').then(({ db }) => {
+      db.sections.update(sectionId, { scrollProgress: percent })
+    })
+  }, [sectionId])
+
+  // Track a flag so the effect can re-trigger once loading completes and the ref mounts
+  const [textScrollReady, setTextScrollReady] = useState(false)
+
+  // Use a callback ref to detect when the text scroll container mounts
+  const textScrollCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    (textScrollRef as any).current = node
+    setTextScrollReady(!!node)
+  }, [])
+
+  // Check initial text scroll state when text view mounts (e.g. content fits without scrolling)
+  useEffect(() => {
+    if (viewMode !== 'text') return
+    if (!textScrollRef.current) return
+    // Delay to let content render fully
+    const timer = setTimeout(() => handleTextScroll(), 300)
+    return () => clearTimeout(timer)
+  }, [viewMode, textScrollReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keyboard shortcuts ──
   useShortcut('toggle-indicators', 'Toggle Element Labels', 'Ctrl+i', useCallback(() => {
@@ -184,8 +269,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             />
           )}
           {viewMode === 'text' && (
-            <div className="flex-1 overflow-auto">
-              {nibDocument ? (
+            <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
+              {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
+                <TocViewer
+                  bookId={bookId}
+                  extractedText={section.extractedText}
+                  sectionTitle={section.title}
+                />
+              ) : nibDocument ? (
                 <NibTextViewer
                   nibDocument={nibDocument}
                   sectionTitle={section.title}

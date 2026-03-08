@@ -1,6 +1,6 @@
 'use client'
 
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
 
 interface TextViewerProps {
   text: string | null
@@ -17,11 +17,11 @@ export function TextViewer({ text, sectionTitle }: TextViewerProps) {
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div className="prose prose-sm max-w-none p-6">
-        <h2>{sectionTitle}</h2>
-        <div className="whitespace-pre-wrap">{text}</div>
+    <div className="prose prose-sm max-w-none p-6">
+      <h2>{sectionTitle}</h2>
+      <div className="whitespace-pre-wrap">
+        {containsLatex(text) ? <LatexText text={text} /> : text}
       </div>
-    </ScrollArea>
+    </div>
   )
 }
