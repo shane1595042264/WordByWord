@@ -10,10 +10,25 @@ export function useReader(bookId: string, sectionId: string) {
   const [section, setSection] = useState<Section | null>(null)
   const [chapter, setChapter] = useState<Chapter | null>(null)
   const [chapterSections, setChapterSections] = useState<Section[]>([])
-  const [viewMode, setViewMode] = useState<ViewMode>('side-by-side')
-  const [readingMode, setReadingMode] = useState<'scroll' | 'flip'>('scroll')
+  const [viewMode, setViewModeState] = useState<ViewMode>('side-by-side')
+  const [readingMode, setReadingModeState] = useState<'scroll' | 'flip'>('scroll')
   const [loading, setLoading] = useState(true)
   const initialLoadDone = useRef(false)
+
+  // Wrap setters to also persist to settings
+  const setViewMode = useCallback((mode: ViewMode) => {
+    setViewModeState(mode)
+    import('@/lib/services/settings-service').then(({ SettingsService }) => {
+      new SettingsService().updateSettings({ defaultViewMode: mode })
+    })
+  }, [])
+
+  const setReadingMode = useCallback((mode: 'scroll' | 'flip') => {
+    setReadingModeState(mode)
+    import('@/lib/services/settings-service').then(({ SettingsService }) => {
+      new SettingsService().updateSettings({ readingMode: mode })
+    })
+  }, [])
 
   // Full load — only on initial mount or section change
   const loadData = useCallback(async () => {
@@ -29,8 +44,8 @@ export function useReader(bookId: string, sectionId: string) {
       const { SettingsService } = await import('@/lib/services/settings-service')
       const settingsService = new SettingsService()
       const s = settingsService.getSettings()
-      setViewMode(s.defaultViewMode)
-      setReadingMode(s.readingMode)
+      setViewModeState(s.defaultViewMode)
+      setReadingModeState(s.readingMode)
       initialLoadDone.current = true
     }
 

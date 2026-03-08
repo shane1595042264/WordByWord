@@ -1,4 +1,5 @@
 import * as pdfjs from 'pdfjs-dist'
+import type { RawTextItem, RawPageData } from '@/lib/nib'
 
 if (typeof window !== 'undefined') {
   pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -73,6 +74,77 @@ export class PDFService {
       const page = await doc.getPage(pageNumber)
       const textContent = await page.getTextContent()
       return textContent.items.map((item: any) => item.str).join(' ')
+    } finally {
+      doc.destroy()
+    }
+  }
+
+  /**
+   * Extract rich text data from a page, including position and font info.
+   * This powers the .nib parser for header/footnote detection.
+   */
+  async extractRichPageData(blob: Blob, pageNumber: number): Promise<RawPageData> {
+    const arrayBuffer = await blob.arrayBuffer()
+    const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    try {
+      const page = await doc.getPage(pageNumber)
+      const viewport = page.getViewport({ scale: 1 })
+      const textContent = await page.getTextContent()
+
+      const items: RawTextItem[] = textContent.items
+        .filter((item: any) => item.str && item.str.trim().length > 0)
+        .map((item: any) => ({
+          str: item.str,
+          transform: item.transform,
+          width: item.width,
+          height: item.height,
+          fontName: item.fontName ?? '',
+          hasEOL: item.hasEOL ?? false,
+        }))
+
+      return {
+        pageNumber,
+        items,
+        pageHeight: viewport.height,
+        pageWidth: viewport.width,
+      }
+    } finally {
+      doc.destroy()
+    }
+  }
+
+  /**
+   * Extract rich text data for a range of pages at once (more efficient).
+   */
+  async extractRichPageRange(blob: Blob, startPage: number, endPage: number): Promise<RawPageData[]> {
+    const arrayBuffer = await blob.arrayBuffer()
+    const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    try {
+      const results: RawPageData[] = []
+      for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+        const page = await doc.getPage(pageNum)
+        const viewport = page.getViewport({ scale: 1 })
+        const textContent = await page.getTextContent()
+
+        const items: RawTextItem[] = textContent.items
+          .filter((item: any) => item.str && item.str.trim().length > 0)
+          .map((item: any) => ({
+            str: item.str,
+            transform: item.transform,
+            width: item.width,
+            height: item.height,
+            fontName: item.fontName ?? '',
+            hasEOL: item.hasEOL ?? false,
+          }))
+
+        results.push({
+          pageNumber: pageNum,
+          items,
+          pageHeight: viewport.height,
+          pageWidth: viewport.width,
+        })
+      }
+      return results
     } finally {
       doc.destroy()
     }

@@ -3,6 +3,7 @@ import { db } from '@/lib/db/database'
 import type { Book, Chapter, Section } from '@/lib/db/models'
 import { PDFService } from './pdf-service'
 import { AIService } from './ai-service'
+import { NibService } from './nib-service'
 
 const PAGES_PER_BATCH = 10
 
@@ -14,10 +15,12 @@ interface ImportOptions {
 export class BookProcessingService {
   private pdfService: PDFService
   private aiService: AIService | null
+  private nibService: NibService
 
   constructor(apiKey?: string) {
     this.pdfService = new PDFService()
     this.aiService = apiKey ? new AIService(apiKey) : null
+    this.nibService = new NibService()
   }
 
   async importBook(blob: Blob, options: ImportOptions): Promise<string> {
@@ -161,6 +164,9 @@ export class BookProcessingService {
     blob: Blob,
     onProgress?: (message: string, percent: number) => void,
   ): Promise<void> {
+    // Fetch book metadata for nib parsing
+    const bookRecord = await db.books.get(bookId)
+
     // First, flatten the entire outline into an ordered list to compute page ranges
     const allItems = this.flattenOutline(outline)
     const pageMap = new Map<string, number>()
@@ -237,11 +243,22 @@ export class BookProcessingService {
         }
         secEndPage = Math.max(startPage, secEndPage)
 
-        // Extract actual text for this section's pages
-        const pageTexts: string[] = []
-        for (let p = startPage; p <= secEndPage; p++) {
-          const text = await this.pdfService.extractPageText(blob, p)
-          if (text.trim()) pageTexts.push(text)
+        // Extract clean text for this section's pages using .nib parser
+        // (removes headers, footers, footnotes — gives clean body text)
+        let sectionText: string | null = null
+        try {
+          const cleanText = await this.nibService.getCleanText(
+            blob, startPage, secEndPage, bookRecord?.title ?? '', bookRecord?.author ?? ''
+          )
+          sectionText = cleanText.trim() || null
+        } catch {
+          // Fallback: extract raw text if nib parsing fails
+          const pageTexts: string[] = []
+          for (let p = startPage; p <= secEndPage; p++) {
+            const text = await this.pdfService.extractPageText(blob, p)
+            if (text.trim()) pageTexts.push(text)
+          }
+          sectionText = pageTexts.join('\n\n') || null
         }
 
         const section: Section = {
@@ -252,7 +269,7 @@ export class BookProcessingService {
           order: ++sectionOrder,
           startPage,
           endPage: secEndPage,
-          extractedText: pageTexts.join('\n\n') || null,
+          extractedText: sectionText,
           isRead: false,
           readAt: null,
           lastPageViewed: null,
@@ -279,20 +296,61 @@ export class BookProcessingService {
       } else if (children.every((c: any) => !c.children || c.children.length === 0)) {
         // All children are leaves → this is a chapter, children are sections
         const title = parentPrefix ? `${parentPrefix} > ${item.title}` : item.title
-        result.push({
-          chapterTitle: title,
-          sections: children.map((c: any) => ({ title: c.title, pageNumber: c.pageNumber })),
-        })
+        const sections: { title: string; pageNumber: number | null }[] = []
+
+        // If the parent starts on an earlier page than its first child,
+        // inject an "Introduction" section to capture that gap text.
+        const firstChildPage = children[0]?.pageNumber ?? null
+        if (
+          item.pageNumber != null &&
+          firstChildPage != null &&
+          item.pageNumber < firstChildPage
+        ) {
+          sections.push({
+            title: `${item.title} — Introduction`,
+            pageNumber: item.pageNumber,
+          })
+        }
+
+        for (const c of children) {
+          sections.push({ title: c.title, pageNumber: c.pageNumber })
+        }
+
+        result.push({ chapterTitle: title, sections })
       } else {
         // Has nested children → grouping level, recurse
         const prefix = parentPrefix ? `${parentPrefix} > ${item.title}` : item.title
         // But first, collect any direct leaf children as a standalone chapter
         const directLeaves = children.filter((c: any) => !c.children || c.children.length === 0)
         const nestedChildren = children.filter((c: any) => c.children && c.children.length > 0)
-        if (directLeaves.length > 0) {
+
+        // If parent starts before its first child, inject an "Introduction" section
+        const allChildren = [...directLeaves, ...nestedChildren]
+        const firstPage = allChildren.reduce((min: number | null, c: any) => {
+          if (c.pageNumber == null) return min
+          if (min == null) return c.pageNumber
+          return c.pageNumber < min ? c.pageNumber : min
+        }, null as number | null)
+
+        const introSections: { title: string; pageNumber: number | null }[] = []
+        if (
+          item.pageNumber != null &&
+          firstPage != null &&
+          item.pageNumber < firstPage
+        ) {
+          introSections.push({
+            title: `${item.title} — Introduction`,
+            pageNumber: item.pageNumber,
+          })
+        }
+
+        if (directLeaves.length > 0 || introSections.length > 0) {
           result.push({
             chapterTitle: prefix,
-            sections: directLeaves.map((c: any) => ({ title: c.title, pageNumber: c.pageNumber })),
+            sections: [
+              ...introSections,
+              ...directLeaves.map((c: any) => ({ title: c.title, pageNumber: c.pageNumber })),
+            ],
           })
         }
         this.walkOutlineTree(nestedChildren, prefix, result)

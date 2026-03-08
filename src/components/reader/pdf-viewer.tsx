@@ -1,27 +1,29 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 
 interface PDFViewerProps {
   pdfBlob: Blob
   startPage: number
   endPage: number
   readingMode: 'scroll' | 'flip'
+  /** Controlled current page for flip mode (absolute page number) */
+  currentPage?: number
+  /** Called when page changes in flip mode */
+  onPageChange?: (page: number) => void
   onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
 }
 
-export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, onPageProgress }: PDFViewerProps) {
+export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress }: PDFViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [currentFlipPage, setCurrentFlipPage] = useState(startPage)
+  const currentFlipPage = controlledPage ?? startPage
   const totalPages = endPage - startPage + 1
 
-  // Reset flip page when section changes
-  useEffect(() => {
-    setCurrentFlipPage(startPage)
-  }, [startPage])
+  const setCurrentFlipPage = useCallback((updater: number | ((p: number) => number)) => {
+    const newPage = typeof updater === 'function' ? updater(currentFlipPage) : updater
+    onPageChange?.(newPage)
+  }, [currentFlipPage, onPageChange])
 
   // Report progress for flip mode
   useEffect(() => {
@@ -183,22 +185,6 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, onPageProg
 
   return (
     <div className="flex flex-col h-full">
-      {readingMode === 'flip' && (
-        <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
-          <Button variant="outline" size="sm" onClick={goPrev} disabled={currentFlipPage <= startPage}>
-            ← Prev Page
-          </Button>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              Page {currentFlipPage - startPage + 1} of {totalPages} (p.{currentFlipPage})
-            </span>
-            <Progress value={(currentFlipPage - startPage + 1) / totalPages * 100} className="w-24 h-2" />
-          </div>
-          <Button variant="outline" size="sm" onClick={goNext} disabled={currentFlipPage >= endPage}>
-            Next Page →
-          </Button>
-        </div>
-      )}
       <div
         ref={containerRef}
         className={readingMode === 'scroll' ? 'flex-1 overflow-auto' : 'flex-1 overflow-hidden'}
