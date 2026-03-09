@@ -37,7 +37,7 @@ export {
 
 // Parser (for rich PDF text items with positions/fonts)
 export { NibParser } from './parser'
-export type { RawTextItem, RawPageData, NibParserConfig } from './parser'
+export type { RawTextItem, RawPageData, RawImageRegion, NibParserConfig } from './parser'
 
 // Text parser (for flat AI/OCR-extracted text)
 export { NibTextParser } from './text-parser'

@@ -74,11 +74,64 @@ export class NibService {
     endPage: number,
     title: string,
     author: string,
+    sectionTitle?: string,
   ): Promise<NibDocument> {
     const pdfService = await this.getPdfService()
     const rawPages = await pdfService.extractRichPageRange(blob, startPage, endPage)
     const data = this.parser.parseDocument(rawPages, title, author)
+
+    // Strip content that appears before the section header on the first page.
+    // Sections often share pages with the previous section, so we need to
+    // remove the "intro overflow" from the preceding section.
+    if (sectionTitle) {
+      this.trimContentBeforeSection(data, sectionTitle)
+    }
+
     return NibDocument.fromData(data)
+  }
+
+  /**
+   * Remove paragraphs on the first page that appear before the section header.
+   * Matches by looking for a paragraph whose text starts with the section title
+   * (or a numbered header pattern like "1.1").
+   */
+  private trimContentBeforeSection(data: NibDocumentData, sectionTitle: string) {
+    if (data.pages.length === 0) return
+
+    const firstPage = data.pages[0]
+    if (!firstPage.paragraphs || firstPage.paragraphs.length === 0) return
+
+    // Extract the section number (e.g. "1.1" from "1.1 What Is a Design Pattern?")
+    const numberMatch = sectionTitle.match(/^(\d+(?:\.\d+)+)/)
+    const sectionNumber = numberMatch ? numberMatch[1] : null
+
+    // Find the paragraph index where the section starts
+    let sectionStartIdx = -1
+    for (let i = 0; i < firstPage.paragraphs.length; i++) {
+      const pText = firstPage.paragraphs[i].sentences
+        .flatMap(s => s.words.map(w => w.text))
+        .join(' ')
+        .trim()
+
+      // Check if this paragraph starts with the section number or title
+      if (sectionNumber && pText.startsWith(sectionNumber)) {
+        sectionStartIdx = i
+        break
+      }
+      // Also check for the full title text (normalized)
+      const normalizedTitle = sectionTitle.replace(/\s+/g, ' ').trim()
+      const normalizedParagraph = pText.replace(/\s+/g, ' ').trim()
+      if (normalizedParagraph.startsWith(normalizedTitle)) {
+        sectionStartIdx = i
+        break
+      }
+    }
+
+    // If we found the section header, strip everything before it
+    if (sectionStartIdx > 0) {
+      firstPage.paragraphs = firstPage.paragraphs.slice(sectionStartIdx)
+        .map((p, i) => ({ ...p, index: i }))
+    }
   }
 
   /**

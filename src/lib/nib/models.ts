@@ -60,6 +60,10 @@ export interface NibFigureData {
   label: string
   /** Caption text */
   caption: string
+  /** Base64 data URL of the figure image (if extracted from PDF) */
+  imageSrc?: string
+  /** Y position of the figure on the page (for ordering with paragraphs) */
+  top?: number
 }
 
 export interface NibListItemData {
@@ -275,14 +279,18 @@ export class NibParagraph {
 export class NibFigure {
   readonly label: string
   readonly caption: string
+  readonly imageSrc?: string
+  readonly top?: number
 
   constructor(data: NibFigureData) {
     this.label = data.label
     this.caption = data.caption
+    this.imageSrc = data.imageSrc
+    this.top = data.top
   }
 
   toData(): NibFigureData {
-    return { label: this.label, caption: this.caption }
+    return { label: this.label, caption: this.caption, imageSrc: this.imageSrc, top: this.top }
   }
 }
 

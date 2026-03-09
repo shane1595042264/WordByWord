@@ -100,6 +100,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         section.endPage,
         book.title,
         book.author,
+        section.title,
       ).then(doc => {
         if (!cancelled) setNibDocument(doc)
       }).catch(() => {

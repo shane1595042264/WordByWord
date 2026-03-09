@@ -20,6 +20,7 @@ import type {
   NibHeaderData,
   NibFooterData,
   NibFootnoteData,
+  NibFigureData,
 } from './models'
 
 // ─── Types for raw PDF text items (from pdfjs textContent.items) ─────────────
@@ -39,6 +40,16 @@ export interface RawTextItem {
   hasEOL: boolean
 }
 
+/** Region of an image detected on a PDF page via getOperatorList */
+export interface RawImageRegion {
+  x: number
+  y: number
+  width: number
+  height: number
+  /** Base64 data URL of the cropped image */
+  imageSrc?: string
+}
+
 export interface RawPageData {
   pageNumber: number
   items: RawTextItem[]
@@ -46,6 +57,8 @@ export interface RawPageData {
   pageHeight: number
   /** Page width in PDF units */
   pageWidth: number
+  /** Image regions detected on this page */
+  images?: RawImageRegion[]
 }
 
 // ─── Configuration ───────────────────────────────────────────────────────────
@@ -345,8 +358,50 @@ export class NibParser {
       ? { text: finalFooterLines.map(l => l.text).join(' ').trim() }
       : footer
 
+    // ── Detect figures from image regions ──
+    const figureAssociatedLines = new Set<TextLine>()
+    const figures: NibFigureData[] = []
+
+    if (raw.images && raw.images.length > 0) {
+      for (const image of raw.images) {
+        // Find text lines spatially near this image (for label/caption)
+        const associated = lines.filter(line =>
+          !headerLines.has(line) && !footerLines.has(line) && !footnoteLines.has(line) &&
+          this.isFigureAssociatedLine(image, line, raw.pageWidth)
+        )
+
+        // Extract label and caption from associated lines below the image
+        let label = ''
+        let caption = ''
+        const sortedAssoc = [...associated].sort((a, b) => a.y - b.y)
+        for (const line of sortedAssoc) {
+          if (line.y >= image.y + image.height - 5) {
+            const figMatch = line.text.match(/^(Figure\s+[\d.]+)[.:]\s*(.*)/i)
+            if (figMatch) {
+              label = figMatch[1]
+              caption = figMatch[2] || ''
+            } else if (label && !caption) {
+              caption = line.text
+            }
+          }
+        }
+
+        // Mark associated lines so they don't appear as body paragraphs
+        for (const line of associated) {
+          figureAssociatedLines.add(line)
+        }
+
+        figures.push({
+          label,
+          caption,
+          imageSrc: image.imageSrc,
+          top: image.y,
+        })
+      }
+    }
+
     const bodyLines = lines.filter(
-      l => !headerLines.has(l) && !footerLines.has(l) && !footnoteLines.has(l)
+      l => !headerLines.has(l) && !footerLines.has(l) && !footnoteLines.has(l) && !figureAssociatedLines.has(l)
     )
 
     // ── Detect additional headings within the body ──
@@ -363,9 +418,34 @@ export class NibParser {
       footer: finalFooter,
       footnotes,
       paragraphs,
-      figures: [],
+      figures,
       listItems: [],
     }
+  }
+
+  // ─── Figure Association ────────────────────────────────────────────────────
+
+  /**
+   * Determine if a text line is spatially associated with a figure image.
+   * Lines that are within the image bounds (with some margin) and are short
+   * enough to be labels/captions are associated.
+   */
+  private isFigureAssociatedLine(image: RawImageRegion, line: TextLine, pageWidth: number): boolean {
+    const lineLeft = Math.min(...line.items.map(i => i.transform[4]))
+    const lineRight = Math.max(...line.items.map(i => i.transform[4] + i.width))
+    const lineCenter = (lineLeft + lineRight) / 2
+    const lineWidth = lineRight - lineLeft
+
+    const regionLeft = image.x - 12
+    const regionRight = image.x + image.width + 12
+    const regionTop = image.y - 24
+    const regionBottom = image.y + image.height + 30
+
+    const horizontallyInside = lineLeft >= regionLeft && lineRight <= regionRight
+    const verticallyInside = line.y >= regionTop && line.y <= regionBottom
+    const shortLine = line.text.length <= 60 || lineWidth <= Math.min(image.width * 0.6, pageWidth * 0.3)
+
+    return verticallyInside && horizontallyInside && lineCenter >= regionLeft && lineCenter <= regionRight && shortLine
   }
 
   // ─── Header Detection ──────────────────────────────────────────────────────

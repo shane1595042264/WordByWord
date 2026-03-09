@@ -202,14 +202,26 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
               </div>
             )}
 
-            {/* Figure captions */}
+            {/* Figures with images */}
             {page.figures.length > 0 && (
-              <div className="my-3 space-y-1">
+              <div className="my-4 space-y-4">
                 {showIndicators && <NibElementBadge type="figure" />}
                 {page.figures.map((fig, i) => (
-                  <p key={i} className="text-sm text-muted-foreground">
-                    <span className="font-semibold">{fig.label}.</span> {fig.caption}
-                  </p>
+                  <div key={i} className="flex flex-col items-center gap-2">
+                    {fig.imageSrc && (
+                      <img
+                        src={fig.imageSrc}
+                        alt={fig.label ? `${fig.label}: ${fig.caption}` : 'Figure'}
+                        className="max-w-full h-auto rounded border border-muted"
+                      />
+                    )}
+                    {(fig.label || fig.caption) && (
+                      <p className="text-sm text-muted-foreground text-center">
+                        {fig.label && <span className="font-semibold">{fig.label}.</span>}
+                        {fig.caption && ` ${fig.caption}`}
+                      </p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
