@@ -50,8 +50,8 @@ function ParagraphRenderer({
   // Standard word-by-word rendering with hover/click
   return (
     <p className="leading-relaxed text-base">
-      {para.sentences.map((sentence: any) => (
-        <span key={`s${sentence.index}`} className="relative">
+      {para.sentences.map((sentence: any, sIdx: number) => (
+        <span key={`s${sIdx}`} className="relative">
           {sentence.words.map((word: NibWord, wIdx: number) => (
             <span key={`w${wIdx}`}>
               <Tooltip>

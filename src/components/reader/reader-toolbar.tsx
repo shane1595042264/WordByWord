@@ -20,6 +20,9 @@ interface ReaderToolbarProps {
   sectionProgress: number
   showIndicators?: boolean
   onToggleIndicators?: () => void
+  /** Sync scroll toggle for side-by-side scroll mode */
+  syncScroll?: boolean
+  onSyncScrollChange?: (sync: boolean) => void
   /** Page-level navigation */
   currentPage: number
   totalSectionPages: number
@@ -37,6 +40,7 @@ export function ReaderToolbar({
   onReadToggle,
   sectionProgress,
   showIndicators, onToggleIndicators,
+  syncScroll, onSyncScrollChange,
   currentPage, totalSectionPages, startPage,
   onPrevPage, onNextPage, canGoPrev, canGoNext,
 }: ReaderToolbarProps) {
@@ -127,6 +131,21 @@ export function ReaderToolbar({
                 </button>
               </BlockTooltip>
             </div>
+          )}
+          {/* Sync scroll toggle — only in side-by-side scroll mode */}
+          {viewMode === 'side-by-side' && readingMode === 'scroll' && (
+            <BlockTooltip label={syncScroll ? 'Disable Sync Scroll' : 'Enable Sync Scroll'}>
+              <button
+                onClick={() => onSyncScrollChange?.(!syncScroll)}
+                className={`px-3 py-1 text-xs border rounded-md transition-colors ${
+                  syncScroll
+                    ? 'bg-blue-500/20 text-blue-600 border-blue-500/30'
+                    : 'hover:bg-muted'
+                }`}
+              >
+                {syncScroll ? '⇅ Sync On' : '⇅ Sync Off'}
+              </button>
+            </BlockTooltip>
           )}
           {/* Page/Section nav */}
           <div className="flex items-center gap-2">

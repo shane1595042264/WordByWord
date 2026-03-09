@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
 
 interface PDFViewerProps {
   pdfBlob: Blob
@@ -12,10 +12,18 @@ interface PDFViewerProps {
   /** Called when page changes in flip mode */
   onPageChange?: (page: number) => void
   onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
+  /** Optional external ref to the scroll container (for sync scrolling) */
+  scrollRef?: RefObject<HTMLDivElement | null>
 }
 
-export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress }: PDFViewerProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef }: PDFViewerProps) {
+  const internalRef = useRef<HTMLDivElement>(null)
+  // Use a callback ref to assign to both internal and external refs
+  const containerRef = internalRef
+  const setContainerRef = useCallback((node: HTMLDivElement | null) => {
+    (internalRef as any).current = node
+    if (scrollRef) (scrollRef as any).current = node
+  }, [scrollRef])
   const [error, setError] = useState<string | null>(null)
   const currentFlipPage = controlledPage ?? startPage
   const totalPages = endPage - startPage + 1
@@ -186,7 +194,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   return (
     <div className="flex flex-col h-full">
       <div
-        ref={containerRef}
+        ref={setContainerRef}
         className={readingMode === 'scroll' ? 'flex-1 overflow-auto' : 'flex-1 overflow-hidden'}
       />
     </div>

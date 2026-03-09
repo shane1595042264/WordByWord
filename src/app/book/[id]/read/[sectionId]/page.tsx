@@ -30,6 +30,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const textScrollRef = useRef<HTMLDivElement>(null)
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
+  const [syncScroll, setSyncScroll] = useState(true)
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
@@ -243,6 +244,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         sectionProgress={sectionProgress}
         showIndicators={showIndicators}
         onToggleIndicators={() => setShowIndicators(prev => !prev)}
+        syncScroll={syncScroll}
+        onSyncScrollChange={setSyncScroll}
         currentPage={currentPage}
         totalSectionPages={totalSectionPages}
         startPage={startPage}
@@ -301,6 +304,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               currentPage={currentPage}
               onPageChange={handlePageChange}
               onPageProgress={handlePageProgress}
+              syncScroll={syncScroll}
             />
           )}
         </div>
