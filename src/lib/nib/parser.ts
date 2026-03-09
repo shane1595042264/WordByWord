@@ -116,7 +116,7 @@ const DEFAULT_CONFIG: Required<NibParserConfig> = {
     /^(chapter|part|section)\s+[\divxlc]+/i,
     /^\d+\s+(chapter|part|section)/i,
     /^[IVXLC]+\.\s/,                           // Roman numeral headings
-    /^(\d+\.)+\d*\s+\S/,                        // Numbered headings like "1.1 Title"
+    /^\d+(?:\.\d+)+\s+\S/,                       // Numbered headings like "1.1 Title" (requires multi-level)
     /^\d+\s+[A-Z][A-Z\s\d]+$/,                  // "14  INTRODUCTION  CHAPTER 1" (page# + ALL-CAPS)
     /^[A-Z][A-Z\s]{10,}\d*$/,                   // ALL-CAPS running title, optional trailing page#
   ],
@@ -251,11 +251,13 @@ export class NibParser {
     title: string,
     author: string,
   ): NibDocumentData {
+    const parsedPages = pages.map(p => this.parsePage(p))
+    this.mergeCrossPageParagraphs(parsedPages)
     return {
       version: 1,
       sourceTitle: title,
       sourceAuthor: author,
-      pages: pages.map(p => this.parsePage(p)),
+      pages: parsedPages,
       createdAt: Date.now(),
     }
   }
@@ -656,6 +658,55 @@ export class NibParser {
     flushParagraph()
 
     return paragraphs
+  }
+
+  /**
+   * Merge paragraphs that were split across page boundaries.
+   * If the last paragraph of page N ends mid-sentence (no terminal punctuation)
+   * and the first paragraph of page N+1 starts with a lowercase letter,
+   * merge them into one paragraph on page N.
+   */
+  private mergeCrossPageParagraphs(pages: NibPageData[]): void {
+    for (let i = 0; i < pages.length - 1; i++) {
+      const currentPage = pages[i]
+      const nextPage = pages[i + 1]
+      if (currentPage.paragraphs.length === 0 || nextPage.paragraphs.length === 0) continue
+
+      const lastPara = currentPage.paragraphs[currentPage.paragraphs.length - 1]
+      const firstParaNext = nextPage.paragraphs[0]
+
+      // Skip if either paragraph is a special block type (subheading, figure-caption, etc.)
+      if (lastPara.blockType && lastPara.blockType !== 'body') continue
+      if (firstParaNext.blockType && firstParaNext.blockType !== 'body') continue
+
+      // Get the full text of the last paragraph on the current page
+      const lastParaText = lastPara.sentences
+        .flatMap(s => s.words.map(w => w.text)).join(' ').trim()
+      if (!lastParaText) continue
+
+      // Get the first character of the next page's first paragraph
+      const firstParaNextText = firstParaNext.sentences
+        .flatMap(s => s.words.map(w => w.text)).join(' ').trim()
+      if (!firstParaNextText) continue
+
+      const lastChar = lastParaText[lastParaText.length - 1]
+      const firstChar = firstParaNextText[0]
+
+      // Merge if last paragraph doesn't end with sentence-ending punctuation
+      // and next paragraph starts with a lowercase letter
+      const endsWithTerminal = /[.!?:;"\u201D]$/.test(lastParaText)
+      const startsWithLower = /^[a-z]/.test(firstChar)
+
+      if (!endsWithTerminal && startsWithLower) {
+        // Merge: append all sentences from the next page's first paragraph
+        // into the current page's last paragraph
+        lastPara.sentences.push(...firstParaNext.sentences)
+        // Remove the first paragraph from the next page
+        nextPage.paragraphs.shift()
+        // Re-index remaining paragraphs on next page
+        nextPage.paragraphs.forEach((p, idx) => { p.index = idx })
+      }
+    }
   }
 
   private buildParagraph(lines: TextLine[], index: number): NibParagraphData {
