@@ -38,6 +38,8 @@ export interface NibTextViewerHandle {
 export interface CursorLineInfo {
   cursorLine: number
   totalLines: number
+  /** Index of the last visual line that contains actual text (words) */
+  lastTextLine: number
   /** Y position of each visual line relative to scroll container content top */
   linePositions: number[]
 }
@@ -273,6 +275,22 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     }
   }, [])
 
+  /** Find the last visual line that has actual words (not blank) */
+  const findLastTextLine = useCallback((lines: { y: number; wordIndices: number[] }[]): number => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].wordIndices.length > 0) return i
+    }
+    return 0
+  }, [])
+
+  /** Build the CursorLineInfo payload from lines and a cursor position */
+  const buildLineInfo = useCallback((cursorLine: number, lines: { y: number; wordIndices: number[] }[]): CursorLineInfo => ({
+    cursorLine,
+    totalLines: lines.length,
+    lastTextLine: findLastTextLine(lines),
+    linePositions: lines.map(l => l.y),
+  }), [findLastTextLine])
+
   /**
    * Find which visual line a word index belongs to, update cursorLineRef,
    * and report via onCursorLineChange (so RelativeLineNumbers stays in sync).
@@ -283,15 +301,11 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     for (let li = 0; li < lines.length; li++) {
       if (lines[li].wordIndices.includes(wordIndex)) {
         cursorLineRef.current = li
-        onCursorLineChange?.({
-          cursorLine: li,
-          totalLines: lines.length,
-          linePositions: lines.map(l => l.y),
-        })
+        onCursorLineChange?.(buildLineInfo(li, lines))
         return
       }
     }
-  }, [computeVisualLines, onCursorLineChange])
+  }, [computeVisualLines, onCursorLineChange, buildLineInfo])
 
   // Find the first visible word in the scroll container
   const findFirstVisibleWordIndex = useCallback((): number => {
@@ -416,11 +430,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (word) setSelectedWord(word)
 
       // Report cursor line change
-      onCursorLineChange?.({
-        cursorLine: curLine,
-        totalLines: lines.length,
-        linePositions: lines.map(l => l.y),
-      })
+      onCursorLineChange?.(buildLineInfo(curLine, lines))
     },
     selectToEnd() {
       // Select all words from current cursor position to the last word
@@ -444,11 +454,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       const lines = computeVisualLines()
       if (lines.length > 0) {
         cursorLineRef.current = lines.length - 1
-        onCursorLineChange?.({
-          cursorLine: lines.length - 1,
-          totalLines: lines.length,
-          linePositions: lines.map(l => l.y),
-        })
+        onCursorLineChange?.(buildLineInfo(lines.length - 1, lines))
       }
     },
     selectToStart() {
@@ -473,11 +479,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       const lines = computeVisualLines()
       if (lines.length > 0) {
         cursorLineRef.current = 0
-        onCursorLineChange?.({
-          cursorLine: 0,
-          totalLines: lines.length,
-          linePositions: lines.map(l => l.y),
-        })
+        onCursorLineChange?.(buildLineInfo(0, lines))
       }
     },
     clearVimSelection() {
@@ -500,55 +502,87 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     selectWordVertical(direction: number) {
       // Move word cursor to the nearest word on the line above (direction=-1) or below (direction=1)
       if (allWords.length === 0) return
+
       const currentSpan = wordSpanRefs.current.get(vimCursorRef.current)
-      if (!currentSpan) return
+      const lines = computeVisualLines()
 
-      const currentRect = currentSpan.getBoundingClientRect()
-      const currentCenterX = currentRect.left + currentRect.width / 2
-      const currentCenterY = currentRect.top + currentRect.height / 2
+      // If we have a current word, try to find the nearest word on the next line
+      if (currentSpan) {
+        const currentRect = currentSpan.getBoundingClientRect()
+        const currentCenterX = currentRect.left + currentRect.width / 2
+        const currentCenterY = currentRect.top + currentRect.height / 2
 
-      let bestIndex = -1
-      let bestDistance = Infinity
+        let bestIndex = -1
+        let bestDistance = Infinity
 
-      // Search through all word spans to find the nearest one on a different visual line
-      for (let i = 0; i < allWords.length; i++) {
-        if (i === vimCursorRef.current) continue
-        const span = wordSpanRefs.current.get(i)
-        if (!span) continue
+        for (let i = 0; i < allWords.length; i++) {
+          if (i === vimCursorRef.current) continue
+          const span = wordSpanRefs.current.get(i)
+          if (!span) continue
 
-        const rect = span.getBoundingClientRect()
-        const centerY = rect.top + rect.height / 2
+          const rect = span.getBoundingClientRect()
+          const centerY = rect.top + rect.height / 2
 
-        // Must be on a different line in the correct direction
-        const lineThreshold = currentRect.height * 0.4 // at least 40% of a line height away
-        if (direction > 0 && centerY <= currentCenterY + lineThreshold) continue
-        if (direction < 0 && centerY >= currentCenterY - lineThreshold) continue
+          const lineThreshold = currentRect.height * 0.4
+          if (direction > 0 && centerY <= currentCenterY + lineThreshold) continue
+          if (direction < 0 && centerY >= currentCenterY - lineThreshold) continue
 
-        // Prefer words that are close horizontally (same column) and on the nearest line
-        const verticalDist = Math.abs(centerY - currentCenterY)
-        const horizontalDist = Math.abs((rect.left + rect.width / 2) - currentCenterX)
-        // Weight vertical distance more heavily to prefer the nearest line
-        const distance = verticalDist * 3 + horizontalDist
+          const verticalDist = Math.abs(centerY - currentCenterY)
+          const horizontalDist = Math.abs((rect.left + rect.width / 2) - currentCenterX)
+          const distance = verticalDist * 3 + horizontalDist
 
-        if (distance < bestDistance) {
-          bestDistance = distance
-          bestIndex = i
-        }
-      }
-
-      if (bestIndex >= 0) {
-        setVimCursor(bestIndex)
-        const word = allWords[bestIndex]
-        if (word) {
-          setSelectedWord(word)
-          const span = wordSpanRefs.current.get(bestIndex)
-          if (span) {
-            span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          if (distance < bestDistance) {
+            bestDistance = distance
+            bestIndex = i
           }
-          // Sync cursor line with selected word
-          reportCursorLineForWord(bestIndex)
+        }
+
+        if (bestIndex >= 0) {
+          setVimCursor(bestIndex)
+          const word = allWords[bestIndex]
+          if (word) {
+            setSelectedWord(word)
+            const span = wordSpanRefs.current.get(bestIndex)
+            if (span) {
+              span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+            }
+            reportCursorLineForWord(bestIndex)
+          }
+          return
         }
       }
+
+      // No word found in direction — move cursor line into blank area beyond text
+      if (lines.length === 0) return
+      const newLine = Math.max(0, Math.min(lines.length - 1, cursorLineRef.current + direction))
+      if (newLine === cursorLineRef.current) return // already at absolute edge
+      cursorLineRef.current = newLine
+
+      // If the new line has words, snap to the first word on it
+      const line = lines[newLine]
+      if (line && line.wordIndices.length > 0) {
+        const idx = line.wordIndices[0]
+        setVimCursor(idx)
+        const word = allWords[idx]
+        if (word) setSelectedWord(word)
+        const span = wordSpanRefs.current.get(idx)
+        if (span) span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      } else {
+        // Blank line — clear word selection, just move the cursor line indicator
+        setSelectedWord(null)
+        // Scroll to keep cursor line visible
+        const container = scrollContainerRef?.current
+        if (container) {
+          const lineY = line.y
+          const st = container.scrollTop
+          const vh = container.clientHeight
+          if (lineY < st || lineY > st + vh - LINE_HEIGHT) {
+            container.scrollTo({ top: Math.max(0, lineY - vh / 2), behavior: 'smooth' })
+          }
+        }
+      }
+
+      onCursorLineChange?.(buildLineInfo(newLine, lines))
     },
     selectSentenceVertical(direction: number) {
       // Move to the sentence whose first word is on the nearest line above/below
@@ -661,34 +695,22 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
 
       // Report cursor line change
-      onCursorLineChange?.({
-        cursorLine: newLine,
-        totalLines: lines.length,
-        linePositions: lines.map(l => l.y),
-      })
+      onCursorLineChange?.(buildLineInfo(newLine, lines))
     },
     getCursorLineInfo() {
       const lines = computeVisualLines()
-      return {
-        cursorLine: cursorLineRef.current,
-        totalLines: lines.length,
-        linePositions: lines.map(l => l.y),
-      }
+      return buildLineInfo(cursorLineRef.current, lines)
     },
-  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor])
+  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {
     if (!onCursorLineChange || allWords.length === 0) return
     const lines = computeVisualLines()
     if (lines.length > 0) {
-      onCursorLineChange({
-        cursorLine: cursorLineRef.current,
-        totalLines: lines.length,
-        linePositions: lines.map(l => l.y),
-      })
+      onCursorLineChange(buildLineInfo(cursorLineRef.current, lines))
     }
-  }, [allWords, computeVisualLines, onCursorLineChange])
+  }, [allWords, computeVisualLines, onCursorLineChange, buildLineInfo])
 
   // Report initial line count after content renders
   useEffect(() => {

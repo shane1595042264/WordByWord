@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useCallback, useRef, useState, useEffect } from 'react'
+import { use, useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
@@ -40,12 +40,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
   const [totalVisualLines, setTotalVisualLines] = useState(0)
+  const [lastTextLine, setLastTextLine] = useState(0)
   const [linePositions, setLinePositions] = useState<number[]>([])
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
     setCursorLine(info.cursorLine)
     setTotalVisualLines(info.totalLines)
+    setLastTextLine(info.lastTextLine)
     setLinePositions(info.linePositions)
   }, [])
 
@@ -100,6 +102,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       return () => clearTimeout(t)
     }
   }, [vimEnabled])
+
+  // Compute effective progress: vim mode = cursor line / last text line, otherwise scroll-based
+  const effectiveProgress = useMemo(() => {
+    if (vimEnabled && lastTextLine > 0) {
+      return Math.min(100, Math.round((cursorLine / lastTextLine) * 100))
+    }
+    return sectionProgress
+  }, [vimEnabled, cursorLine, lastTextLine, sectionProgress])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
@@ -331,7 +341,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         readingMode={readingMode}
         onReadingModeChange={setReadingMode}
         onReadToggle={refreshReadStatus}
-        sectionProgress={sectionProgress}
+        sectionProgress={effectiveProgress}
         showIndicators={showIndicators}
         onToggleIndicators={() => setShowIndicators(prev => !prev)}
         syncScroll={syncScroll}
