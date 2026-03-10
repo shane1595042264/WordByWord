@@ -18,21 +18,21 @@ export const RULEBOOK: VimRule[] = [
 
   {
     id: 'normal:j',
-    label: 'Scroll down',
+    label: 'Cursor down',
     modes: ['normal'],
     key: 'j',
-    action: { type: 'scroll', direction: 1, magnitude: 1 },
+    action: { type: 'cursor-line', direction: 1 },
     acceptsCount: true,
-    description: 'Scroll down [count] lines',
+    description: 'Move cursor down [count] line(s)',
   },
   {
     id: 'normal:k',
-    label: 'Scroll up',
+    label: 'Cursor up',
     modes: ['normal'],
     key: 'k',
-    action: { type: 'scroll', direction: -1, magnitude: 1 },
+    action: { type: 'cursor-line', direction: -1 },
     acceptsCount: true,
-    description: 'Scroll up [count] lines',
+    description: 'Move cursor up [count] line(s)',
   },
   {
     id: 'normal:d',

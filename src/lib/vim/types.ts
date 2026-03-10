@@ -23,6 +23,7 @@ export type VimMode = 'normal' | 'select'
 export type VimActionType =
   | 'scroll'              // scroll the text pane by N lines / half-pages
   | 'scroll-to'           // scroll to top / bottom
+  | 'cursor-line'         // move the cursor line up/down (like j/k in a text editor)
   | 'select-word'         // select next/prev word
   | 'select-word-vertical' // move word cursor to line above/below
   | 'select-sentence'     // select next/prev sentence

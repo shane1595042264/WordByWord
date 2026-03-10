@@ -24,6 +24,8 @@ interface UseVimModeOptions {
   onConfirmSelection?: () => void
   /** Called when word cursor should move vertically (j/k in select mode) */
   onSelectWordVertical?: (direction: number) => void
+  /** Called when the cursor line moves in normal mode (j/k) */
+  onCursorLine?: (direction: number) => void
   /** Custom rulebook (with user keybinding overrides applied) */
   rulebook?: VimRule[]
 }
@@ -46,6 +48,7 @@ export function useVimMode({
   onClearSelection,
   onConfirmSelection,
   onSelectWordVertical,
+  onCursorLine,
   rulebook = RULEBOOK,
 }: UseVimModeOptions): UseVimModeReturn {
   const [mode, setMode] = useState<VimMode>('normal')
@@ -146,6 +149,15 @@ export function useVimMode({
         dispatchScrollTo(rule.action.direction ?? 1)
         break
 
+      case 'cursor-line':
+        if (onCursorLine) {
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) {
+            onCursorLine(dir)
+          }
+        }
+        break
+
       case 'select-word':
         if (onSelectWord) {
           const dir = rule.action.direction ?? 1
@@ -207,7 +219,7 @@ export function useVimMode({
 
     // Reset count buffer after action
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
 
   // ── Attach global listener ──
   useEffect(() => {

@@ -7,7 +7,7 @@ import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
 import { PDFViewer } from '@/components/reader/pdf-viewer'
 import { TextViewer } from '@/components/reader/text-viewer'
-import { NibTextViewer, type NibTextViewerHandle } from '@/components/reader/nib-text-viewer'
+import { NibTextViewer, type NibTextViewerHandle, type CursorLineInfo } from '@/components/reader/nib-text-viewer'
 import { SideBySideViewer } from '@/components/reader/side-by-side-viewer'
 import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
@@ -38,6 +38,16 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [vimEnabled, setVimEnabled] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
+  const [cursorLine, setCursorLine] = useState(0)
+  const [totalVisualLines, setTotalVisualLines] = useState(0)
+  const [linePositions, setLinePositions] = useState<number[]>([])
+
+  // Hoisted callback for cursor line changes (avoids useCallback in JSX)
+  const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
+    setCursorLine(info.cursorLine)
+    setTotalVisualLines(info.totalLines)
+    setLinePositions(info.linePositions)
+  }, [])
 
   // Load user keymap overrides on mount
   useEffect(() => {
@@ -69,6 +79,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }, []),
     onSelectWordVertical: useCallback((direction: number) => {
       nibTextViewerRef.current?.selectWordVertical(direction)
+    }, []),
+    onCursorLine: useCallback((direction: number) => {
+      nibTextViewerRef.current?.moveCursorLine(direction)
     }, []),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
@@ -342,6 +355,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                 <RelativeLineNumbers
                   scrollContainerRef={textScrollRef}
                   enabled={vimEnabled}
+                  cursorLine={cursorLine}
+                  totalLines={totalVisualLines}
+                  linePositions={linePositions}
                 />
               <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
                 {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
@@ -358,6 +374,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     showIndicators={showIndicators}
                     scrollContainerRef={textScrollRef}
                     bookTitle={book.title}
+                    onCursorLineChange={handleCursorLineChange}
                   />
                 ) : (
                   <TextViewer text={section.extractedText} sectionTitle={section.title} />

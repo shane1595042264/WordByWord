@@ -39,7 +39,7 @@ export function VimStatusBar({ mode, countBuffer, enabled }: VimStatusBarProps) 
         <span className="text-amber-400">{countBuffer}</span>
       )}
       <span className="ml-auto text-zinc-500 text-[10px]">
-        {mode === 'normal' ? 'j/k scroll · d/u page · v select · ? help' : 'w word · s sent · V line · Esc exit'}
+        {mode === 'normal' ? 'j/k cursor · d/u page · v select · ? help' : 'w word · s sent · V line · Esc exit'}
       </span>
     </div>
   )
