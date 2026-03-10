@@ -593,22 +593,48 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     },
   }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord])
 
+  // Recompute lines and report to parent
+  const reportLines = useCallback(() => {
+    if (!onCursorLineChange || allWords.length === 0) return
+    const lines = computeVisualLines()
+    if (lines.length > 0) {
+      onCursorLineChange({
+        cursorLine: cursorLineRef.current,
+        totalLines: lines.length,
+        linePositions: lines.map(l => l.y),
+      })
+    }
+  }, [allWords, computeVisualLines, onCursorLineChange])
+
   // Report initial line count after content renders
   useEffect(() => {
     if (!onCursorLineChange || allWords.length === 0) return
     // Delay slightly to ensure DOM has rendered word spans
-    const timer = setTimeout(() => {
-      const lines = computeVisualLines()
-      if (lines.length > 0) {
-        onCursorLineChange({
-          cursorLine: cursorLineRef.current,
-          totalLines: lines.length,
-          linePositions: lines.map(l => l.y),
-        })
-      }
-    }, 200)
+    const timer = setTimeout(reportLines, 200)
     return () => clearTimeout(timer)
-  }, [allWords.length, computeVisualLines, onCursorLineChange])
+  }, [allWords.length, reportLines, onCursorLineChange])
+
+  // Recompute visual lines when the container resizes (responsive text reflow)
+  useEffect(() => {
+    const container = scrollContainerRef?.current
+    if (!container || allWords.length === 0) return
+
+    let rafId: number | null = null
+    const observer = new ResizeObserver(() => {
+      // Debounce via rAF to avoid thrashing during smooth resize
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        reportLines()
+        rafId = null
+      })
+    })
+    observer.observe(container)
+
+    return () => {
+      observer.disconnect()
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [scrollContainerRef, allWords.length, reportLines])
 
   const handleWordClick = useCallback((word: NibWord, el: HTMLElement) => {
     setSelectedWord(word)
