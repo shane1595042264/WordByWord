@@ -3,7 +3,8 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { PDFViewer, type HighlightWordInfo, type PDFViewerHandle } from './pdf-viewer'
 import { TextViewer } from './text-viewer'
-import { NibTextViewer, type NibTextViewerHandle } from './nib-text-viewer'
+import { NibTextViewer, type NibTextViewerHandle, type CursorLineInfo } from './nib-text-viewer'
+import { RelativeLineNumbers } from './relative-line-numbers'
 import type { NibDocument, NibWord } from '@/lib/nib'
 
 interface SideBySideViewerProps {
@@ -27,15 +28,44 @@ interface SideBySideViewerProps {
   vimMode?: 'normal' | 'sentence' | 'visual'
   /** Original section end page (before overlap extension) for divider */
   sectionEndPage?: number
+  /** Whether vim mode is enabled (for relative line numbers) */
+  vimEnabled?: boolean
+  /** Called with text-side scroll progress (0-100) so parent can use it for progress bar */
+  onTextScrollProgress?: (percent: number) => void
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, vimEnabled = false, onTextScrollProgress }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const pdfViewerRef = useRef<PDFViewerHandle>(null)
 
   // ── Word highlight state ──
   const [highlightWord, setHighlightWord] = useState<HighlightWordInfo | null>(null)
+
+  // ── Relative line numbers state (for vim mode) ──
+  const [cursorLine, setCursorLine] = useState(0)
+  const [totalVisualLines, setTotalVisualLines] = useState(0)
+  const [linePositions, setLinePositions] = useState<number[]>([])
+
+  const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
+    setCursorLine(info.cursorLine)
+    setTotalVisualLines(info.totalLines)
+    setLinePositions(info.linePositions)
+  }, [])
+
+  // ── Text-side scroll progress tracking ──
+  const handleTextScrollForProgress = useCallback(() => {
+    const el = textRef.current
+    if (!el || !onTextScrollProgress) return
+    const { scrollTop, scrollHeight, clientHeight } = el
+    const maxScroll = scrollHeight - clientHeight
+    if (maxScroll <= 0) {
+      onTextScrollProgress(100)
+      return
+    }
+    const percent = Math.min(100, Math.round((scrollTop / maxScroll) * 100))
+    onTextScrollProgress(percent)
+  }, [onTextScrollProgress])
 
   // Track which PDF page is currently synced to avoid redundant scrolls
   const lastSyncedPageRef = useRef<number>(0)
@@ -143,29 +173,45 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
     }
   }, [])
 
+  // Combined scroll handler: debounced content sync + text progress
+  const combinedTextScroll = useCallback(() => {
+    debouncedTextScroll()
+    handleTextScrollForProgress()
+  }, [debouncedTextScroll, handleTextScrollForProgress])
+
   return (
     <div className="grid grid-cols-2 h-full min-h-0">
-      <div
-        ref={textRef}
-        className="h-full min-h-0 overflow-auto"
-        onScroll={debouncedTextScroll}
-      >
-        <div className="p-4">
-          {nibDocument ? (
-            <NibTextViewer
-              ref={nibTextViewerRef}
-              nibDocument={nibDocument}
-              sectionTitle={sectionTitle}
-              showIndicators={showIndicators}
-              onWordSelect={handleWordSelect}
-              onDeselect={handleDeselect}
-              scrollContainerRef={textRef}
-              bookTitle={bookTitle}
-              vimMode={vimMode}
-            />
-          ) : (
-            <TextViewer text={text} sectionTitle={sectionTitle} />
-          )}
+      <div className="h-full min-h-0 flex">
+        <RelativeLineNumbers
+          scrollContainerRef={textRef}
+          enabled={vimEnabled}
+          cursorLine={cursorLine}
+          totalLines={totalVisualLines}
+          linePositions={linePositions}
+        />
+        <div
+          ref={textRef}
+          className="h-full min-h-0 overflow-auto flex-1"
+          onScroll={combinedTextScroll}
+        >
+          <div className="p-4">
+            {nibDocument ? (
+              <NibTextViewer
+                ref={nibTextViewerRef}
+                nibDocument={nibDocument}
+                sectionTitle={sectionTitle}
+                showIndicators={showIndicators}
+                onWordSelect={handleWordSelect}
+                onDeselect={handleDeselect}
+                scrollContainerRef={textRef}
+                bookTitle={bookTitle}
+                vimMode={vimMode}
+                onCursorLineChange={handleCursorLineChange}
+              />
+            ) : (
+              <TextViewer text={text} sectionTitle={sectionTitle} />
+            )}
+          </div>
         </div>
       </div>
       <div className="h-full min-h-0 border-l">

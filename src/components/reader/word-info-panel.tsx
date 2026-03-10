@@ -102,6 +102,27 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onClose])
 
+  // Click outside panel closes it and deselects word
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      const panel = panelRef.current
+      if (!panel) return
+      // If click is inside the panel, ignore
+      if (panel.contains(e.target as Node)) return
+      // If click is on the anchor word itself, ignore (let word click handler deal with it)
+      if (anchorEl && anchorEl.contains(e.target as Node)) return
+      onClose()
+    }
+    // Use a small delay to avoid closing immediately from the click that opened the panel
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handleMouseDown)
+    }, 100)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleMouseDown)
+    }
+  }, [onClose, anchorEl])
+
   // Load settings on mount
   useEffect(() => {
     import('@/lib/services/settings-service').then(({ SettingsService }) => {

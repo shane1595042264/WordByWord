@@ -43,6 +43,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [lastTextLine, setLastTextLine] = useState(0)
   const [linePositions, setLinePositions] = useState<number[]>([])
   const [yankFlash, setYankFlash] = useState('')
+  const [sideBySideTextProgress, setSideBySideTextProgress] = useState(0)
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
@@ -127,12 +128,16 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   }, [vimEnabled])
 
   // Compute effective progress: vim mode = cursor line / last text line, otherwise scroll-based
+  // In side-by-side mode, use text-side progress instead of PDF-side progress
   const effectiveProgress = useMemo(() => {
     if (vimEnabled && lastTextLine > 0) {
       return Math.min(100, Math.round((cursorLine / lastTextLine) * 100))
     }
+    if (viewMode === 'side-by-side') {
+      return sideBySideTextProgress
+    }
     return sectionProgress
-  }, [vimEnabled, cursorLine, lastTextLine, sectionProgress])
+  }, [vimEnabled, cursorLine, lastTextLine, sectionProgress, viewMode, sideBySideTextProgress])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
@@ -465,6 +470,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   bookTitle={book.title}
                   vimMode={vim.mode}
                   sectionEndPage={section.endPage}
+                  vimEnabled={vimEnabled}
+                  onTextScrollProgress={setSideBySideTextProgress}
                 />
               </div>
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />
