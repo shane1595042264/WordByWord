@@ -13,6 +13,12 @@ export interface TranslationResult {
   partOfSpeech: string
 }
 
+/** Result from sentence translation */
+export interface SentenceTranslationResult {
+  /** The translated sentence */
+  translation: string
+}
+
 /** Result from the explanation API */
 export interface ExplanationResult {
   explanation: string
@@ -76,6 +82,26 @@ Respond in this exact JSON format only, no other text:
         partOfSpeech: '',
       }
     }
+  }
+
+  /**
+   * Translate an entire sentence in the context of its paragraph.
+   * Returns a single clean translated sentence — no extras.
+   */
+  async translateSentence(
+    sentence: string,
+    paragraphText: string,
+    targetLang: TargetLanguage,
+  ): Promise<SentenceTranslationResult> {
+    const langName = getLangLabel(targetLang)
+    const prompt = `Translate the following English sentence into ${langName}. Use the surrounding paragraph for context to ensure accuracy. Return ONLY the translated sentence, nothing else.
+
+Sentence: "${sentence}"
+
+Paragraph context: "${paragraphText}"`
+
+    const translation = await this.callClaude(prompt, 300)
+    return { translation: translation.trim().replace(/^["']|["']$/g, '') }
   }
 
   /**

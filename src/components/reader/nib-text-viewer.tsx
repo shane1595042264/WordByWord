@@ -22,6 +22,8 @@ export interface NibTextViewerHandle {
   confirmSelection: () => void
   /** Move word cursor vertically (to nearest word on line above/below) */
   selectWordVertical: (direction: number) => void
+  /** Move sentence cursor vertically to sentence on next/prev line */
+  selectSentenceVertical: (direction: number) => void
   /** Move cursor line up/down in normal mode. Returns { cursorLine, totalLines } */
   moveCursorLine: (delta: number) => void
   /** Get current cursor line info */
@@ -51,6 +53,8 @@ interface NibTextViewerProps {
   bookTitle?: string
   /** Called when cursor line changes (for relative line numbers) */
   onCursorLineChange?: (info: CursorLineInfo) => void
+  /** Current select sub-mode (word or sentence) — controls panel behavior */
+  selectSubMode?: 'word' | 'sentence'
 }
 
 /**
@@ -145,7 +149,7 @@ function ParagraphRenderer({
  * Element type indicators can be toggled on/off for testing/debugging.
  */
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange },
+  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, selectSubMode = 'word' },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -189,30 +193,53 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
   // Cursor line tracking for normal mode j/k
   const cursorLineRef = useRef(0)
 
+  const LINE_HEIGHT = 24 // standard line height for visual line grid
+
   /**
-   * Compute visual lines by grouping word spans that share the same Y coordinate.
-   * Returns an array of { y, wordIndices[] } sorted top-to-bottom.
+   * Compute visual lines covering the FULL content height.
+   * Creates evenly-spaced lines (every LINE_HEIGHT px) from top to bottom,
+   * including blank areas (paragraph gaps, before/after headers, images).
+   * Each line records which word indices fall on it.
    */
   const computeVisualLines = useCallback((): { y: number; wordIndices: number[] }[] => {
-    const lineMap = new Map<number, number[]>() // rounded Y -> word flat indices
+    const container = scrollContainerRef?.current
+    if (!container) return []
+
+    const contentHeight = container.scrollHeight
+    if (contentHeight === 0) return []
+
+    const containerRect = container.getBoundingClientRect()
+    const scrollTop = container.scrollTop
+
+    // Build a map of which word belongs at which Y position
+    const wordYMap: { index: number; y: number }[] = []
     for (let i = 0; i < allWords.length; i++) {
       const span = wordSpanRefs.current.get(i)
       if (!span) continue
       const rect = span.getBoundingClientRect()
-      const container = scrollContainerRef?.current
-      // Use position relative to the scroll container, not viewport
-      const y = container
-        ? rect.top - container.getBoundingClientRect().top + container.scrollTop
-        : rect.top
-      // Round to nearest 4px to group words on the same visual line
-      const roundedY = Math.round(y / 4) * 4
-      if (!lineMap.has(roundedY)) lineMap.set(roundedY, [])
-      lineMap.get(roundedY)!.push(i)
+      // Absolute Y within the scroll content
+      const absY = rect.top - containerRect.top + scrollTop
+      wordYMap.push({ index: i, y: absY })
     }
-    // Sort by Y position
-    return [...lineMap.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([y, wordIndices]) => ({ y, wordIndices }))
+
+    // Create evenly-spaced lines covering the full content
+    const totalLines = Math.max(1, Math.ceil(contentHeight / LINE_HEIGHT))
+    const lines: { y: number; wordIndices: number[] }[] = []
+
+    for (let lineIdx = 0; lineIdx < totalLines; lineIdx++) {
+      const lineY = lineIdx * LINE_HEIGHT
+      const lineBottom = lineY + LINE_HEIGHT
+      // Find words whose Y position falls within this line
+      const indices: number[] = []
+      for (const { index, y } of wordYMap) {
+        if (y >= lineY && y < lineBottom) {
+          indices.push(index)
+        }
+      }
+      lines.push({ y: lineY, wordIndices: indices })
+    }
+
+    return lines
   }, [allWords, scrollContainerRef])
 
   // Register a word span element for a given flat index
@@ -402,6 +429,87 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         }
       }
     },
+    selectSentenceVertical(direction: number) {
+      // Move to the sentence whose first word is on the nearest line above/below
+      if (allSentences.length === 0) return
+
+      // Get Y of the first word of current sentence
+      const curSent = allSentences[vimSentenceCursorRef.current]
+      if (!curSent || curSent.words.length === 0) return
+
+      // Find flat index of the first word of the current sentence
+      let curFirstIdx = 0
+      for (let i = 0; i < allWords.length; i++) {
+        if (allWords[i] === curSent.words[0]) { curFirstIdx = i; break }
+      }
+      const currentSpan = wordSpanRefs.current.get(curFirstIdx)
+      if (!currentSpan) return
+
+      const currentRect = currentSpan.getBoundingClientRect()
+      const currentCenterY = currentRect.top + currentRect.height / 2
+
+      // Find the sentence whose first word is on a different line in the correct direction
+      let bestSentIdx = -1
+      let bestDist = Infinity
+
+      for (let si = 0; si < allSentences.length; si++) {
+        if (si === vimSentenceCursorRef.current) continue
+        const sent = allSentences[si]
+        if (sent.words.length === 0) continue
+
+        // Find flat index of first word
+        let firstIdx = -1
+        for (let i = 0; i < allWords.length; i++) {
+          if (allWords[i] === sent.words[0]) { firstIdx = i; break }
+        }
+        if (firstIdx < 0) continue
+
+        const span = wordSpanRefs.current.get(firstIdx)
+        if (!span) continue
+
+        const rect = span.getBoundingClientRect()
+        const centerY = rect.top + rect.height / 2
+
+        // Must be in the correct direction
+        const lineThreshold = currentRect.height * 0.4
+        if (direction > 0 && centerY <= currentCenterY + lineThreshold) continue
+        if (direction < 0 && centerY >= currentCenterY - lineThreshold) continue
+
+        const dist = Math.abs(centerY - currentCenterY)
+        if (dist < bestDist) {
+          bestDist = dist
+          bestSentIdx = si
+        }
+      }
+
+      if (bestSentIdx >= 0) {
+        vimSentenceCursorRef.current = bestSentIdx
+        const sent = allSentences[bestSentIdx]
+        const firstWord = sent.words[0]
+        setSelectedWord(firstWord)
+
+        // Highlight ALL words in the sentence
+        const indices = new Set<number>()
+        for (const w of sent.words) {
+          for (let i = 0; i < allWords.length; i++) {
+            if (allWords[i] === w) { indices.add(i); break }
+          }
+        }
+        setHighlightedIndices(indices)
+
+        // Find flat index of first word and sync cursor
+        let flatIdx = 0
+        for (let i = 0; i < allWords.length; i++) {
+          if (allWords[i] === firstWord) { flatIdx = i; break }
+        }
+        vimCursorRef.current = flatIdx
+        const span = wordSpanRefs.current.get(flatIdx)
+        if (span) {
+          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+        reportCursorLineForWord(flatIdx)
+      }
+    },
     moveCursorLine(delta: number) {
       const lines = computeVisualLines()
       if (lines.length === 0) return
@@ -528,7 +636,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               const isSubheading = blockType === 'subheading'
               const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
 
-              // Render sub-headings as styled h3 elements
+              // Render sub-headings through ParagraphRenderer so words are selectable
               if (isSubheading) {
                 const text = para.sentences.map((s: any) => s.text).join(' ')
                 // Skip if this subheading duplicates the section title
@@ -543,7 +651,19 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                         <NibElementBadge type={blockType} />
                       </div>
                     )}
-                    <h3 className="text-lg font-bold">{text}</h3>
+                    <div className="text-lg font-bold" role="heading" aria-level={3}>
+                      <ParagraphRenderer
+                        para={para}
+                        pageNumber={page.pageNumber}
+                        selectedWord={selectedWord}
+                        onWordClick={handleWordClick}
+                        flatIndexStart={flatOffset}
+                        registerWordSpan={registerWordSpan}
+                        vimSelectedIndices={vimSelectedIndices}
+                        highlightedIndices={highlightedIndices}
+                        showIndicators={false}
+                      />
+                    </div>
                   </div>
                 )
               }
@@ -652,6 +772,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             onClose={handleClosePanel}
             bookTitle={bookTitle}
             sectionTitle={sectionTitle}
+            panelMode={selectSubMode}
           />
         )}
     </div>

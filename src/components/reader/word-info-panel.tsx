@@ -16,6 +16,8 @@ interface WordInfoPanelProps {
   bookTitle?: string
   /** Section title for vocab context */
   sectionTitle?: string
+  /** Panel mode: 'word' shows word translation, 'sentence' shows sentence translation */
+  panelMode?: 'word' | 'sentence'
 }
 
 /**
@@ -26,7 +28,7 @@ interface WordInfoPanelProps {
  *  - Lazy-loaded explanation
  *  - Draggable + pinnable
  */
-export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTitle, sectionTitle }: WordInfoPanelProps) {
+export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTitle, sectionTitle, panelMode = 'word' }: WordInfoPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isPinned, setIsPinned] = useState(false)
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
@@ -43,6 +45,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   const [explanation, setExplanation] = useState<string | null>(null)
   const [explaining, setExplaining] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
+
+  // Sentence translation state
+  const [sentenceTranslation, setSentenceTranslation] = useState<string | null>(null)
+  const [sentenceTranslating, setSentenceTranslating] = useState(false)
 
   // Vocab state
   const [addedToVocab, setAddedToVocab] = useState(false)
@@ -115,6 +121,43 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
     return () => { cancelled = true }
   }, [word, apiKey, targetLang])
+
+  // Auto-translate sentence when in sentence mode
+  useEffect(() => {
+    if (panelMode !== 'sentence' || !apiKey) {
+      setSentenceTranslation(null)
+      setSentenceTranslating(false)
+      return
+    }
+
+    let cancelled = false
+    setSentenceTranslating(true)
+    setSentenceTranslation(null)
+
+    const sentenceText = word.sentence.text
+    const paragraphText = word.paragraph?.sentences
+      ? word.paragraph.sentences.map((s: any) => s.text).join(' ')
+      : sentenceText
+
+    import('@/lib/services/translation-service').then(({ TranslationService }) => {
+      const svc = new TranslationService(apiKey)
+      svc.translateSentence(sentenceText, paragraphText, targetLang)
+        .then(result => {
+          if (!cancelled) {
+            setSentenceTranslation(result.translation)
+            setSentenceTranslating(false)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSentenceTranslation('Translation failed.')
+            setSentenceTranslating(false)
+          }
+        })
+    })
+
+    return () => { cancelled = true }
+  }, [word, apiKey, targetLang, panelMode])
 
   // Load explanation lazily
   const handleLoadExplanation = useCallback(async () => {
@@ -275,126 +318,158 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
         {/* Main content */}
         <div className="px-4 py-3">
-          {/* Word + pronunciation row */}
-          <div className="flex items-baseline gap-2 mb-0.5">
-            <span className="font-bold text-xl leading-tight">{word.text}</span>
-            {translation?.pronunciation && (
-              <span className="text-sm text-muted-foreground/70 font-mono">
-                {translation.pronunciation}
-              </span>
-            )}
-            {translating && (
-              <span className="text-xs text-muted-foreground/50 animate-pulse">...</span>
-            )}
-          </div>
-
-          {/* Part of speech */}
-          {translation?.partOfSpeech && (
-            <span className="text-xs text-muted-foreground/60 italic">
-              {translation.partOfSpeech}
-            </span>
-          )}
-
-          {/* Translation */}
-          {translating ? (
-            <div className="mt-2 mb-2">
-              <div className="h-4 w-32 bg-muted/40 rounded animate-pulse" />
-            </div>
-          ) : translationError ? (
-            <div className="mt-2 mb-2 text-xs text-red-400">
-              {translationError}
-            </div>
-          ) : translation ? (
-            <div className="mt-2 mb-2">
-              <p className="text-base text-foreground/90 leading-snug">
-                {translation.translation}
+          {panelMode === 'sentence' ? (
+            /* ── Sentence mode: clean sentence translation ── */
+            <>
+              {/* Original sentence */}
+              <p className="text-sm text-foreground/80 leading-relaxed mb-3">
+                {word.sentence.text}
               </p>
-            </div>
-          ) : !apiKey ? (
-            <div className="mt-2 mb-2 text-xs text-muted-foreground/60">
-              Set your Anthropic API key in Settings to enable translation.
-            </div>
-          ) : null}
 
-          {/* Sentence context (subtle) */}
-          <p className="text-xs text-muted-foreground/50 leading-relaxed mb-3 line-clamp-2">
-            {word.sentence.text}
-          </p>
+              {/* Divider */}
+              <div className="border-t border-border/20 mb-3" />
 
-          {/* Divider */}
-          <div className="border-t border-border/20 mb-2" />
-
-          {/* Action buttons row */}
-          <div className="flex items-center justify-between">
-            <ShortcutButton
-              shortcutId="word-panel:explain"
-              label="See explanation"
-              defaultKeys="e"
-              onClick={handleLoadExplanation}
-              disabled={!translation || (showExplanation && !!explanation)}
-              showHint={true}
-              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted/50"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
-              <span>{showExplanation ? 'Explanation' : 'See explanation'}</span>
-            </ShortcutButton>
-
-            <ShortcutButton
-              shortcutId="word-panel:add-vocab"
-              label="Add to vocabulary"
-              defaultKeys="a"
-              onClick={handleAddVocab}
-              disabled={!translation || addedToVocab || checkingVocab}
-              showHint={true}
-              className={`text-xs px-2 py-1 rounded-md ${
-                addedToVocab
-                  ? 'text-green-500'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-              }`}
-            >
-              {addedToVocab ? (
-                <>
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M20 6L9 17l-5-5" />
-                  </svg>
-                  <span>Added</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                  <span>Add to vocab</span>
-                </>
-              )}
-            </ShortcutButton>
-          </div>
-
-          {/* Explanation area (lazy loaded, collapsible) */}
-          {showExplanation && (
-            <div className="mt-2 pt-2 border-t border-border/20">
-              {explaining ? (
-                <div className="space-y-1.5">
-                  <div className="h-3 w-full bg-muted/40 rounded animate-pulse" />
-                  <div className="h-3 w-4/5 bg-muted/40 rounded animate-pulse" />
-                  <div className="h-3 w-3/5 bg-muted/40 rounded animate-pulse" />
+              {/* Translated sentence */}
+              {sentenceTranslating ? (
+                <div className="space-y-1.5 mb-2">
+                  <div className="h-4 w-full bg-muted/40 rounded animate-pulse" />
+                  <div className="h-4 w-4/5 bg-muted/40 rounded animate-pulse" />
                 </div>
-              ) : explanation ? (
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {explanation}
+              ) : sentenceTranslation ? (
+                <p className="text-base text-foreground/90 leading-relaxed">
+                  {sentenceTranslation}
+                </p>
+              ) : !apiKey ? (
+                <p className="text-xs text-muted-foreground/60">
+                  Set your Anthropic API key in Settings to enable translation.
                 </p>
               ) : null}
-            </div>
-          )}
+            </>
+          ) : (
+            /* ── Word mode: full word info panel ── */
+            <>
+              {/* Word + pronunciation row */}
+              <div className="flex items-baseline gap-2 mb-0.5">
+                <span className="font-bold text-xl leading-tight">{word.text}</span>
+                {translation?.pronunciation && (
+                  <span className="text-sm text-muted-foreground/70 font-mono">
+                    {translation.pronunciation}
+                  </span>
+                )}
+                {translating && (
+                  <span className="text-xs text-muted-foreground/50 animate-pulse">...</span>
+                )}
+              </div>
 
-          {/* Page info (very subtle) */}
-          {showIndicators && (
-            <p className="text-[10px] text-muted-foreground/30 mt-2">
-              p.{word.page.pageNumber} · para.{word.paragraph.index + 1} · w.{word.index + 1}
-            </p>
+              {/* Part of speech */}
+              {translation?.partOfSpeech && (
+                <span className="text-xs text-muted-foreground/60 italic">
+                  {translation.partOfSpeech}
+                </span>
+              )}
+
+              {/* Translation */}
+              {translating ? (
+                <div className="mt-2 mb-2">
+                  <div className="h-4 w-32 bg-muted/40 rounded animate-pulse" />
+                </div>
+              ) : translationError ? (
+                <div className="mt-2 mb-2 text-xs text-red-400">
+                  {translationError}
+                </div>
+              ) : translation ? (
+                <div className="mt-2 mb-2">
+                  <p className="text-base text-foreground/90 leading-snug">
+                    {translation.translation}
+                  </p>
+                </div>
+              ) : !apiKey ? (
+                <div className="mt-2 mb-2 text-xs text-muted-foreground/60">
+                  Set your Anthropic API key in Settings to enable translation.
+                </div>
+              ) : null}
+
+              {/* Sentence context (subtle) */}
+              <p className="text-xs text-muted-foreground/50 leading-relaxed mb-3 line-clamp-2">
+                {word.sentence.text}
+              </p>
+
+              {/* Divider */}
+              <div className="border-t border-border/20 mb-2" />
+
+              {/* Action buttons row */}
+              <div className="flex items-center justify-between">
+                <ShortcutButton
+                  shortcutId="word-panel:explain"
+                  label="See explanation"
+                  defaultKeys="e"
+                  onClick={handleLoadExplanation}
+                  disabled={!translation || (showExplanation && !!explanation)}
+                  showHint={true}
+                  className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted/50"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 16v-4M12 8h.01" />
+                  </svg>
+                  <span>{showExplanation ? 'Explanation' : 'See explanation'}</span>
+                </ShortcutButton>
+
+                <ShortcutButton
+                  shortcutId="word-panel:add-vocab"
+                  label="Add to vocabulary"
+                  defaultKeys="a"
+                  onClick={handleAddVocab}
+                  disabled={!translation || addedToVocab || checkingVocab}
+                  showHint={true}
+                  className={`text-xs px-2 py-1 rounded-md ${
+                    addedToVocab
+                      ? 'text-green-500'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  }`}
+                >
+                  {addedToVocab ? (
+                    <>
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                      <span>Added</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                      <span>Add to vocab</span>
+                    </>
+                  )}
+                </ShortcutButton>
+              </div>
+
+              {/* Explanation area (lazy loaded, collapsible) */}
+              {showExplanation && (
+                <div className="mt-2 pt-2 border-t border-border/20">
+                  {explaining ? (
+                    <div className="space-y-1.5">
+                      <div className="h-3 w-full bg-muted/40 rounded animate-pulse" />
+                      <div className="h-3 w-4/5 bg-muted/40 rounded animate-pulse" />
+                      <div className="h-3 w-3/5 bg-muted/40 rounded animate-pulse" />
+                    </div>
+                  ) : explanation ? (
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {explanation}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
+              {/* Page info (very subtle) */}
+              {showIndicators && (
+                <p className="text-[10px] text-muted-foreground/30 mt-2">
+                  p.{word.page.pageNumber} · para.{word.paragraph.index + 1} · w.{word.index + 1}
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>

@@ -19,15 +19,23 @@
 
 export type VimMode = 'normal' | 'select'
 
+/** Sub-mode within select mode: word-level or sentence-level navigation */
+export type VimSelectSubMode = 'word' | 'sentence'
+
 /** What kind of action the rule triggers */
 export type VimActionType =
   | 'scroll'              // scroll the text pane by N lines / half-pages
   | 'scroll-to'           // scroll to top / bottom
   | 'cursor-line'         // move the cursor line up/down (like j/k in a text editor)
-  | 'select-word'         // select next/prev word
-  | 'select-word-vertical' // move word cursor to line above/below
-  | 'select-sentence'     // select next/prev sentence
+  | 'select-word'         // select next/prev word (h/l in word sub-mode)
+  | 'select-word-vertical' // move word cursor to line above/below (j/k in word sub-mode)
+  | 'select-sentence'     // select next/prev sentence (h/l in sentence sub-mode)
+  | 'select-sentence-vertical' // move sentence cursor to line above/below (j/k in sentence sub-mode)
   | 'select-line'         // select current visual line (like V)
+  | 'select-horizontal'   // context-aware h/l: moves word or sentence based on sub-mode
+  | 'select-vertical'     // context-aware j/k: moves word or sentence vertically based on sub-mode
+  | 'enter-word-submode'  // switch to word sub-mode (w key)
+  | 'enter-sentence-submode' // switch to sentence sub-mode (s key)
   | 'confirm-selection'   // confirm current selection (show info panel)
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit select mode / clear selection

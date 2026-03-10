@@ -23,9 +23,11 @@ interface SideBySideViewerProps {
   nibTextViewerRef?: React.RefObject<NibTextViewerHandle | null>
   /** Book title for vocab context */
   bookTitle?: string
+  /** Current select sub-mode */
+  selectSubMode?: 'word' | 'sentence'
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, selectSubMode }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   // Guard to prevent scroll event loops
@@ -103,6 +105,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
               onWordSelect={handleWordSelect}
               scrollContainerRef={textRef}
               bookTitle={bookTitle}
+              selectSubMode={selectSubMode}
             />
           ) : (
             <TextViewer text={text} sectionTitle={sectionTitle} />

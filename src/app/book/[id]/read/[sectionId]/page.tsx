@@ -80,6 +80,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onSelectWordVertical: useCallback((direction: number) => {
       nibTextViewerRef.current?.selectWordVertical(direction)
     }, []),
+    onSelectSentenceVertical: useCallback((direction: number) => {
+      nibTextViewerRef.current?.selectSentenceVertical(direction)
+    }, []),
     onCursorLine: useCallback((direction: number) => {
       nibTextViewerRef.current?.moveCursorLine(direction)
     }, []),
@@ -375,13 +378,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     scrollContainerRef={textScrollRef}
                     bookTitle={book.title}
                     onCursorLineChange={handleCursorLineChange}
+                    selectSubMode={vim.selectSubMode}
                   />
                 ) : (
                   <TextViewer text={section.extractedText} sectionTitle={section.title} />
                 )}
               </div>
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
+              <VimStatusBar mode={vim.mode} selectSubMode={vim.selectSubMode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
             </div>
           )}
           {viewMode === 'side-by-side' && (
@@ -402,9 +406,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   syncScroll={syncScroll}
                   nibTextViewerRef={nibTextViewerRef}
                   bookTitle={book.title}
+                  selectSubMode={vim.selectSubMode}
                 />
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
+              <VimStatusBar mode={vim.mode} selectSubMode={vim.selectSubMode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
             </div>
           )}
         </div>

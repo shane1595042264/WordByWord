@@ -105,59 +105,77 @@ export const RULEBOOK: VimRule[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Word selection
+  // SELECT MODE — Sub-mode switching
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
     id: 'select:w',
-    label: 'Next word',
+    label: 'Word mode',
     modes: ['select'],
     key: 'w',
-    action: { type: 'select-word', direction: 1 },
-    acceptsCount: true,
-    description: 'Select next [count] word(s)',
+    action: { type: 'enter-word-submode' },
+    acceptsCount: false,
+    description: 'Switch to word-level navigation (w selects next word)',
   },
   {
     id: 'select:b',
-    label: 'Previous word',
+    label: 'Word mode (back)',
     modes: ['select'],
     key: 'b',
-    action: { type: 'select-word', direction: -1 },
-    acceptsCount: true,
-    description: 'Select previous [count] word(s)',
+    action: { type: 'enter-word-submode', direction: -1 },
+    acceptsCount: false,
+    description: 'Switch to word-level navigation (b selects prev word)',
   },
-  {
-    id: 'select:e',
-    label: 'End of word',
-    modes: ['select'],
-    key: 'e',
-    action: { type: 'select-word', direction: 1 },
-    acceptsCount: true,
-    description: 'Move to end of word (same as w)',
-  },
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Sentence selection
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   {
     id: 'select:s',
-    label: 'Next sentence',
+    label: 'Sentence mode',
     modes: ['select'],
     key: 's',
-    action: { type: 'select-sentence', direction: 1 },
+    action: { type: 'enter-sentence-submode' },
+    acceptsCount: false,
+    description: 'Switch to sentence-level navigation',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // SELECT MODE — Context-aware movement (j/k/h/l)
+  // These dispatch differently based on word/sentence sub-mode
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {
+    id: 'select:l',
+    label: 'Move right',
+    modes: ['select'],
+    key: 'l',
+    action: { type: 'select-horizontal', direction: 1 },
     acceptsCount: true,
-    description: 'Select next [count] sentence(s)',
+    description: 'Next word (word mode) or next sentence (sentence mode)',
   },
   {
-    id: 'select:S',
-    label: 'Previous sentence',
+    id: 'select:h',
+    label: 'Move left',
     modes: ['select'],
-    key: 'S',
-    shift: true,
-    action: { type: 'select-sentence', direction: -1 },
+    key: 'h',
+    action: { type: 'select-horizontal', direction: -1 },
     acceptsCount: true,
-    description: 'Select previous [count] sentence(s)',
+    description: 'Prev word (word mode) or prev sentence (sentence mode)',
+  },
+  {
+    id: 'select:j',
+    label: 'Move down',
+    modes: ['select'],
+    key: 'j',
+    action: { type: 'select-vertical', direction: 1 },
+    acceptsCount: true,
+    description: 'Move to line below (word or sentence, based on sub-mode)',
+  },
+  {
+    id: 'select:k',
+    label: 'Move up',
+    modes: ['select'],
+    key: 'k',
+    action: { type: 'select-vertical', direction: -1 },
+    acceptsCount: true,
+    description: 'Move to line above (word or sentence, based on sub-mode)',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -187,29 +205,6 @@ export const RULEBOOK: VimRule[] = [
     action: { type: 'confirm-selection' },
     acceptsCount: false,
     description: 'Show info panel for the currently selected word',
-  },
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Navigation (same as normal)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  {
-    id: 'select:j',
-    label: 'Move selection down',
-    modes: ['select'],
-    key: 'j',
-    action: { type: 'select-word-vertical', direction: 1 },
-    acceptsCount: true,
-    description: 'Move word cursor down [count] line(s)',
-  },
-  {
-    id: 'select:k',
-    label: 'Move selection up',
-    modes: ['select'],
-    key: 'k',
-    action: { type: 'select-word-vertical', direction: -1 },
-    acceptsCount: true,
-    description: 'Move word cursor up [count] line(s)',
   },
 ]
 
