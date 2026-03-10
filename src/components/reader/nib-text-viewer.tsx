@@ -53,8 +53,8 @@ interface NibTextViewerProps {
   bookTitle?: string
   /** Called when cursor line changes (for relative line numbers) */
   onCursorLineChange?: (info: CursorLineInfo) => void
-  /** Current select sub-mode (word or sentence) — controls panel behavior */
-  selectSubMode?: 'word' | 'sentence'
+  /** Current vim mode — controls info panel behavior */
+  vimMode?: 'normal' | 'word' | 'sentence' | 'visual'
 }
 
 /**
@@ -149,7 +149,7 @@ function ParagraphRenderer({
  * Element type indicators can be toggled on/off for testing/debugging.
  */
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, selectSubMode = 'word' },
+  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -356,9 +356,49 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
     },
     selectCurrentLine() {
-      const cursorSpan = wordSpanRefs.current.get(vimCursorRef.current)
-      if (!cursorSpan) return
-      // Handled externally via vimSelectedIndices
+      // Find all words on the same visual line as the cursor and highlight them
+      const lines = computeVisualLines()
+      if (lines.length === 0) return
+
+      let curLine = cursorLineRef.current
+      if (curLine < 0 || curLine >= lines.length) curLine = 0
+
+      // If current line has no words, find nearest line with words
+      let lineWordIndices = lines[curLine].wordIndices
+      if (lineWordIndices.length === 0) {
+        // Search outward from cursor line
+        for (let offset = 1; offset < lines.length; offset++) {
+          if (curLine + offset < lines.length && lines[curLine + offset].wordIndices.length > 0) {
+            curLine = curLine + offset
+            lineWordIndices = lines[curLine].wordIndices
+            break
+          }
+          if (curLine - offset >= 0 && lines[curLine - offset].wordIndices.length > 0) {
+            curLine = curLine - offset
+            lineWordIndices = lines[curLine].wordIndices
+            break
+          }
+        }
+      }
+      if (lineWordIndices.length === 0) return
+
+      // Update cursor line
+      cursorLineRef.current = curLine
+
+      // Highlight all words on this line
+      setHighlightedIndices(new Set(lineWordIndices))
+      // Set selectedWord to first word on the line and move vim cursor there
+      const firstIdx = lineWordIndices[0]
+      vimCursorRef.current = firstIdx
+      const word = allWords[firstIdx]
+      if (word) setSelectedWord(word)
+
+      // Report cursor line change
+      onCursorLineChange?.({
+        cursorLine: curLine,
+        totalLines: lines.length,
+        linePositions: lines.map(l => l.y),
+      })
     },
     clearVimSelection() {
       setSelectedWord(null)
@@ -772,7 +812,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             onClose={handleClosePanel}
             bookTitle={bookTitle}
             sectionTitle={sectionTitle}
-            panelMode={selectSubMode}
+            panelMode={vimMode === 'sentence' ? 'sentence' : 'word'}
           />
         )}
     </div>

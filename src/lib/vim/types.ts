@@ -2,43 +2,37 @@
  * Vim-style keybinding system for BitByBit / WordByWord reader.
  *
  * Architecture:
- *   VimMode  — "normal" | "select"
+ *   VimMode  — "normal" | "word" | "sentence" | "visual"
  *   VimRule  — a single keybinding entry in the rulebook
  *   Rulebook — the full table of rules, easily extensible
  *
  * The engine processes keystrokes, maintains mode state, and dispatches
  * actions. A numeric prefix buffer (e.g. "23") multiplies motions.
  *
- * Inspired by Vim but adapted for a reading app:
- *   Normal mode  — navigation only (j/k/d/u/gg/G)
- *   Select mode  — word/sentence/line selection (w/b/e/s/V)
+ * Modes:
+ *   Normal mode   — navigation only (j/k cursor, d/u page, gg/G)
+ *   Word mode     — word-level selection + translation (h/l/j/k, Enter to translate)
+ *   Sentence mode — sentence-level selection + translation (h/l/j/k, Enter to translate)
+ *   Visual mode   — pure Vim visual selection (no translation, just selection)
  *
- * To add a new binding, just add a VimRule to the rulebook. No other
- * code changes needed.
+ * From normal: w → word mode, s → sentence mode, v → visual mode
  */
 
-export type VimMode = 'normal' | 'select'
-
-/** Sub-mode within select mode: word-level or sentence-level navigation */
-export type VimSelectSubMode = 'word' | 'sentence'
+export type VimMode = 'normal' | 'word' | 'sentence' | 'visual'
 
 /** What kind of action the rule triggers */
 export type VimActionType =
   | 'scroll'              // scroll the text pane by N lines / half-pages
   | 'scroll-to'           // scroll to top / bottom
   | 'cursor-line'         // move the cursor line up/down (like j/k in a text editor)
-  | 'select-word'         // select next/prev word (h/l in word sub-mode)
-  | 'select-word-vertical' // move word cursor to line above/below (j/k in word sub-mode)
-  | 'select-sentence'     // select next/prev sentence (h/l in sentence sub-mode)
-  | 'select-sentence-vertical' // move sentence cursor to line above/below (j/k in sentence sub-mode)
-  | 'select-line'         // select current visual line (like V)
-  | 'select-horizontal'   // context-aware h/l: moves word or sentence based on sub-mode
-  | 'select-vertical'     // context-aware j/k: moves word or sentence vertically based on sub-mode
-  | 'enter-word-submode'  // switch to word sub-mode (w key)
-  | 'enter-sentence-submode' // switch to sentence sub-mode (s key)
-  | 'confirm-selection'   // confirm current selection (show info panel)
+  | 'select-word'         // select next/prev word (h/l in word mode)
+  | 'select-word-vertical' // move word cursor to line above/below (j/k in word mode)
+  | 'select-sentence'     // select next/prev sentence (h/l in sentence mode)
+  | 'select-sentence-vertical' // move sentence cursor to line above/below (j/k in sentence mode)
+  | 'select-line'         // select current visual line (V in visual mode)
+  | 'confirm-selection'   // confirm current selection (Enter — translate in word/sentence mode)
   | 'mode-change'         // switch vim mode
-  | 'escape'              // exit select mode / clear selection
+  | 'escape'              // exit to normal mode / clear selection
   | 'custom'              // arbitrary callback (for future extensibility)
 
 export interface VimAction {
@@ -77,8 +71,6 @@ export interface VimContext {
 
 /**
  * A single rule in the Vim keybinding rulebook.
- *
- * To add a new keybinding, just push a VimRule into the rulebook array.
  */
 export interface VimRule {
   /** Unique id for the rule */

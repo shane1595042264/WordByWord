@@ -1,12 +1,14 @@
 /**
  * The Vim Rulebook — all keybindings in one place.
  *
- * To add a new binding:
- *   1. Add a VimRule object to RULEBOOK
- *   2. If it needs a new action type, add it to VimActionType in types.ts
- *   3. Handle the new action type in the engine's dispatch function
+ * Modes:
+ *   normal   — navigation (j/k cursor, d/u half-page, gg/G)
+ *   word     — word-level selection + translation
+ *   sentence — sentence-level selection + translation
+ *   visual   — pure vim visual selection (no translation)
  *
- * That's it. The engine, UI, and help overlay all read from this array.
+ * From normal: w → word, s → sentence, v → visual
+ * From any non-normal: Escape → normal
  */
 
 import type { VimRule } from './types'
@@ -39,9 +41,9 @@ export const RULEBOOK: VimRule[] = [
     label: 'Half-page down',
     modes: ['normal'],
     key: 'd',
-    action: { type: 'scroll', direction: 1, magnitude: 0.5 }, // 0.5 = half viewport
+    action: { type: 'scroll', direction: 1, magnitude: 0.5 },
     acceptsCount: true,
-    description: 'Scroll down half a page (Ctrl+D in Vim)',
+    description: 'Scroll down half a page',
   },
   {
     id: 'normal:u',
@@ -50,16 +52,16 @@ export const RULEBOOK: VimRule[] = [
     key: 'u',
     action: { type: 'scroll', direction: -1, magnitude: 0.5 },
     acceptsCount: true,
-    description: 'Scroll up half a page (Ctrl+U in Vim)',
+    description: 'Scroll up half a page',
   },
   {
     id: 'normal:gg',
     label: 'Go to top',
     modes: ['normal'],
-    key: 'g', // handled specially — double-tap detection in engine
+    key: 'g', // double-tap detection in engine
     action: { type: 'scroll-to', direction: -1 },
     acceptsCount: false,
-    description: 'Scroll to top of document (gg in Vim)',
+    description: 'Scroll to top of document (gg)',
   },
   {
     id: 'normal:G',
@@ -73,30 +75,71 @@ export const RULEBOOK: VimRule[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // MODE SWITCHING
+  // NORMAL MODE — Mode entry
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
-    id: 'normal:enter-select',
-    label: 'Enter Select mode',
+    id: 'normal:w',
+    label: 'Enter Word mode',
     modes: ['normal'],
-    key: 'v',
-    action: { type: 'mode-change', targetMode: 'select' },
+    key: 'w',
+    action: { type: 'mode-change', targetMode: 'word' },
     acceptsCount: false,
-    description: 'Enter Select mode (like Visual mode in Vim)',
+    description: 'Enter word selection mode (translate words)',
   },
   {
-    id: 'select:escape',
-    label: 'Exit Select mode',
-    modes: ['select'],
+    id: 'normal:s',
+    label: 'Enter Sentence mode',
+    modes: ['normal'],
+    key: 's',
+    action: { type: 'mode-change', targetMode: 'sentence' },
+    acceptsCount: false,
+    description: 'Enter sentence selection mode (translate sentences)',
+  },
+  {
+    id: 'normal:v',
+    label: 'Enter Visual mode',
+    modes: ['normal'],
+    key: 'v',
+    action: { type: 'mode-change', targetMode: 'visual' },
+    acceptsCount: false,
+    description: 'Enter visual selection mode (Vim-style)',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ESCAPE — All non-normal modes → normal
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {
+    id: 'word:escape',
+    label: 'Exit Word mode',
+    modes: ['word'],
     key: 'Escape',
     action: { type: 'escape' },
     acceptsCount: false,
-    description: 'Exit Select mode, clear selection',
+    description: 'Exit to normal mode, clear selection',
+  },
+  {
+    id: 'sentence:escape',
+    label: 'Exit Sentence mode',
+    modes: ['sentence'],
+    key: 'Escape',
+    action: { type: 'escape' },
+    acceptsCount: false,
+    description: 'Exit to normal mode, clear selection',
+  },
+  {
+    id: 'visual:escape',
+    label: 'Exit Visual mode',
+    modes: ['visual'],
+    key: 'Escape',
+    action: { type: 'escape' },
+    acceptsCount: false,
+    description: 'Exit to normal mode, clear selection',
   },
   {
     id: 'normal:escape',
-    label: 'Clear count / reset',
+    label: 'Clear count',
     modes: ['normal'],
     key: 'Escape',
     action: { type: 'escape' },
@@ -105,106 +148,209 @@ export const RULEBOOK: VimRule[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Sub-mode switching
+  // WORD MODE — h/l/j/k + Enter
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
-    id: 'select:w',
-    label: 'Word mode',
-    modes: ['select'],
-    key: 'w',
-    action: { type: 'enter-word-submode' },
-    acceptsCount: false,
-    description: 'Switch to word-level navigation (w selects next word)',
-  },
-  {
-    id: 'select:b',
-    label: 'Word mode (back)',
-    modes: ['select'],
-    key: 'b',
-    action: { type: 'enter-word-submode', direction: -1 },
-    acceptsCount: false,
-    description: 'Switch to word-level navigation (b selects prev word)',
-  },
-  {
-    id: 'select:s',
-    label: 'Sentence mode',
-    modes: ['select'],
-    key: 's',
-    action: { type: 'enter-sentence-submode' },
-    acceptsCount: false,
-    description: 'Switch to sentence-level navigation',
-  },
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Context-aware movement (j/k/h/l)
-  // These dispatch differently based on word/sentence sub-mode
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  {
-    id: 'select:l',
-    label: 'Move right',
-    modes: ['select'],
+    id: 'word:l',
+    label: 'Next word',
+    modes: ['word'],
     key: 'l',
-    action: { type: 'select-horizontal', direction: 1 },
+    action: { type: 'select-word', direction: 1 },
     acceptsCount: true,
-    description: 'Next word (word mode) or next sentence (sentence mode)',
+    description: 'Select next [count] word(s)',
   },
   {
-    id: 'select:h',
-    label: 'Move left',
-    modes: ['select'],
+    id: 'word:h',
+    label: 'Previous word',
+    modes: ['word'],
     key: 'h',
-    action: { type: 'select-horizontal', direction: -1 },
+    action: { type: 'select-word', direction: -1 },
     acceptsCount: true,
-    description: 'Prev word (word mode) or prev sentence (sentence mode)',
+    description: 'Select previous [count] word(s)',
   },
   {
-    id: 'select:j',
-    label: 'Move down',
-    modes: ['select'],
+    id: 'word:j',
+    label: 'Word down',
+    modes: ['word'],
     key: 'j',
-    action: { type: 'select-vertical', direction: 1 },
+    action: { type: 'select-word-vertical', direction: 1 },
     acceptsCount: true,
-    description: 'Move to line below (word or sentence, based on sub-mode)',
+    description: 'Move word selection down [count] line(s)',
   },
   {
-    id: 'select:k',
-    label: 'Move up',
-    modes: ['select'],
+    id: 'word:k',
+    label: 'Word up',
+    modes: ['word'],
     key: 'k',
-    action: { type: 'select-vertical', direction: -1 },
+    action: { type: 'select-word-vertical', direction: -1 },
     acceptsCount: true,
-    description: 'Move to line above (word or sentence, based on sub-mode)',
+    description: 'Move word selection up [count] line(s)',
+  },
+  {
+    id: 'word:w',
+    label: 'Next word (alt)',
+    modes: ['word'],
+    key: 'w',
+    action: { type: 'select-word', direction: 1 },
+    acceptsCount: true,
+    description: 'Select next [count] word(s) (same as l)',
+  },
+  {
+    id: 'word:b',
+    label: 'Previous word (alt)',
+    modes: ['word'],
+    key: 'b',
+    action: { type: 'select-word', direction: -1 },
+    acceptsCount: true,
+    description: 'Select previous [count] word(s) (same as h)',
+  },
+  {
+    id: 'word:enter',
+    label: 'Translate word',
+    modes: ['word'],
+    key: 'Enter',
+    action: { type: 'confirm-selection' },
+    acceptsCount: false,
+    description: 'Show translation for the selected word',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Line selection (V)
+  // SENTENCE MODE — h/l/j/k + Enter
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
-    id: 'select:V',
+    id: 'sentence:l',
+    label: 'Next sentence',
+    modes: ['sentence'],
+    key: 'l',
+    action: { type: 'select-sentence', direction: 1 },
+    acceptsCount: true,
+    description: 'Select next [count] sentence(s)',
+  },
+  {
+    id: 'sentence:h',
+    label: 'Previous sentence',
+    modes: ['sentence'],
+    key: 'h',
+    action: { type: 'select-sentence', direction: -1 },
+    acceptsCount: true,
+    description: 'Select previous [count] sentence(s)',
+  },
+  {
+    id: 'sentence:j',
+    label: 'Sentence down',
+    modes: ['sentence'],
+    key: 'j',
+    action: { type: 'select-sentence-vertical', direction: 1 },
+    acceptsCount: true,
+    description: 'Move sentence selection down [count] line(s)',
+  },
+  {
+    id: 'sentence:k',
+    label: 'Sentence up',
+    modes: ['sentence'],
+    key: 'k',
+    action: { type: 'select-sentence-vertical', direction: -1 },
+    acceptsCount: true,
+    description: 'Move sentence selection up [count] line(s)',
+  },
+  {
+    id: 'sentence:s',
+    label: 'Next sentence (alt)',
+    modes: ['sentence'],
+    key: 's',
+    action: { type: 'select-sentence', direction: 1 },
+    acceptsCount: true,
+    description: 'Select next [count] sentence(s) (same as l)',
+  },
+  {
+    id: 'sentence:enter',
+    label: 'Translate sentence',
+    modes: ['sentence'],
+    key: 'Enter',
+    action: { type: 'confirm-selection' },
+    acceptsCount: false,
+    description: 'Show translation for the selected sentence',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // VISUAL MODE — Vim-style selection (no translation)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {
+    id: 'visual:l',
+    label: 'Extend right',
+    modes: ['visual'],
+    key: 'l',
+    action: { type: 'select-word', direction: 1 },
+    acceptsCount: true,
+    description: 'Extend selection right by [count] word(s)',
+  },
+  {
+    id: 'visual:h',
+    label: 'Extend left',
+    modes: ['visual'],
+    key: 'h',
+    action: { type: 'select-word', direction: -1 },
+    acceptsCount: true,
+    description: 'Extend selection left by [count] word(s)',
+  },
+  {
+    id: 'visual:j',
+    label: 'Extend down',
+    modes: ['visual'],
+    key: 'j',
+    action: { type: 'select-word-vertical', direction: 1 },
+    acceptsCount: true,
+    description: 'Extend selection down [count] line(s)',
+  },
+  {
+    id: 'visual:k',
+    label: 'Extend up',
+    modes: ['visual'],
+    key: 'k',
+    action: { type: 'select-word-vertical', direction: -1 },
+    acceptsCount: true,
+    description: 'Extend selection up [count] line(s)',
+  },
+  {
+    id: 'visual:w',
+    label: 'Extend by word',
+    modes: ['visual'],
+    key: 'w',
+    action: { type: 'select-word', direction: 1 },
+    acceptsCount: true,
+    description: 'Extend selection forward by [count] word(s)',
+  },
+  {
+    id: 'visual:b',
+    label: 'Extend back by word',
+    modes: ['visual'],
+    key: 'b',
+    action: { type: 'select-word', direction: -1 },
+    acceptsCount: true,
+    description: 'Extend selection backward by [count] word(s)',
+  },
+  {
+    id: 'visual:V',
     label: 'Select line',
-    modes: ['select', 'normal'],
+    modes: ['visual', 'normal'],
     key: 'V',
     shift: true,
     action: { type: 'select-line' },
     acceptsCount: false,
     description: 'Select the current visual line (Shift+V)',
   },
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SELECT MODE — Confirm (Enter to show word info)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   {
-    id: 'select:enter',
-    label: 'Show word info',
-    modes: ['select'],
-    key: 'Enter',
-    action: { type: 'confirm-selection' },
+    id: 'visual:G',
+    label: 'Extend to bottom',
+    modes: ['visual'],
+    key: 'G',
+    shift: true,
+    action: { type: 'scroll-to', direction: 1 },
     acceptsCount: false,
-    description: 'Show info panel for the currently selected word',
+    description: 'Extend selection to end of document',
   },
 ]
 
@@ -224,7 +370,6 @@ export function getEffectiveRulebook(overrides: Record<string, string>): VimRule
   return RULEBOOK.map(rule => {
     const customKey = overrides[rule.id]
     if (!customKey) return rule
-    // Parse the custom key — detect shift from the key name
     const isShift = customKey.startsWith('Shift+')
     const actualKey = isShift ? customKey.slice(6) : customKey
     return { ...rule, key: actualKey, shift: isShift || undefined }
@@ -233,16 +378,11 @@ export function getEffectiveRulebook(overrides: Record<string, string>): VimRule
 
 /**
  * Find a matching rule for a keystroke in the given mode.
- * Uses the provided rulebook (which may include user overrides).
  */
 export function findRule(mode: string, key: string, shiftKey: boolean, rulebook: VimRule[] = RULEBOOK): VimRule | undefined {
   return rulebook.find(r => {
     if (!r.modes.includes(mode as any)) return false
-    // For shift-specific rules, match exactly
-    if (r.shift) {
-      return r.key === key && shiftKey
-    }
-    // For non-shift rules, only match when shift is NOT held (unless the key itself implies shift)
+    if (r.shift) return r.key === key && shiftKey
     return r.key === key && !shiftKey
   })
 }

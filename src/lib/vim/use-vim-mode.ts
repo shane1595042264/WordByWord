@@ -1,45 +1,29 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { VimMode, VimSelectSubMode, VimRule } from './types'
+import type { VimMode, VimRule } from './types'
 import { findRule, RULEBOOK } from './rulebook'
 
-const DEFAULT_LINE_HEIGHT = 24 // px per "line" for j/k scrolling
-const GG_TIMEOUT = 500 // ms to detect gg double-tap
+const DEFAULT_LINE_HEIGHT = 24
+const GG_TIMEOUT = 500
 
 interface UseVimModeOptions {
-  /** Is vim mode enabled? */
   enabled: boolean
-  /** Ref to the text scroll container */
   scrollRef: React.RefObject<HTMLElement | null>
-  /** Called when a word should be selected (delta from current) */
   onSelectWord?: (delta: number) => void
-  /** Called when a sentence should be selected (delta from current) */
   onSelectSentence?: (delta: number) => void
-  /** Called when the current visual line should be selected */
   onSelectLine?: () => void
-  /** Called when selection should be cleared */
   onClearSelection?: () => void
-  /** Called when user confirms selection (Enter key — show info panel) */
   onConfirmSelection?: () => void
-  /** Called when word cursor should move vertically (j/k in word sub-mode) */
   onSelectWordVertical?: (direction: number) => void
-  /** Called when sentence cursor should move vertically (j/k in sentence sub-mode) */
   onSelectSentenceVertical?: (direction: number) => void
-  /** Called when the cursor line moves in normal mode (j/k) */
   onCursorLine?: (direction: number) => void
-  /** Custom rulebook (with user keybinding overrides applied) */
   rulebook?: VimRule[]
 }
 
 interface UseVimModeReturn {
-  /** Current vim mode */
   mode: VimMode
-  /** Current select sub-mode (word or sentence) */
-  selectSubMode: VimSelectSubMode
-  /** Current numeric prefix buffer (e.g. "23") */
   countBuffer: string
-  /** Whether vim mode is active */
   enabled: boolean
 }
 
@@ -57,30 +41,21 @@ export function useVimMode({
   rulebook = RULEBOOK,
 }: UseVimModeOptions): UseVimModeReturn {
   const [mode, setMode] = useState<VimMode>('normal')
-  const [selectSubMode, setSelectSubMode] = useState<VimSelectSubMode>('word')
   const [countBuffer, setCountBuffer] = useState('')
   const lastGTime = useRef(0)
 
-  // Get effective count from buffer (minimum 1)
   const getCount = useCallback((): number => {
     const n = parseInt(countBuffer, 10)
     return isNaN(n) || n < 1 ? 1 : n
   }, [countBuffer])
 
-  // ── Action dispatchers ──
-
   const dispatchScroll = useCallback((direction: number, magnitude: number, count: number) => {
     const el = scrollRef.current
     if (!el) return
-
     if (magnitude < 1) {
-      // Half-page scroll
-      const amount = el.clientHeight * magnitude * direction * count
-      el.scrollBy({ top: amount, behavior: 'smooth' })
+      el.scrollBy({ top: el.clientHeight * magnitude * direction * count, behavior: 'smooth' })
     } else {
-      // Line-based scroll
-      const amount = DEFAULT_LINE_HEIGHT * magnitude * direction * count
-      el.scrollBy({ top: amount, behavior: 'smooth' })
+      el.scrollBy({ top: DEFAULT_LINE_HEIGHT * magnitude * direction * count, behavior: 'smooth' })
     }
   }, [scrollRef])
 
@@ -94,32 +69,26 @@ export function useVimMode({
     }
   }, [scrollRef])
 
-  // ── Main keydown handler ──
-
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!enabled) return
 
-    // Don't intercept when typing in inputs
     const target = e.target as HTMLElement
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
-
-    // Don't intercept when modifier keys are held (let browser/app shortcuts through)
     if (e.ctrlKey || e.metaKey || e.altKey) return
 
     const key = e.key
 
-    // ── Numeric prefix accumulation ──
+    // Numeric prefix accumulation
     if (/^[0-9]$/.test(key) && !(countBuffer === '' && key === '0')) {
       e.preventDefault()
       setCountBuffer(prev => prev + key)
       return
     }
 
-    // ── gg detection (double-tap g) ──
+    // gg detection (double-tap g) in normal mode
     if (key === 'g' && !e.shiftKey && mode === 'normal') {
       const now = Date.now()
       if (now - lastGTime.current < GG_TIMEOUT) {
-        // gg — go to top
         e.preventDefault()
         dispatchScrollTo(-1)
         setCountBuffer('')
@@ -131,10 +100,9 @@ export function useVimMode({
       return
     }
 
-    // ── Find matching rule ──
+    // Find matching rule
     const rule = findRule(mode, key, e.shiftKey, rulebook)
     if (!rule) {
-      // No match — reset count buffer on non-numeric, non-matching key
       setCountBuffer('')
       return
     }
@@ -144,11 +112,7 @@ export function useVimMode({
 
     switch (rule.action.type) {
       case 'scroll':
-        dispatchScroll(
-          rule.action.direction ?? 1,
-          rule.action.magnitude ?? 1,
-          count,
-        )
+        dispatchScroll(rule.action.direction ?? 1, rule.action.magnitude ?? 1, count)
         break
 
       case 'scroll-to':
@@ -158,68 +122,9 @@ export function useVimMode({
       case 'cursor-line':
         if (onCursorLine) {
           const dir = rule.action.direction ?? 1
-          for (let i = 0; i < count; i++) {
-            onCursorLine(dir)
-          }
+          for (let i = 0; i < count; i++) onCursorLine(dir)
         }
         break
-
-      // ── Sub-mode switching ──
-
-      case 'enter-word-submode':
-        setSelectSubMode('word')
-        // Also move one word in the given direction (w = forward, b = backward)
-        if (onSelectWord) {
-          const dir = rule.action.direction ?? 1
-          onSelectWord(dir)
-        }
-        break
-
-      case 'enter-sentence-submode':
-        setSelectSubMode('sentence')
-        // Select current/next sentence when entering sentence mode
-        if (onSelectSentence) {
-          onSelectSentence(1)
-        }
-        break
-
-      // ── Context-aware horizontal (h/l) ──
-
-      case 'select-horizontal': {
-        const dir = rule.action.direction ?? 1
-        if (selectSubMode === 'sentence') {
-          // h/l in sentence mode = prev/next sentence
-          if (onSelectSentence) {
-            for (let i = 0; i < count; i++) onSelectSentence(dir)
-          }
-        } else {
-          // h/l in word mode = prev/next word
-          if (onSelectWord) {
-            for (let i = 0; i < count; i++) onSelectWord(dir)
-          }
-        }
-        break
-      }
-
-      // ── Context-aware vertical (j/k) ──
-
-      case 'select-vertical': {
-        const vDir = rule.action.direction ?? 1
-        if (selectSubMode === 'sentence') {
-          // j/k in sentence mode = sentence on prev/next line
-          if (onSelectSentenceVertical) {
-            for (let i = 0; i < count; i++) onSelectSentenceVertical(vDir)
-          }
-        } else {
-          // j/k in word mode = word on prev/next line
-          if (onSelectWordVertical) {
-            for (let i = 0; i < count; i++) onSelectWordVertical(vDir)
-          }
-        }
-        break
-      }
-
-      // ── Legacy direct actions (kept for compatibility) ──
 
       case 'select-word':
         if (onSelectWord) {
@@ -230,8 +135,8 @@ export function useVimMode({
 
       case 'select-word-vertical':
         if (onSelectWordVertical) {
-          const vDir = rule.action.direction ?? 1
-          for (let i = 0; i < count; i++) onSelectWordVertical(vDir)
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) onSelectWordVertical(dir)
         }
         break
 
@@ -244,14 +149,14 @@ export function useVimMode({
 
       case 'select-sentence-vertical':
         if (onSelectSentenceVertical) {
-          const vDir = rule.action.direction ?? 1
-          for (let i = 0; i < count; i++) onSelectSentenceVertical(vDir)
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) onSelectSentenceVertical(dir)
         }
         break
 
       case 'select-line':
-        // Also enter select mode if in normal
-        if (mode === 'normal') setMode('select')
+        // Enter visual mode if in normal, then select line
+        if (mode === 'normal') setMode('visual')
         onSelectLine?.()
         break
 
@@ -261,47 +166,47 @@ export function useVimMode({
 
       case 'mode-change':
         if (rule.action.targetMode) {
-          setMode(rule.action.targetMode)
-          // On entering select mode, default to word sub-mode and select first visible word
-          if (rule.action.targetMode === 'select') {
-            setSelectSubMode('word')
-            onSelectWord?.(0) // delta 0 = select first visible
+          const target = rule.action.targetMode
+          setMode(target)
+          // On entering word mode, select first visible word
+          if (target === 'word') {
+            onSelectWord?.(0)
+          }
+          // On entering sentence mode, select first visible sentence
+          if (target === 'sentence') {
+            onSelectSentence?.(0)
+          }
+          // On entering visual mode, select first visible word (anchor)
+          if (target === 'visual') {
+            onSelectWord?.(0)
           }
         }
         break
 
       case 'escape':
-        if (mode === 'select') {
-          setMode('normal')
-          setSelectSubMode('word')
-          onClearSelection?.()
-        }
+        setMode('normal')
+        onClearSelection?.()
         break
 
       case 'custom':
-        // Future extensibility
         break
     }
 
-    // Reset count buffer after action
     setCountBuffer('')
-  }, [enabled, mode, selectSubMode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
 
-  // ── Attach global listener ──
   useEffect(() => {
     if (!enabled) return
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [enabled, handleKeyDown])
 
-  // Reset mode when disabled
   useEffect(() => {
     if (!enabled) {
       setMode('normal')
-      setSelectSubMode('word')
       setCountBuffer('')
     }
   }, [enabled])
 
-  return { mode, selectSubMode, countBuffer, enabled }
+  return { mode, countBuffer, enabled }
 }

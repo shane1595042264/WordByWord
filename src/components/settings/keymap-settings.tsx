@@ -174,9 +174,11 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
   })
 
   // Group by mode for display
-  const normalRules = filteredRules.filter(r => r.modes.includes('normal') && !r.modes.includes('select'))
-  const selectRules = filteredRules.filter(r => r.modes.includes('select') && !r.modes.includes('normal'))
-  const sharedRules = filteredRules.filter(r => r.modes.includes('normal') && r.modes.includes('select'))
+  const normalRules = filteredRules.filter(r => r.modes.includes('normal') && r.modes.length === 1)
+  const wordRules = filteredRules.filter(r => r.modes.includes('word'))
+  const sentenceRules = filteredRules.filter(r => r.modes.includes('sentence'))
+  const visualRules = filteredRules.filter(r => r.modes.includes('visual') && !r.modes.includes('normal'))
+  const sharedRules = filteredRules.filter(r => r.modes.length > 1 && r.modes.includes('normal'))
 
   const hasOverrides = Object.keys(overrides).length > 0
 
@@ -219,13 +221,51 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
         </div>
       )}
 
-      {selectRules.length > 0 && (
+      {wordRules.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
-            Select Mode
+            Word Mode
           </h3>
           <div className="border rounded-lg divide-y divide-border/50">
-            {selectRules.map(rule => (
+            {wordRules.map(rule => (
+              <KeymapRow
+                key={rule.id}
+                rule={rule}
+                customKey={overrides[rule.id]}
+                onRemap={handleRemap}
+                onReset={handleReset}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {sentenceRules.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
+            Sentence Mode
+          </h3>
+          <div className="border rounded-lg divide-y divide-border/50">
+            {sentenceRules.map(rule => (
+              <KeymapRow
+                key={rule.id}
+                rule={rule}
+                customKey={overrides[rule.id]}
+                onRemap={handleRemap}
+                onReset={handleReset}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {visualRules.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
+            Visual Mode
+          </h3>
+          <div className="border rounded-lg divide-y divide-border/50">
+            {visualRules.map(rule => (
               <KeymapRow
                 key={rule.id}
                 rule={rule}
@@ -241,7 +281,7 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
       {sharedRules.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
-            Shared (Both Modes)
+            Shared (Multiple Modes)
           </h3>
           <div className="border rounded-lg divide-y divide-border/50">
             {sharedRules.map(rule => (
