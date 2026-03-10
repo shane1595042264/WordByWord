@@ -117,7 +117,7 @@ function ParagraphRenderer({
             const flatIdx = wordCounter++
             const isVimSelected = vimSelectedIndices?.has(flatIdx)
             const isHighlighted = highlightedIndices?.has(flatIdx)
-            const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx
+            const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx && selectedWord != null
             const wordSpan = (
               <span
                 ref={(el) => registerWordSpan(flatIdx, el)}
