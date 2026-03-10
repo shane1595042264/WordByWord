@@ -15,6 +15,7 @@ interface UseVimModeOptions {
   onSelectLine?: () => void
   onSelectToEnd?: () => void
   onSelectToStart?: () => void
+  onYank?: () => void
   onClearSelection?: () => void
   onConfirmSelection?: () => void
   onSelectWordVertical?: (direction: number) => void
@@ -36,6 +37,7 @@ export function useVimMode({
   onSelectLine,
   onSelectToEnd,
   onSelectToStart,
+  onYank,
   onClearSelection,
   onConfirmSelection,
   onSelectWordVertical,
@@ -76,6 +78,15 @@ export function useVimMode({
 
     const target = e.target as HTMLElement
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+
+    // Ctrl+C / Cmd+C — yank (copy) selected text
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      e.preventDefault()
+      onYank?.()
+      setCountBuffer('')
+      return
+    }
+
     if (e.ctrlKey || e.metaKey || e.altKey) return
 
     const key = e.key
@@ -182,6 +193,10 @@ export function useVimMode({
         onConfirmSelection?.()
         break
 
+      case 'yank':
+        onYank?.()
+        break
+
       case 'mode-change':
         if (rule.action.targetMode) {
           const target = rule.action.targetMode
@@ -205,7 +220,7 @@ export function useVimMode({
     }
 
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onYank, onClearSelection, onConfirmSelection, rulebook])
 
   useEffect(() => {
     if (!enabled) return

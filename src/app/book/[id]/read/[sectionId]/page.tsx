@@ -42,6 +42,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [totalVisualLines, setTotalVisualLines] = useState(0)
   const [lastTextLine, setLastTextLine] = useState(0)
   const [linePositions, setLinePositions] = useState<number[]>([])
+  const [yankFlash, setYankFlash] = useState('')
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
@@ -78,6 +79,28 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }, []),
     onSelectToStart: useCallback(() => {
       nibTextViewerRef.current?.selectToStart()
+    }, []),
+    onYank: useCallback(() => {
+      const text = nibTextViewerRef.current?.getSelectedText()
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          const preview = text.length > 40 ? text.slice(0, 40) + '…' : text
+          setYankFlash(`Copied: "${preview}"`)
+          setTimeout(() => setYankFlash(''), 1500)
+        }).catch(() => {
+          // Fallback for browsers that block clipboard API
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.style.position = 'fixed'
+          ta.style.opacity = '0'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+          setYankFlash('Copied!')
+          setTimeout(() => setYankFlash(''), 1500)
+        })
+      }
     }, []),
     onClearSelection: useCallback(() => {
       nibTextViewerRef.current?.clearVimSelection()
@@ -407,7 +430,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                 )}
               </div>
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />
             </div>
           )}
           {viewMode === 'side-by-side' && (
@@ -431,7 +454,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   vimMode={vim.mode}
                 />
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />
             </div>
           )}
         </div>

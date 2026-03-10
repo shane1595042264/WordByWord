@@ -6,12 +6,14 @@ interface VimStatusBarProps {
   mode: VimMode
   countBuffer: string
   enabled: boolean
+  /** Flash message (e.g. "Yanked!") — shown briefly in the status bar */
+  flashMessage?: string
 }
 
 /**
  * Minimal status bar showing current Vim mode and hints.
  */
-export function VimStatusBar({ mode, countBuffer, enabled }: VimStatusBarProps) {
+export function VimStatusBar({ mode, countBuffer, enabled, flashMessage }: VimStatusBarProps) {
   if (!enabled) return null
 
   const modeColors: Record<VimMode, string> = {
@@ -45,8 +47,11 @@ export function VimStatusBar({ mode, countBuffer, enabled }: VimStatusBarProps) 
       {countBuffer && (
         <span className="text-amber-400">{countBuffer}</span>
       )}
+      {flashMessage && (
+        <span className="text-green-400 font-bold animate-pulse">{flashMessage}</span>
+      )}
       <span className="ml-auto text-zinc-500 text-[10px]">
-        {hints[mode]}
+        {hints[mode]} · y copy
       </span>
     </div>
   )

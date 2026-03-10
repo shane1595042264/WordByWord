@@ -120,6 +120,20 @@ export const RULEBOOK: VimRule[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // YANK (copy) — All modes
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {
+    id: 'all:y',
+    label: 'Yank (copy)',
+    modes: ['normal', 'sentence', 'visual'],
+    key: 'y',
+    action: { type: 'yank' },
+    acceptsCount: false,
+    description: 'Copy selected text to clipboard (yank)',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // NORMAL MODE — Mode entry
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

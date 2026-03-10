@@ -32,6 +32,8 @@ export interface NibTextViewerHandle {
   moveCursorLine: (delta: number) => void
   /** Get current cursor line info */
   getCursorLineInfo: () => { cursorLine: number; totalLines: number }
+  /** Get the clean text of whatever is currently selected */
+  getSelectedText: () => string
 }
 
 /** Callback for when cursor line changes */
@@ -701,7 +703,20 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       const lines = computeVisualLines()
       return buildLineInfo(cursorLineRef.current, lines)
     },
-  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo])
+    getSelectedText(): string {
+      // If we have highlighted indices (sentence/visual/line selection), use those
+      if (highlightedIndices.size > 0) {
+        // Get sorted indices and build clean text
+        const sorted = Array.from(highlightedIndices).sort((a, b) => a - b)
+        return sorted.map(i => allWords[i]?.text ?? '').filter(Boolean).join(' ')
+      }
+      // Otherwise use the single selected word (normal mode cursor)
+      if (selectedWord) {
+        return selectedWord.text
+      }
+      return ''
+    },
+  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {

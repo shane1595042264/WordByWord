@@ -32,6 +32,7 @@ export type VimActionType =
   | 'select-to-end'       // extend selection from current to last word (G in visual mode)
   | 'select-to-start'     // extend selection from current to first word (gg in visual mode)
   | 'confirm-selection'   // confirm current selection (Enter — translate in normal/sentence mode)
+  | 'yank'                // copy (yank) current selection to clipboard
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit to normal mode / clear selection
   | 'custom'              // arbitrary callback (for future extensibility)
