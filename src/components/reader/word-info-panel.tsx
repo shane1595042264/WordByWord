@@ -31,10 +31,40 @@ interface WordInfoPanelProps {
 export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTitle, sectionTitle, panelMode = 'word' }: WordInfoPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isPinned, setIsPinned] = useState(false)
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
   const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null)
   const dragging = useRef(false)
   const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
+  const liveDragPos = useRef<{ x: number; y: number } | null>(null)
+  const [, forceRender] = useState(0)
+
+  // Track anchor position changes from scrolling (re-render when anchor moves)
+  const [anchorPos, setAnchorPos] = useState<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    if (!anchorEl || isPinned) return
+    const update = () => {
+      const rect = anchorEl.getBoundingClientRect()
+      setAnchorPos({ x: rect.right + 8, y: rect.top - 4 })
+    }
+    update()
+    // Listen for scroll on all ancestors to update position
+    const scrollParents: HTMLElement[] = []
+    let el: HTMLElement | null = anchorEl.parentElement
+    while (el) {
+      if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
+        scrollParents.push(el)
+        el.addEventListener('scroll', update, { passive: true })
+      }
+      el = el.parentElement
+    }
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update, { passive: true })
+    return () => {
+      scrollParents.forEach(p => p.removeEventListener('scroll', update))
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [anchorEl, isPinned])
 
   // Translation state
   const [translation, setTranslation] = useState<TranslationResult | null>(null)
@@ -57,6 +87,20 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   // Settings
   const [targetLang, setTargetLang] = useState<TargetLanguage>('zh')
   const [apiKey, setApiKey] = useState<string | null>(null)
+
+  // ESC key closes panel (works in both vim and non-vim modes)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        onClose()
+      }
+    }
+    // Use capture phase to intercept before vim engine
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [onClose])
 
   // Load settings on mount
   useEffect(() => {
@@ -209,15 +253,13 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   // ── Positioning (same drag logic as before) ──
 
   const getAnchorPos = useCallback((): { x: number; y: number } | null => {
-    if (!anchorEl) return null
-    const rect = anchorEl.getBoundingClientRect()
-    return { x: rect.right + 8, y: rect.top - 4 }
-  }, [anchorEl])
+    return anchorPos
+  }, [anchorPos])
 
   const getPosition = useCallback((): { x: number; y: number } => {
     if (isPinned && pinnedPos) return pinnedPos
-    return getAnchorPos() ?? { x: 200, y: 200 }
-  }, [isPinned, pinnedPos, getAnchorPos])
+    return anchorPos ?? { x: 200, y: 200 }
+  }, [isPinned, pinnedPos, anchorPos])
 
   const clampToViewport = useCallback((x: number, y: number): { x: number; y: number } => {
     const panel = panelRef.current
@@ -243,32 +285,34 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       if (!dragging.current) return
       const dx = ev.clientX - dragStart.current.mouseX
       const dy = ev.clientY - dragStart.current.mouseY
-      setDragOffset({ x: dragStart.current.panelX + dx, y: dragStart.current.panelY + dy })
+      const newPos = { x: dragStart.current.panelX + dx, y: dragStart.current.panelY + dy }
+      liveDragPos.current = newPos
+      forceRender(n => n + 1)
     }
 
     const onUp = () => {
       dragging.current = false
-      setIsPinned(true)
-      setPinnedPos((_prev) => dragOffset ?? getPosition())
+      const finalPos = liveDragPos.current
+      if (finalPos) {
+        setIsPinned(true)
+        setPinnedPos(finalPos)
+      }
+      liveDragPos.current = null
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
 
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-  }, [getPosition, dragOffset])
-
-  useEffect(() => {
-    if (dragging.current && dragOffset) setPinnedPos(dragOffset)
-  }, [dragOffset])
+  }, [getPosition])
 
   useEffect(() => {
     setIsPinned(false)
     setPinnedPos(null)
-    setDragOffset(null)
+    liveDragPos.current = null
   }, [word])
 
-  const pos = isPinned && pinnedPos ? pinnedPos : (dragOffset && dragging.current ? dragOffset : getAnchorPos() ?? { x: 200, y: 200 })
+  const pos = dragging.current && liveDragPos.current ? liveDragPos.current : (isPinned && pinnedPos ? pinnedPos : (anchorPos ?? { x: 200, y: 200 }))
   const clamped = clampToViewport(pos.x, pos.y)
 
   const style: CSSProperties = {

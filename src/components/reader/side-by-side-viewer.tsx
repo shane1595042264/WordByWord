@@ -63,6 +63,12 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
     syncPdfToWord(word)
   }, [syncPdfToWord])
 
+  const handleDeselect = useCallback(() => {
+    // Clear PDF highlight and reset synced page so scroll sync resumes
+    setHighlightWord(null)
+    lastSyncedPageRef.current = 0
+  }, [])
+
   /**
    * Passive content-aware sync: As the user scrolls through text,
    * find which NibPage is currently at the top of the visible area
@@ -152,6 +158,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
               sectionTitle={sectionTitle}
               showIndicators={showIndicators}
               onWordSelect={handleWordSelect}
+              onDeselect={handleDeselect}
               scrollContainerRef={textRef}
               bookTitle={bookTitle}
               vimMode={vimMode}

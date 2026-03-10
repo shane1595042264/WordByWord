@@ -53,6 +53,8 @@ interface NibTextViewerProps {
   showIndicators?: boolean
   /** Called when a word is tapped — parent can use word.getAIContext() for translation */
   onWordSelect?: (word: NibWord) => void
+  /** Called when the word is deselected (ESC / close panel) so parent can clear PDF highlight */
+  onDeselect?: () => void
   /** Set of word indices currently selected via vim (highlighted) */
   vimSelectedIndices?: Set<number>
   /** The scroll container ref for finding visible words */
@@ -168,7 +170,7 @@ function ParagraphRenderer({
  * Element type indicators can be toggled on/off for testing/debugging.
  */
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
+  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, onDeselect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -489,10 +491,11 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
     },
     clearVimSelection() {
-      // Close info panel and clear multi-word highlights, but keep the word cursor
-      // (normal mode always has a word selected as the cursor)
+      // Close info panel, clear highlights, deselect word, and notify parent
       setWordAnchorEl(null)
+      setSelectedWord(null)
       setHighlightedIndices(new Set())
+      onDeselect?.()
     },
     confirmSelection() {
       // Show the word info panel for the currently selected word
@@ -727,7 +730,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
       return ''
     },
-  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
+  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {
@@ -781,7 +784,9 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
   const handleClosePanel = useCallback(() => {
     setSelectedWord(null)
     setWordAnchorEl(null)
-  }, [])
+    setHighlightedIndices(new Set())
+    onDeselect?.()
+  }, [onDeselect])
 
   if (!nibDocument) {
     return (
