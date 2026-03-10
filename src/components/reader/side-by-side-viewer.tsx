@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useCallback, useEffect } from 'react'
-import { PDFViewer } from './pdf-viewer'
+import { useRef, useCallback, useEffect, useState } from 'react'
+import { PDFViewer, type HighlightWordInfo } from './pdf-viewer'
 import { TextViewer } from './text-viewer'
 import { NibTextViewer } from './nib-text-viewer'
-import type { NibDocument } from '@/lib/nib'
+import type { NibDocument, NibWord } from '@/lib/nib'
 
 interface SideBySideViewerProps {
   pdfBlob: Blob
@@ -17,7 +17,6 @@ interface SideBySideViewerProps {
   showIndicators?: boolean
   currentPage?: number
   onPageChange?: (page: number) => void
-  highlightRegion?: { top: number; height: number } | null
   onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
   syncScroll?: boolean
 }
@@ -27,6 +26,18 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   // Guard to prevent scroll event loops
   const isSyncing = useRef(false)
+
+  // ── Word highlight state ──
+  const [highlightWord, setHighlightWord] = useState<HighlightWordInfo | null>(null)
+
+  const handleWordSelect = useCallback((word: NibWord) => {
+    setHighlightWord({
+      text: word.text,
+      pageNumber: word.page.pageNumber,
+      sentenceText: word.sentence.text,
+      wordIndex: word.index,
+    })
+  }, [])
 
   const getScrollRatio = (el: HTMLElement): number => {
     const max = el.scrollHeight - el.clientHeight
@@ -84,6 +95,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
               nibDocument={nibDocument}
               sectionTitle={sectionTitle}
               showIndicators={showIndicators}
+              onWordSelect={handleWordSelect}
             />
           ) : (
             <TextViewer text={text} sectionTitle={sectionTitle} />
@@ -100,6 +112,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
           onPageChange={onPageChange}
           onPageProgress={onPageProgress}
           scrollRef={pdfScrollRef}
+          highlightWord={highlightWord}
         />
       </div>
     </div>

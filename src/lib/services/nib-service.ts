@@ -75,16 +75,28 @@ export class NibService {
     title: string,
     author: string,
     sectionTitle?: string,
+    nextSectionTitle?: string,
+    nextSectionStartPage?: number,
   ): Promise<NibDocument> {
     const pdfService = await this.getPdfService()
-    const rawPages = await pdfService.extractRichPageRange(blob, startPage, endPage)
+
+    // Extend end page to include the next section's first page if it follows
+    // immediately (so we capture text that continues past the assigned page range).
+    const effectiveEndPage = (nextSectionStartPage && nextSectionStartPage > endPage)
+      ? nextSectionStartPage
+      : endPage
+
+    const rawPages = await pdfService.extractRichPageRange(blob, startPage, effectiveEndPage)
     const data = this.parser.parseDocument(rawPages, title, author)
 
     // Strip content that appears before the section header on the first page.
-    // Sections often share pages with the previous section, so we need to
-    // remove the "intro overflow" from the preceding section.
     if (sectionTitle) {
       this.trimContentBeforeSection(data, sectionTitle)
+    }
+
+    // Strip content that appears at/after the NEXT section's header on the last page(s).
+    if (nextSectionTitle && effectiveEndPage > endPage) {
+      this.trimContentAfterNextSection(data, nextSectionTitle)
     }
 
     return NibDocument.fromData(data)
@@ -131,6 +143,60 @@ export class NibService {
     if (sectionStartIdx > 0) {
       firstPage.paragraphs = firstPage.paragraphs.slice(sectionStartIdx)
         .map((p, i) => ({ ...p, index: i }))
+    }
+  }
+
+  /**
+   * Remove paragraphs on all pages that appear at or after the next section's heading.
+   * This trims the "tail" — content belonging to the next section that we included
+   * by extending the page range.
+   */
+  private trimContentAfterNextSection(data: NibDocumentData, nextSectionTitle: string) {
+    if (data.pages.length === 0) return
+
+    const numberMatch = nextSectionTitle.match(/^(\d+(?:\.\d+)*)/)
+    const sectionNumber = numberMatch ? numberMatch[1] : null
+
+    // Search all pages (from last to first) for the next section heading
+    for (let p = data.pages.length - 1; p >= 0; p--) {
+      const page = data.pages[p]
+      if (!page.paragraphs || page.paragraphs.length === 0) continue
+
+      for (let i = 0; i < page.paragraphs.length; i++) {
+        const pText = page.paragraphs[i].sentences
+          .flatMap(s => s.words.map(w => w.text))
+          .join(' ')
+          .trim()
+
+        let isNextHeader = false
+
+        // Check subheading block type that matches the next section number
+        if (page.paragraphs[i].blockType === 'subheading' && sectionNumber && pText.startsWith(sectionNumber)) {
+          isNextHeader = true
+        }
+        // Check raw text match
+        if (sectionNumber && pText.startsWith(sectionNumber + ' ')) {
+          isNextHeader = true
+        }
+        const normalizedTitle = nextSectionTitle.replace(/\s+/g, ' ').trim()
+        const normalizedParagraph = pText.replace(/\s+/g, ' ').trim()
+        if (normalizedParagraph.startsWith(normalizedTitle)) {
+          isNextHeader = true
+        }
+
+        if (isNextHeader) {
+          // Trim: keep paragraphs 0..i-1 on this page, remove this and all after
+          page.paragraphs = page.paragraphs.slice(0, i)
+            .map((para, idx) => ({ ...para, index: idx }))
+          // Also remove any pages after this one
+          data.pages = data.pages.slice(0, p + 1)
+          // Remove page if it has no paragraphs left
+          if (page.paragraphs.length === 0 && data.pages.length > 1) {
+            data.pages.pop()
+          }
+          return
+        }
+      }
     }
   }
 

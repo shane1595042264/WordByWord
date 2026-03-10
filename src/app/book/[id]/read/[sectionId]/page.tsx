@@ -35,7 +35,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
   const endPage = section?.endPage ?? 1
-  const totalSectionPages = endPage - startPage + 1
 
   const [currentPage, setCurrentPage] = useState(startPage)
 
@@ -86,6 +85,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Falls back to flat text parsing for scanned/AI-extracted text.
   const [nibDocument, setNibDocument] = useState<NibDocument | null>(null)
 
+  // Effective end page includes any extra pages the nib parser added
+  // (when section text continues past the assigned page range)
+  const effectiveEndPage = nibDocument
+    ? Math.max(endPage, startPage + nibDocument.pages.length - 1)
+    : endPage
+  const totalSectionPages = effectiveEndPage - startPage + 1
+
   useEffect(() => {
     if (!section?.extractedText || !book) { setNibDocument(null); return }
 
@@ -93,7 +99,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
 
     // Try rich PDF parsing first (preserves bold/italic font info)
-    if (book.pdfBlob && !isIntroSection) {
+    if (book.pdfBlob) {
       const nibService = new NibService()
       nibService.parsePages(
         book.pdfBlob,
@@ -101,7 +107,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         section.endPage,
         book.title,
         book.author,
-        section.title,
+        isIntroSection ? undefined : section.title,
+        nextSection?.title,
+        nextSection?.startPage,
       ).then(doc => {
         if (!cancelled) setNibDocument(doc)
       }).catch(() => {
@@ -109,18 +117,27 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         if (!cancelled) {
           try {
             const fallbackService = new NibService()
-            setNibDocument(fallbackService.parseExtractedTextBodyOnly(
-              section.extractedText!,
-              book.title,
-              book.author,
-              section.startPage,
-              section.title,
-            ))
+            if (isIntroSection) {
+              setNibDocument(fallbackService.parseExtractedTextIntroOnly(
+                section.extractedText!,
+                book.title,
+                book.author,
+                section.startPage,
+              ))
+            } else {
+              setNibDocument(fallbackService.parseExtractedTextBodyOnly(
+                section.extractedText!,
+                book.title,
+                book.author,
+                section.startPage,
+                section.title,
+              ))
+            }
           } catch { setNibDocument(null) }
         }
       })
     } else {
-      // Text-based parsing (for intro sections or when no PDF blob)
+      // Text-based parsing (when no PDF blob)
       try {
         const nibService = new NibService()
         if (isIntroSection) {
@@ -143,7 +160,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }
 
     return () => { cancelled = true }
-  }, [section?.extractedText, section?.title, book, section?.startPage, section?.endPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [section?.extractedText, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
 
@@ -265,7 +282,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             <PDFViewer
               pdfBlob={book.pdfBlob}
               startPage={section.startPage}
-              endPage={section.endPage}
+              endPage={effectiveEndPage}
               readingMode={readingMode}
               currentPage={currentPage}
               onPageChange={handlePageChange}
@@ -295,7 +312,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             <SideBySideViewer
               pdfBlob={book.pdfBlob}
               startPage={section.startPage}
-              endPage={section.endPage}
+              endPage={effectiveEndPage}
               text={section.extractedText}
               nibDocument={nibDocument}
               sectionTitle={section.title}
