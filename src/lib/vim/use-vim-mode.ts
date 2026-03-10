@@ -126,9 +126,17 @@ export function useVimMode({
         dispatchScroll(rule.action.direction ?? 1, rule.action.magnitude ?? 1, count)
         break
 
-      case 'scroll-to':
-        dispatchScrollTo(rule.action.direction ?? 1)
+      case 'scroll-to': {
+        const dir = rule.action.direction ?? 1
+        dispatchScrollTo(dir)
+        // Also move cursor to top/bottom line
+        if (dir < 0) {
+          onCursorLine?.(-999999)
+        } else {
+          onCursorLine?.(999999)
+        }
         break
+      }
 
       case 'cursor-line':
         if (onCursorLine) {
