@@ -71,6 +71,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onSelectLine: useCallback(() => {
       nibTextViewerRef.current?.selectCurrentLine()
     }, []),
+    onSelectToEnd: useCallback(() => {
+      nibTextViewerRef.current?.selectToEnd()
+    }, []),
+    onSelectToStart: useCallback(() => {
+      nibTextViewerRef.current?.selectToStart()
+    }, []),
     onClearSelection: useCallback(() => {
       nibTextViewerRef.current?.clearVimSelection()
     }, []),

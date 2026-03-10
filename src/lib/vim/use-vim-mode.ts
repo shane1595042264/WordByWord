@@ -13,6 +13,8 @@ interface UseVimModeOptions {
   onSelectWord?: (delta: number) => void
   onSelectSentence?: (delta: number) => void
   onSelectLine?: () => void
+  onSelectToEnd?: () => void
+  onSelectToStart?: () => void
   onClearSelection?: () => void
   onConfirmSelection?: () => void
   onSelectWordVertical?: (direction: number) => void
@@ -33,6 +35,8 @@ export function useVimMode({
   onSelectWord,
   onSelectSentence,
   onSelectLine,
+  onSelectToEnd,
+  onSelectToStart,
   onClearSelection,
   onConfirmSelection,
   onSelectWordVertical,
@@ -85,12 +89,19 @@ export function useVimMode({
       return
     }
 
-    // gg detection (double-tap g) in normal mode
-    if (key === 'g' && !e.shiftKey && mode === 'normal') {
+    // gg detection (double-tap g) — works in all modes
+    if (key === 'g' && !e.shiftKey) {
       const now = Date.now()
       if (now - lastGTime.current < GG_TIMEOUT) {
         e.preventDefault()
-        dispatchScrollTo(-1)
+        if (mode === 'visual') {
+          // In visual mode, gg extends selection to start
+          onSelectToStart?.()
+        } else {
+          // In normal/word/sentence, scroll to top and reset cursor to line 0
+          dispatchScrollTo(-1)
+          onCursorLine?.(-999999)
+        }
         setCountBuffer('')
         lastGTime.current = 0
         return
@@ -155,9 +166,17 @@ export function useVimMode({
         break
 
       case 'select-line':
-        // Enter visual mode if in normal, then select line
-        if (mode === 'normal') setMode('visual')
+        // Enter visual mode from any non-visual mode, then select line
+        if (mode !== 'visual') setMode('visual')
         onSelectLine?.()
+        break
+
+      case 'select-to-end':
+        onSelectToEnd?.()
+        break
+
+      case 'select-to-start':
+        onSelectToStart?.()
         break
 
       case 'confirm-selection':
@@ -193,7 +212,7 @@ export function useVimMode({
     }
 
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onClearSelection, onConfirmSelection, rulebook])
 
   useEffect(() => {
     if (!enabled) return

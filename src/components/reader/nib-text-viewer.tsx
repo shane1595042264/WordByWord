@@ -16,6 +16,10 @@ export interface NibTextViewerHandle {
   selectSentenceByDelta: (delta: number) => void
   /** Select all words on the current visual line */
   selectCurrentLine: () => void
+  /** Select all words from current cursor to the very last word */
+  selectToEnd: () => void
+  /** Select all words from current cursor to the very first word */
+  selectToStart: () => void
   /** Clear all vim-driven selection */
   clearVimSelection: () => void
   /** Confirm the current selection — show the word info panel */
@@ -400,6 +404,64 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         linePositions: lines.map(l => l.y),
       })
     },
+    selectToEnd() {
+      // Select all words from current cursor position to the last word
+      if (allWords.length === 0) return
+      const startIdx = Math.min(vimCursorRef.current, allWords.length - 1)
+      const indices = new Set<number>()
+      // Include any currently highlighted indices (from prior selection)
+      highlightedIndices.forEach(i => indices.add(i))
+      for (let i = startIdx; i < allWords.length; i++) {
+        indices.add(i)
+      }
+      setHighlightedIndices(indices)
+      // Move cursor to last word
+      vimCursorRef.current = allWords.length - 1
+      const lastWord = allWords[allWords.length - 1]
+      if (lastWord) setSelectedWord(lastWord)
+      // Scroll to bottom
+      const lastSpan = wordSpanRefs.current.get(allWords.length - 1)
+      if (lastSpan) lastSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // Update cursor line to last line
+      const lines = computeVisualLines()
+      if (lines.length > 0) {
+        cursorLineRef.current = lines.length - 1
+        onCursorLineChange?.({
+          cursorLine: lines.length - 1,
+          totalLines: lines.length,
+          linePositions: lines.map(l => l.y),
+        })
+      }
+    },
+    selectToStart() {
+      // Select all words from current cursor position to the first word
+      if (allWords.length === 0) return
+      const endIdx = Math.max(vimCursorRef.current, 0)
+      const indices = new Set<number>()
+      // Include any currently highlighted indices (from prior selection)
+      highlightedIndices.forEach(i => indices.add(i))
+      for (let i = 0; i <= endIdx; i++) {
+        indices.add(i)
+      }
+      setHighlightedIndices(indices)
+      // Move cursor to first word
+      vimCursorRef.current = 0
+      const firstWord = allWords[0]
+      if (firstWord) setSelectedWord(firstWord)
+      // Scroll to top
+      const firstSpan = wordSpanRefs.current.get(0)
+      if (firstSpan) firstSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // Update cursor line to first line
+      const lines = computeVisualLines()
+      if (lines.length > 0) {
+        cursorLineRef.current = 0
+        onCursorLineChange?.({
+          cursorLine: 0,
+          totalLines: lines.length,
+          linePositions: lines.map(l => l.y),
+        })
+      }
+    },
     clearVimSelection() {
       setSelectedWord(null)
       setWordAnchorEl(null)
@@ -591,7 +653,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         linePositions: lines.map(l => l.y),
       }
     },
-  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord])
+  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {

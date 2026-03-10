@@ -57,7 +57,7 @@ export const RULEBOOK: VimRule[] = [
   {
     id: 'normal:gg',
     label: 'Go to top',
-    modes: ['normal'],
+    modes: ['normal', 'word', 'sentence', 'visual'],
     key: 'g', // double-tap detection in engine
     action: { type: 'scroll-to', direction: -1 },
     acceptsCount: false,
@@ -335,7 +335,7 @@ export const RULEBOOK: VimRule[] = [
   {
     id: 'visual:V',
     label: 'Select line',
-    modes: ['visual', 'normal'],
+    modes: ['visual', 'normal', 'word', 'sentence'],
     key: 'V',
     shift: true,
     action: { type: 'select-line' },
@@ -344,13 +344,22 @@ export const RULEBOOK: VimRule[] = [
   },
   {
     id: 'visual:G',
-    label: 'Extend to bottom',
+    label: 'Select to bottom',
     modes: ['visual'],
     key: 'G',
     shift: true,
-    action: { type: 'scroll-to', direction: 1 },
+    action: { type: 'select-to-end' },
     acceptsCount: false,
-    description: 'Extend selection to end of document',
+    description: 'Extend selection from current word to end of document',
+  },
+  {
+    id: 'visual:gg',
+    label: 'Select to top',
+    modes: ['visual'],
+    key: 'g', // double-tap detection handles this
+    action: { type: 'select-to-start' },
+    acceptsCount: false,
+    description: 'Extend selection from current word to start of document (gg)',
   },
 ]
 

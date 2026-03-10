@@ -30,6 +30,8 @@ export type VimActionType =
   | 'select-sentence'     // select next/prev sentence (h/l in sentence mode)
   | 'select-sentence-vertical' // move sentence cursor to line above/below (j/k in sentence mode)
   | 'select-line'         // select current visual line (V in visual mode)
+  | 'select-to-end'       // extend selection from current to last word (G in visual mode)
+  | 'select-to-start'     // extend selection from current to first word (gg in visual mode)
   | 'confirm-selection'   // confirm current selection (Enter — translate in word/sentence mode)
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit to normal mode / clear selection
