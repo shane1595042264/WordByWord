@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useCallback, useEffect, useState } from 'react'
-import { PDFViewer, type HighlightWordInfo } from './pdf-viewer'
+import { PDFViewer, type HighlightWordInfo, type PDFViewerHandle } from './pdf-viewer'
 import { TextViewer } from './text-viewer'
 import { NibTextViewer, type NibTextViewerHandle } from './nib-text-viewer'
 import type { NibDocument, NibWord } from '@/lib/nib'
@@ -25,75 +25,124 @@ interface SideBySideViewerProps {
   bookTitle?: string
   /** Current vim mode */
   vimMode?: 'normal' | 'sentence' | 'visual'
+  /** Original section end page (before overlap extension) for divider */
+  sectionEndPage?: number
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
-  // Guard to prevent scroll event loops
-  const isSyncing = useRef(false)
+  const pdfViewerRef = useRef<PDFViewerHandle>(null)
 
   // ── Word highlight state ──
   const [highlightWord, setHighlightWord] = useState<HighlightWordInfo | null>(null)
 
+  // Track which PDF page is currently synced to avoid redundant scrolls
+  const lastSyncedPageRef = useRef<number>(0)
+
+  /**
+   * Content-aware sync: Given a NibWord, scroll the PDF to show its page.
+   * This replaces the old scroll-ratio based sync with precise page alignment.
+   */
+  const syncPdfToWord = useCallback((word: NibWord) => {
+    const pageNum = word.page.pageNumber
+    if (pageNum === lastSyncedPageRef.current) return
+    lastSyncedPageRef.current = pageNum
+    pdfViewerRef.current?.scrollToPage(pageNum, 'smooth')
+  }, [])
+
   const handleWordSelect = useCallback((word: NibWord) => {
+    // Set highlight info for the PDF overlay
     setHighlightWord({
       text: word.text,
       pageNumber: word.page.pageNumber,
       sentenceText: word.sentence.text,
       wordIndex: word.index,
     })
-  }, [])
+    // Also sync PDF scroll to the word's page
+    syncPdfToWord(word)
+  }, [syncPdfToWord])
 
-  const getScrollRatio = (el: HTMLElement): number => {
-    const max = el.scrollHeight - el.clientHeight
-    return max > 0 ? el.scrollTop / max : 0
-  }
-
-  const setScrollRatio = (el: HTMLElement, ratio: number) => {
-    const max = el.scrollHeight - el.clientHeight
-    if (max > 0) {
-      el.scrollTop = ratio * max
-    }
-  }
-
+  /**
+   * Passive content-aware sync: As the user scrolls through text,
+   * find which NibPage is currently at the top of the visible area
+   * and scroll the PDF to that page.
+   *
+   * Instead of matching scroll ratios (which is inaccurate because text
+   * and PDF have different content heights), we find the actual word
+   * elements in the DOM and check which NibDocument page they belong to.
+   */
   const handleTextScroll = useCallback(() => {
-    if (!syncScroll || isSyncing.current) return
+    if (!syncScroll || !nibDocument) return
     const textEl = textRef.current
-    const pdfEl = pdfScrollRef.current
-    if (!textEl || !pdfEl) return
-    isSyncing.current = true
-    const ratio = getScrollRatio(textEl)
-    setScrollRatio(pdfEl, ratio)
-    // Release lock after browser paints
-    requestAnimationFrame(() => { isSyncing.current = false })
-  }, [syncScroll])
+    if (!textEl) return
 
-  const handlePdfScroll = useCallback(() => {
-    if (!syncScroll || isSyncing.current) return
-    const textEl = textRef.current
-    const pdfEl = pdfScrollRef.current
-    if (!textEl || !pdfEl) return
-    isSyncing.current = true
-    const ratio = getScrollRatio(pdfEl)
-    setScrollRatio(textEl, ratio)
-    requestAnimationFrame(() => { isSyncing.current = false })
-  }, [syncScroll])
+    // Find word spans in the visible viewport area
+    // We check word spans near the top of the scroll container to determine
+    // which page the user is currently reading
+    const containerRect = textEl.getBoundingClientRect()
+    // Target: the word span nearest to 1/3 from the top of the viewport
+    // (top-third gives a good "currently reading" position)
+    const targetY = containerRect.top + containerRect.height * 0.33
 
-  // Attach/detach PDF scroll listener (since PDFViewer renders canvases into pdfScrollRef)
+    // Query word spans in the text pane
+    const wordSpans = textEl.querySelectorAll<HTMLSpanElement>('[data-word-index]')
+    let closestSpan: HTMLSpanElement | null = null
+    let closestDist = Infinity
+
+    for (const span of wordSpans) {
+      const rect = span.getBoundingClientRect()
+      // Only consider spans that are within the visible area
+      if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) continue
+      const dist = Math.abs(rect.top - targetY)
+      if (dist < closestDist) {
+        closestDist = dist
+        closestSpan = span
+      }
+    }
+
+    if (!closestSpan) return
+    const wordIndex = parseInt(closestSpan.dataset.wordIndex ?? '0', 10)
+
+    // Find which NibPage this word belongs to
+    let cumWords = 0
+    for (const page of nibDocument.pages) {
+      const pageWordCount = page.allWords.length
+      if (wordIndex < cumWords + pageWordCount) {
+        const pageNum = page.pageNumber
+        if (pageNum !== lastSyncedPageRef.current) {
+          lastSyncedPageRef.current = pageNum
+          pdfViewerRef.current?.scrollToPage(pageNum, 'smooth')
+        }
+        return
+      }
+      cumWords += pageWordCount
+    }
+  }, [syncScroll, nibDocument])
+
+  // Debounced text scroll handler to avoid thrashing
+  const scrollRafRef = useRef<number | null>(null)
+  const debouncedTextScroll = useCallback(() => {
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
+    scrollRafRef.current = requestAnimationFrame(() => {
+      handleTextScroll()
+      scrollRafRef.current = null
+    })
+  }, [handleTextScroll])
+
+  // Clean up raf on unmount
   useEffect(() => {
-    const pdfEl = pdfScrollRef.current
-    if (!pdfEl || !syncScroll) return
-    pdfEl.addEventListener('scroll', handlePdfScroll, { passive: true })
-    return () => pdfEl.removeEventListener('scroll', handlePdfScroll)
-  }, [syncScroll, handlePdfScroll])
+    return () => {
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
+    }
+  }, [])
 
   return (
     <div className="grid grid-cols-2 h-full min-h-0">
       <div
         ref={textRef}
         className="h-full min-h-0 overflow-auto"
-        onScroll={handleTextScroll}
+        onScroll={debouncedTextScroll}
       >
         <div className="p-4">
           {nibDocument ? (
@@ -123,6 +172,8 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
           onPageProgress={onPageProgress}
           scrollRef={pdfScrollRef}
           highlightWord={highlightWord}
+          pdfViewerRef={pdfViewerRef}
+          sectionEndPage={sectionEndPage}
         />
       </div>
     </div>

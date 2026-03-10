@@ -187,11 +187,22 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Falls back to flat text parsing for scanned/AI-extracted text.
   const [nibDocument, setNibDocument] = useState<NibDocument | null>(null)
 
-  // Effective end page includes any extra pages the nib parser added
-  // (when section text continues past the assigned page range)
-  const effectiveEndPage = nibDocument
-    ? Math.max(endPage, startPage + nibDocument.pages.length - 1)
-    : endPage
+  // Effective end page: always include at least the next section's start page
+  // so the PDF shows all content that the nib parser merged (cross-page paragraphs).
+  // This means sections can overlap on the PDF side — that's fine, we'll show
+  // a divider line so the reader knows where the section boundary is.
+  const effectiveEndPage = useMemo(() => {
+    let ep = endPage
+    // Include pages from nibDocument if it parsed more
+    if (nibDocument) {
+      ep = Math.max(ep, startPage + nibDocument.pages.length - 1)
+    }
+    // Always extend to include the next section's start page (overlap)
+    if (nextSection?.startPage && nextSection.startPage > endPage) {
+      ep = Math.max(ep, nextSection.startPage)
+    }
+    return ep
+  }, [endPage, startPage, nibDocument, nextSection?.startPage])
   const totalSectionPages = effectiveEndPage - startPage + 1
 
   useEffect(() => {
@@ -395,6 +406,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               currentPage={currentPage}
               onPageChange={handlePageChange}
               onPageProgress={handlePageProgress}
+              sectionEndPage={section.endPage}
             />
           )}
           {viewMode === 'text' && (
@@ -452,6 +464,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   nibTextViewerRef={nibTextViewerRef}
                   bookTitle={book.title}
                   vimMode={vim.mode}
+                  sectionEndPage={section.endPage}
                 />
               </div>
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />

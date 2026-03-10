@@ -348,6 +348,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         }
         // Sync cursor line with selected word
         reportCursorLineForWord(vimCursorRef.current)
+        // Notify parent (for side-by-side PDF sync)
+        onWordSelect?.(word)
       }
     },
     selectSentenceByDelta(delta: number) {
@@ -391,6 +393,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         }
         // Sync cursor line with first word of sentence
         reportCursorLineForWord(flatIdx)
+        // Notify parent (for side-by-side PDF sync)
+        onWordSelect?.(firstWord)
       }
     },
     selectCurrentLine() {
@@ -549,6 +553,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
             }
             reportCursorLineForWord(bestIndex)
+            // Notify parent (for side-by-side PDF sync)
+            onWordSelect?.(word)
           }
           return
         }
@@ -566,7 +572,10 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         const idx = line.wordIndices[0]
         setVimCursor(idx)
         const word = allWords[idx]
-        if (word) setSelectedWord(word)
+        if (word) {
+          setSelectedWord(word)
+          onWordSelect?.(word)
+        }
         const span = wordSpanRefs.current.get(idx)
         if (span) span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
       } else {
@@ -665,6 +674,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
           span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
         }
         reportCursorLineForWord(flatIdx)
+        // Notify parent (for side-by-side PDF sync)
+        onWordSelect?.(firstWord)
       }
     },
     moveCursorLine(delta: number) {

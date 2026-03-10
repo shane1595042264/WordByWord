@@ -21,6 +21,12 @@ export interface HighlightWordInfo {
   wordIndex: number
 }
 
+/** Imperative handle for controlling the PDF viewer */
+export interface PDFViewerHandle {
+  /** Scroll the PDF to show a specific page (absolute page number) */
+  scrollToPage: (pageNum: number, behavior?: ScrollBehavior) => void
+}
+
 interface PDFViewerProps {
   pdfBlob: Blob
   startPage: number
@@ -35,9 +41,14 @@ interface PDFViewerProps {
   scrollRef?: RefObject<HTMLDivElement | null>
   /** Word to highlight on the PDF */
   highlightWord?: HighlightWordInfo | null
+  /** Imperative handle ref */
+  pdfViewerRef?: RefObject<PDFViewerHandle | null>
+  /** The original section end page (before overlap extension). Pages after this
+   *  are overlap pages and will show a "section ends" divider. */
+  sectionEndPage?: number
 }
 
-export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord }: PDFViewerProps) {
+export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord, pdfViewerRef, sectionEndPage }: PDFViewerProps) {
   const internalRef = useRef<HTMLDivElement>(null)
   // Use a callback ref to assign to both internal and external refs
   const containerRef = internalRef
@@ -48,6 +59,24 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   const [error, setError] = useState<string | null>(null)
   const currentFlipPage = controlledPage ?? startPage
   const totalPages = endPage - startPage + 1
+
+  // Expose imperative handle for scrolling to a page
+  useEffect(() => {
+    if (!pdfViewerRef) return
+    ;(pdfViewerRef as any).current = {
+      scrollToPage(pageNum: number, behavior: ScrollBehavior = 'smooth') {
+        const wrapper = pageWrappersRef.current.get(pageNum)
+        const container = containerRef.current
+        if (!wrapper || !container) return
+        // Scroll the page wrapper to the top of the container
+        const wrapperTop = wrapper.offsetTop
+        container.scrollTo({ top: wrapperTop, behavior })
+      },
+    }
+    return () => {
+      if (pdfViewerRef) (pdfViewerRef as any).current = null
+    }
+  }, [pdfViewerRef])
 
   // Store extracted text positions per page: Map<pageNum, PDFTextPosition[]>
   const textPositionsRef = useRef<Map<number, PDFTextPosition[]>>(new Map())
@@ -180,6 +209,20 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           if (!cancelled) {
             container.appendChild(pageWrapper)
             pageWrappersRef.current.set(pageNum, pageWrapper)
+
+            // Add section-end divider after the last official section page
+            if (sectionEndPage && pageNum === sectionEndPage && endPage > sectionEndPage) {
+              const divider = document.createElement('div')
+              divider.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;background:#18181b;color:#71717a;font-size:11px;font-family:monospace;'
+              const line1 = document.createElement('div')
+              line1.style.cssText = 'flex:1;height:1px;background:linear-gradient(to right,#3f3f46,transparent)'
+              const label = document.createElement('span')
+              label.textContent = '— section ends above —'
+              const line2 = document.createElement('div')
+              line2.style.cssText = 'flex:1;height:1px;background:linear-gradient(to left,#3f3f46,transparent)'
+              divider.append(line1, label, line2)
+              container.appendChild(divider)
+            }
           }
         }
 
@@ -360,7 +403,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   }, [pdfBlob, currentFlipPage, readingMode, extractTextPositions])
 
   // ── Highlight word matching ──
-  // When highlightWord changes, find the matching text position on the PDF
+  // When highlightWord changes, find the matching text position on the PDF.
+  // Due to cross-page paragraph merging, the reported pageNumber may not be
+  // where the word actually appears on the PDF. We search the reported page
+  // first, then search nearby pages (±3) as fallback.
   useEffect(() => {
     if (!highlightWord) {
       setHighlightRect(null)
@@ -368,28 +414,28 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     }
 
     const { text: wordText, pageNumber, sentenceText, wordIndex } = highlightWord
-    const positions = textPositionsRef.current.get(pageNumber)
-    if (!positions || positions.length === 0) {
-      setHighlightRect(null)
-      return
+
+    // Try the reported page first
+    const tryPage = (pn: number): { pageNum: number; x: number; y: number; width: number; height: number } | null => {
+      const positions = textPositionsRef.current.get(pn)
+      if (!positions || positions.length === 0) return null
+      const match = findWordInTextPositions(positions, wordText, sentenceText, wordIndex)
+      if (match) return { pageNum: pn, ...match }
+      return null
     }
 
-    // Strategy: find the PDF text item that contains the word and its surrounding
-    // sentence context. PDF text items are chunks of text (not individual words),
-    // so we need to:
-    // 1. Find text items whose combined text contains the sentence
-    // 2. Locate the specific word within that run of text items
-    // 3. Calculate the word's position within the text item
+    let result = tryPage(pageNumber)
 
-    const match = findWordInTextPositions(positions, wordText, sentenceText, wordIndex)
-    if (match) {
-      setHighlightRect({
-        pageNum: pageNumber,
-        x: match.x,
-        y: match.y,
-        width: match.width,
-        height: match.height,
-      })
+    // If not found on reported page, search nearby pages (±3)
+    if (!result) {
+      for (let offset = 1; offset <= 3; offset++) {
+        result = tryPage(pageNumber + offset) || tryPage(pageNumber - offset)
+        if (result) break
+      }
+    }
+
+    if (result) {
+      setHighlightRect(result)
     } else {
       setHighlightRect(null)
     }
