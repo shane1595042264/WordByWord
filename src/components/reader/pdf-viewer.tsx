@@ -19,6 +19,8 @@ export interface HighlightWordInfo {
   sentenceText: string
   /** 0-based index of the word within its sentence */
   wordIndex: number
+  /** Direct PDF user-space bounding box (bypasses text search when available) */
+  pdfRect?: { pageNumber: number; x: number; y: number; width: number; height: number }
 }
 
 /** Imperative handle for controlling the PDF viewer */
@@ -80,6 +82,8 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
   // Store extracted text positions per page: Map<pageNum, PDFTextPosition[]>
   const textPositionsRef = useRef<Map<number, PDFTextPosition[]>>(new Map())
+  // Store viewport info per page for converting PDF user-space coords to viewport coords
+  const viewportInfoRef = useRef<Map<number, { scale: number; viewport: any }>>(new Map())
   // Store page wrapper elements for overlay positioning: Map<pageNum, HTMLDivElement>
   const pageWrappersRef = useRef<Map<number, HTMLDivElement>>(new Map())
 
@@ -288,6 +292,8 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         // Extract text positions for this page
         const positions = await extractTextPositions(page, pageNum, viewport)
         textPositionsRef.current.set(pageNum, positions)
+        // Store viewport info for pdfRect → viewport coordinate conversion
+        viewportInfoRef.current.set(pageNum, { scale, viewport })
 
         if (!cancelled) {
           // Replace placeholder content with rendered canvas
@@ -387,6 +393,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         // Extract text positions
         const positions = await extractTextPositions(page, currentFlipPage, viewport)
         textPositionsRef.current.set(currentFlipPage, positions)
+        viewportInfoRef.current.set(currentFlipPage, { scale, viewport })
 
         if (!cancelled) {
           pageWrapper.appendChild(canvas)
@@ -404,18 +411,44 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
   // ── Highlight word matching ──
   // When highlightWord changes, find the matching text position on the PDF.
-  // Due to cross-page paragraph merging, the reported pageNumber may not be
-  // where the word actually appears on the PDF. We search the reported page
-  // first, then search nearby pages (±3) as fallback.
+  // If pdfRect is available (stored during parsing), convert directly from
+  // PDF user-space to viewport coordinates — no text searching needed.
+  // Falls back to text-based search when pdfRect is not available.
   useEffect(() => {
     if (!highlightWord) {
       setHighlightRect(null)
       return
     }
 
-    const { text: wordText, pageNumber, sentenceText, wordIndex } = highlightWord
+    const { text: wordText, pageNumber, sentenceText, wordIndex, pdfRect } = highlightWord
 
-    // Try the reported page first
+    // ── Fast path: use pdfRect (precise, no text search) ──
+    if (pdfRect) {
+      const sourcePageNum = pdfRect.pageNumber
+      const vpInfo = viewportInfoRef.current.get(sourcePageNum)
+      if (vpInfo) {
+        const { viewport } = vpInfo
+        // Convert from PDF user-space to viewport coordinates
+        const [vx, vy] = viewport.convertToViewportPoint(pdfRect.x, pdfRect.y)
+        const scaledWidth = pdfRect.width * viewport.scale
+        const rawHeight = pdfRect.height || 10
+        const scaledHeight = rawHeight * viewport.scale
+        setHighlightRect({
+          pageNum: sourcePageNum,
+          x: vx,
+          y: vy - scaledHeight,
+          width: scaledWidth,
+          height: scaledHeight,
+        })
+        return
+      }
+      // Viewport not ready yet — fall through to text search as fallback
+    }
+
+    // ── Fallback: text-based search ──
+    // Due to cross-page paragraph merging, the reported pageNumber may not be
+    // where the word actually appears on the PDF. We search the reported page
+    // first, then search nearby pages (±3) as fallback.
     const tryPage = (pn: number): { pageNum: number; x: number; y: number; width: number; height: number } | null => {
       const positions = textPositionsRef.current.get(pn)
       if (!positions || positions.length === 0) return null

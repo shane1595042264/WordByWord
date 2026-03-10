@@ -21,6 +21,7 @@ import type {
   NibFooterData,
   NibFootnoteData,
   NibFigureData,
+  NibPdfRect,
 } from './models'
 
 // ─── Types for raw PDF text items (from pdfjs textContent.items) ─────────────
@@ -412,7 +413,7 @@ export class NibParser {
     const inlineHeadingSet = new Set(this.detectInlineHeadings(bodyLines, medianHeight))
 
     // ── Split body lines into paragraphs, marking inline headings ──
-    const paragraphs = this.splitIntoParagraphs(bodyLines, medianHeight, inlineHeadingSet)
+    const paragraphs = this.splitIntoParagraphs(bodyLines, medianHeight, inlineHeadingSet, raw.pageNumber)
 
     return {
       pageNumber: raw.pageNumber,
@@ -615,6 +616,7 @@ export class NibParser {
     lines: TextLine[],
     medianHeight: number,
     inlineHeadings?: Set<TextLine>,
+    pageNumber: number = 1,
   ): NibParagraphData[] {
     if (lines.length === 0) return []
 
@@ -631,7 +633,7 @@ export class NibParser {
 
     const flushParagraph = () => {
       if (currentParagraphLines.length === 0) return
-      const para = this.buildParagraph(currentParagraphLines, paragraphs.length)
+      const para = this.buildParagraph(currentParagraphLines, paragraphs.length, pageNumber)
       // Check if ALL lines in this paragraph are inline headings
       if (inlineHeadings && currentParagraphLines.every(l => inlineHeadings.has(l))) {
         para.blockType = 'subheading'
@@ -709,10 +711,18 @@ export class NibParser {
     }
   }
 
-  private buildParagraph(lines: TextLine[], index: number): NibParagraphData {
-    // Build a list of { text, bold, italic } spans from individual PDF items,
-    // preserving font style information at word level.
-    const spans: { text: string; bold: boolean; italic: boolean }[] = []
+  private buildParagraph(lines: TextLine[], index: number, pageNumber: number): NibParagraphData {
+    // Build a list of spans from individual PDF items, preserving font style
+    // AND source item position info for precise PDF highlight positioning.
+    interface Span {
+      text: string
+      bold: boolean
+      italic: boolean
+      /** Source RawTextItem (null for synthetic separator spans) */
+      sourceItem: RawTextItem | null
+    }
+
+    const spans: Span[] = []
 
     // Determine which font names are bold/italic — collect all font names first
     const allFontNames = new Set<string>()
@@ -735,7 +745,7 @@ export class NibParser {
         if (lastSpan && lastSpan.text.endsWith('-')) {
           lastSpan.text = lastSpan.text.slice(0, -1)
         } else {
-          spans.push({ text: ' ', bold: false, italic: false })
+          spans.push({ text: ' ', bold: false, italic: false, sourceItem: null })
         }
       }
 
@@ -743,20 +753,25 @@ export class NibParser {
         const item = lines[i].items[j]
         const isBold = boldFontNames.has(item.fontName)
         const isItalic = italicFontNames.has(item.fontName)
-        if (j > 0) spans.push({ text: ' ', bold: false, italic: false })
-        spans.push({ text: item.str, bold: isBold, italic: isItalic })
+        if (j > 0) spans.push({ text: ' ', bold: false, italic: false, sourceItem: null })
+        spans.push({ text: item.str, bold: isBold, italic: isItalic, sourceItem: item })
       }
     }
 
-    // Join all spans into full text, and build parallel style-flags arrays
-    // indexed by character position
+    // Join all spans into full text, and build parallel arrays indexed by character position:
+    // - style flags (bold/italic)
+    // - source item reference + char offset within item (for pdfRect computation)
     const fullText = spans.map(s => s.text).join('').trim()
     const charBold: boolean[] = []
     const charItalic: boolean[] = []
+    const charSourceItem: (RawTextItem | null)[] = []
+    const charOffsetInItem: number[] = []
     for (const span of spans) {
       for (let c = 0; c < span.text.length; c++) {
         charBold.push(span.bold)
         charItalic.push(span.italic)
+        charSourceItem.push(span.sourceItem)
+        charOffsetInItem.push(c)
       }
     }
     // Trim may have removed leading whitespace; adjust flags accordingly
@@ -764,6 +779,31 @@ export class NibParser {
     const leadingSpaces = rawText.length - rawText.trimStart().length
     const boldFlags = charBold.slice(leadingSpaces, leadingSpaces + fullText.length)
     const italicFlags = charItalic.slice(leadingSpaces, leadingSpaces + fullText.length)
+    const sourceItems = charSourceItem.slice(leadingSpaces, leadingSpaces + fullText.length)
+    const offsetsInItem = charOffsetInItem.slice(leadingSpaces, leadingSpaces + fullText.length)
+
+    /**
+     * Compute pdfRect for a word at character position `absPos` with length `len`.
+     * Uses the source RawTextItem's transform matrix to get exact PDF coordinates.
+     */
+    const computePdfRect = (absPos: number, len: number): NibPdfRect | undefined => {
+      if (absPos < 0 || absPos >= sourceItems.length) return undefined
+      const item = sourceItems[absPos]
+      if (!item) return undefined
+
+      const charInItem = offsetsInItem[absPos]
+      const itemCharCount = item.str.length || 1
+      const charWidth = item.width / itemCharCount
+      const wordWidth = charWidth * len
+
+      return {
+        pageNumber,
+        x: item.transform[4] + charInItem * charWidth,
+        y: item.transform[5],
+        width: wordWidth,
+        height: item.height || Math.abs(item.transform[3]),
+      }
+    }
 
     // Split into sentences
     const sentenceTexts = splitSentences(fullText)
@@ -792,6 +832,9 @@ export class NibParser {
         const isBold = boldCount > w.length / 2
         const isItalic = italicCount > w.length / 2
 
+        // Compute PDF bounding box from source item position
+        const pdfRect = computePdfRect(absPos, w.length)
+
         wordCharOffset = (wordPos >= 0 ? wordPos : wordCharOffset) + w.length
 
         return {
@@ -799,6 +842,7 @@ export class NibParser {
           index: wIdx,
           bold: isBold || undefined,
           italic: isItalic || undefined,
+          pdfRect,
         }
       })
 

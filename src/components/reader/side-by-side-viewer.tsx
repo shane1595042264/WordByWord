@@ -82,12 +82,13 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
   }, [])
 
   const handleWordSelect = useCallback((word: NibWord) => {
-    // Set highlight info for the PDF overlay
+    // Set highlight info for the PDF overlay, including pdfRect for precise positioning
     setHighlightWord({
       text: word.text,
       pageNumber: word.page.pageNumber,
       sentenceText: word.sentence.text,
       wordIndex: word.index,
+      pdfRect: word.pdfRect ?? undefined,
     })
     // Also sync PDF scroll to the word's page
     syncPdfToWord(word)

@@ -19,6 +19,20 @@
 
 // ─── Serializable plain-data interfaces (storable as JSON / IndexedDB) ───────
 
+/** Bounding box of a word in PDF user-space coordinates (from pdfjs transform matrix) */
+export interface NibPdfRect {
+  /** Source page number in the PDF (may differ from parent NibPage after cross-page paragraph merging) */
+  pageNumber: number
+  /** X position in PDF user-space (transform[4]) */
+  x: number
+  /** Y position in PDF user-space (transform[5], bottom-origin) */
+  y: number
+  /** Width in PDF units */
+  width: number
+  /** Height in PDF units (font size) */
+  height: number
+}
+
 export interface NibWordData {
   text: string
   /** 0-based index within the parent sentence */
@@ -29,6 +43,8 @@ export interface NibWordData {
   bold?: boolean
   /** Whether this word appeared in an italic font in the source PDF */
   italic?: boolean
+  /** Bounding box in PDF user-space, for precise highlight positioning */
+  pdfRect?: NibPdfRect
 }
 
 export interface NibSentenceData {
@@ -122,6 +138,8 @@ export class NibWord {
   readonly wasHyphenated: boolean
   readonly bold: boolean
   readonly italic: boolean
+  /** Bounding box in PDF user-space for precise highlight positioning */
+  readonly pdfRect: NibPdfRect | null
   /** @internal set by NibSentence constructor */
   _sentence!: NibSentence
 
@@ -131,6 +149,7 @@ export class NibWord {
     this.wasHyphenated = data.wasHyphenated ?? false
     this.bold = data.bold ?? false
     this.italic = data.italic ?? false
+    this.pdfRect = data.pdfRect ?? null
   }
 
   /** The sentence this word belongs to */
@@ -184,7 +203,7 @@ export class NibWord {
   }
 
   toData(): NibWordData {
-    return { text: this.text, index: this.index, wasHyphenated: this.wasHyphenated || undefined, bold: this.bold || undefined, italic: this.italic || undefined }
+    return { text: this.text, index: this.index, wasHyphenated: this.wasHyphenated || undefined, bold: this.bold || undefined, italic: this.italic || undefined, pdfRect: this.pdfRect ?? undefined }
   }
 }
 
