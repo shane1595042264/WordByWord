@@ -24,6 +24,7 @@ export type VimActionType =
   | 'scroll'              // scroll the text pane by N lines / half-pages
   | 'scroll-to'           // scroll to top / bottom
   | 'select-word'         // select next/prev word
+  | 'select-word-vertical' // move word cursor to line above/below
   | 'select-sentence'     // select next/prev sentence
   | 'select-line'         // select current visual line (like V)
   | 'confirm-selection'   // confirm current selection (show info panel)

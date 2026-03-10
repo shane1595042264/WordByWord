@@ -20,6 +20,8 @@ export interface NibTextViewerHandle {
   clearVimSelection: () => void
   /** Confirm the current selection — show the word info panel */
   confirmSelection: () => void
+  /** Move word cursor vertically (to nearest word on line above/below) */
+  selectWordVertical: (direction: number) => void
 }
 
 interface NibTextViewerProps {
@@ -33,6 +35,8 @@ interface NibTextViewerProps {
   vimSelectedIndices?: Set<number>
   /** The scroll container ref for finding visible words */
   scrollContainerRef?: React.RefObject<HTMLElement | null>
+  /** Book title for vocab context */
+  bookTitle?: string
 }
 
 /**
@@ -125,7 +129,7 @@ function ParagraphRenderer({
  * Element type indicators can be toggled on/off for testing/debugging.
  */
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef },
+  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef, bookTitle },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -261,6 +265,57 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setWordAnchorEl(span)
       }
       onWordSelect?.(word)
+    },
+    selectWordVertical(direction: number) {
+      // Move word cursor to the nearest word on the line above (direction=-1) or below (direction=1)
+      if (allWords.length === 0) return
+      const currentSpan = wordSpanRefs.current.get(vimCursorRef.current)
+      if (!currentSpan) return
+
+      const currentRect = currentSpan.getBoundingClientRect()
+      const currentCenterX = currentRect.left + currentRect.width / 2
+      const currentCenterY = currentRect.top + currentRect.height / 2
+
+      let bestIndex = -1
+      let bestDistance = Infinity
+
+      // Search through all word spans to find the nearest one on a different visual line
+      for (let i = 0; i < allWords.length; i++) {
+        if (i === vimCursorRef.current) continue
+        const span = wordSpanRefs.current.get(i)
+        if (!span) continue
+
+        const rect = span.getBoundingClientRect()
+        const centerY = rect.top + rect.height / 2
+
+        // Must be on a different line in the correct direction
+        const lineThreshold = currentRect.height * 0.4 // at least 40% of a line height away
+        if (direction > 0 && centerY <= currentCenterY + lineThreshold) continue
+        if (direction < 0 && centerY >= currentCenterY - lineThreshold) continue
+
+        // Prefer words that are close horizontally (same column) and on the nearest line
+        const verticalDist = Math.abs(centerY - currentCenterY)
+        const horizontalDist = Math.abs((rect.left + rect.width / 2) - currentCenterX)
+        // Weight vertical distance more heavily to prefer the nearest line
+        const distance = verticalDist * 3 + horizontalDist
+
+        if (distance < bestDistance) {
+          bestDistance = distance
+          bestIndex = i
+        }
+      }
+
+      if (bestIndex >= 0) {
+        vimCursorRef.current = bestIndex
+        const word = allWords[bestIndex]
+        if (word) {
+          setSelectedWord(word)
+          const span = wordSpanRefs.current.get(bestIndex)
+          if (span) {
+            span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          }
+        }
+      }
     },
   }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect])
 
@@ -451,6 +506,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             anchorEl={wordAnchorEl}
             showIndicators={showIndicators}
             onClose={handleClosePanel}
+            bookTitle={bookTitle}
+            sectionTitle={sectionTitle}
           />
         )}
     </div>

@@ -21,9 +21,11 @@ interface SideBySideViewerProps {
   syncScroll?: boolean
   /** Forward ref for vim-driven word selection */
   nibTextViewerRef?: React.RefObject<NibTextViewerHandle | null>
+  /** Book title for vocab context */
+  bookTitle?: string
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   // Guard to prevent scroll event loops
@@ -100,6 +102,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
               showIndicators={showIndicators}
               onWordSelect={handleWordSelect}
               scrollContainerRef={textRef}
+              bookTitle={bookTitle}
             />
           ) : (
             <TextViewer text={text} sectionTitle={sectionTitle} />

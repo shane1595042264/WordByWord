@@ -9,6 +9,7 @@ import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
+import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -118,6 +119,24 @@ export default function SettingsPage() {
                   </Button>
                 ))}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Translation language</Label>
+              <select
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={settings.targetLanguage}
+                onChange={e => setSettings({ ...settings, targetLanguage: e.target.value as any })}
+              >
+                {TARGET_LANGUAGES.map(lang => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.label} ({lang.native})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Words will be translated to this language when you select them.
+              </p>
             </div>
 
             <div className="space-y-2">

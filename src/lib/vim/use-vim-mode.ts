@@ -22,6 +22,8 @@ interface UseVimModeOptions {
   onClearSelection?: () => void
   /** Called when user confirms selection (Enter key — show info panel) */
   onConfirmSelection?: () => void
+  /** Called when word cursor should move vertically (j/k in select mode) */
+  onSelectWordVertical?: (direction: number) => void
   /** Custom rulebook (with user keybinding overrides applied) */
   rulebook?: VimRule[]
 }
@@ -43,6 +45,7 @@ export function useVimMode({
   onSelectLine,
   onClearSelection,
   onConfirmSelection,
+  onSelectWordVertical,
   rulebook = RULEBOOK,
 }: UseVimModeOptions): UseVimModeReturn {
   const [mode, setMode] = useState<VimMode>('normal')
@@ -152,6 +155,15 @@ export function useVimMode({
         }
         break
 
+      case 'select-word-vertical':
+        if (onSelectWordVertical) {
+          const vDir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) {
+            onSelectWordVertical(vDir)
+          }
+        }
+        break
+
       case 'select-sentence':
         if (onSelectSentence) {
           const dir = rule.action.direction ?? 1
@@ -195,7 +207,7 @@ export function useVimMode({
 
     // Reset count buffer after action
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectSentence, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectLine, onClearSelection, onConfirmSelection, rulebook])
 
   // ── Attach global listener ──
   useEffect(() => {

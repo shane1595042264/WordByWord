@@ -195,21 +195,21 @@ export const RULEBOOK: VimRule[] = [
 
   {
     id: 'select:j',
-    label: 'Scroll down (select)',
+    label: 'Move selection down',
     modes: ['select'],
     key: 'j',
-    action: { type: 'scroll', direction: 1, magnitude: 1 },
+    action: { type: 'select-word-vertical', direction: 1 },
     acceptsCount: true,
-    description: 'Scroll down [count] lines while in select mode',
+    description: 'Move word cursor down [count] line(s)',
   },
   {
     id: 'select:k',
-    label: 'Scroll up (select)',
+    label: 'Move selection up',
     modes: ['select'],
     key: 'k',
-    action: { type: 'scroll', direction: -1, magnitude: 1 },
+    action: { type: 'select-word-vertical', direction: -1 },
     acceptsCount: true,
-    description: 'Scroll up [count] lines while in select mode',
+    description: 'Move word cursor up [count] line(s)',
   },
 ]
 

@@ -67,6 +67,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onConfirmSelection: useCallback(() => {
       nibTextViewerRef.current?.confirmSelection()
     }, []),
+    onSelectWordVertical: useCallback((direction: number) => {
+      nibTextViewerRef.current?.selectWordVertical(direction)
+    }, []),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
 
@@ -269,6 +272,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     setViewMode('side-by-side')
   }, [setViewMode]))
 
+  useShortcut('toggle-vim', 'Toggle Vim Mode', 'Ctrl+Shift+v', useCallback(() => {
+    setVimEnabled(prev => !prev)
+  }, []))
+
   useShortcut('prev-page', 'Previous Page', 'Ctrl+ArrowLeft', goToPrevPage)
   useShortcut('next-page', 'Next Page', 'Ctrl+ArrowRight', goToNextPage)
 
@@ -350,6 +357,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     sectionTitle={section.title}
                     showIndicators={showIndicators}
                     scrollContainerRef={textScrollRef}
+                    bookTitle={book.title}
                   />
                 ) : (
                   <TextViewer text={section.extractedText} sectionTitle={section.title} />
@@ -376,6 +384,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   onPageProgress={handlePageProgress}
                   syncScroll={syncScroll}
                   nibTextViewerRef={nibTextViewerRef}
+                  bookTitle={book.title}
                 />
               </div>
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />

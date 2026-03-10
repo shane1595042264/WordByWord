@@ -124,12 +124,20 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     return positions
   }, [])
 
-  // Scroll mode: render all pages, scale to full width
+  // Track which pages have been rendered to avoid re-rendering
+  const renderedPagesRef = useRef<Set<number>>(new Set())
+  // Track the pdf document instance for lazy rendering
+  const pdfDocRef = useRef<any>(null)
+  // Track container width for consistent scaling
+  const containerWidthRef = useRef(0)
+
+  // Scroll mode: create placeholders for all pages, then lazily render
+  // visible + nearby pages using IntersectionObserver with a generous rootMargin
   useEffect(() => {
     if (readingMode !== 'scroll') return
     let cancelled = false
 
-    const render = async () => {
+    const setup = async () => {
       try {
         const pdfjs = await import('pdfjs-dist')
         pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -139,54 +147,124 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         container.innerHTML = ''
         textPositionsRef.current.clear()
         pageWrappersRef.current.clear()
+        renderedPagesRef.current.clear()
 
         const containerWidth = container.clientWidth
+        containerWidthRef.current = containerWidth
 
         const arrayBuffer = await pdfBlob.arrayBuffer()
         const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+        if (cancelled) { doc.destroy(); return }
+        pdfDocRef.current = doc
 
+        // Phase 1: Create placeholder divs for all pages with correct dimensions
+        // This gives the scroll container its full height immediately.
         for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
           if (cancelled) { doc.destroy(); return }
           const page = await doc.getPage(pageNum)
-          // Scale to fill container width
           const unscaledViewport = page.getViewport({ scale: 1 })
           const scale = containerWidth / unscaledViewport.width
           const viewport = page.getViewport({ scale })
 
-          // Create a page wrapper div for positioning overlay
           const pageWrapper = document.createElement('div')
           pageWrapper.style.position = 'relative'
           pageWrapper.style.width = '100%'
+          // Set the height so the scroll container has correct total height
+          pageWrapper.style.height = `${viewport.height}px`
+          pageWrapper.style.backgroundColor = '#f8f8f8'
           pageWrapper.dataset.pageNum = String(pageNum)
-
-          const canvas = document.createElement('canvas')
-          canvas.width = viewport.width
-          canvas.height = viewport.height
-          canvas.style.width = '100%'
-          canvas.style.height = 'auto'
-          canvas.style.display = 'block'
-          canvas.dataset.pageNum = String(pageNum)
-
-          const ctx = canvas.getContext('2d')!
-          await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
-
-          // Extract text positions for this page
-          const positions = await extractTextPositions(page, pageNum, viewport)
-          textPositionsRef.current.set(pageNum, positions)
+          pageWrapper.dataset.viewportWidth = String(viewport.width)
+          pageWrapper.dataset.viewportHeight = String(viewport.height)
+          pageWrapper.dataset.scale = String(scale)
 
           if (!cancelled) {
-            pageWrapper.appendChild(canvas)
             container.appendChild(pageWrapper)
             pageWrappersRef.current.set(pageNum, pageWrapper)
           }
         }
-        doc.destroy()
+
+        // Phase 2: Use IntersectionObserver to render pages as they approach the viewport
+        // rootMargin of 200% means we pre-render pages 2 viewports ahead/behind
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue
+              const pageNum = Number((entry.target as HTMLElement).dataset.pageNum)
+              if (renderedPagesRef.current.has(pageNum)) continue
+              renderPage(pageNum)
+            }
+          },
+          { root: container, rootMargin: '200% 0px 200% 0px', threshold: 0 }
+        )
+
+        // Observe all page wrappers
+        for (const [, wrapper] of pageWrappersRef.current) {
+          observer.observe(wrapper)
+        }
+
+        // Phase 3: Eagerly render first 3 pages for instant display
+        const eagerPages = Math.min(3, endPage - startPage + 1)
+        for (let i = 0; i < eagerPages; i++) {
+          if (cancelled) break
+          await renderPage(startPage + i)
+        }
+
+        return () => {
+          observer.disconnect()
+        }
       } catch {
         if (!cancelled) setError('Failed to render PDF')
       }
     }
-    render()
-    return () => { cancelled = true }
+
+    /** Render a single page into its placeholder wrapper */
+    const renderPage = async (pageNum: number) => {
+      if (cancelled || renderedPagesRef.current.has(pageNum)) return
+      renderedPagesRef.current.add(pageNum)
+
+      const doc = pdfDocRef.current
+      const wrapper = pageWrappersRef.current.get(pageNum)
+      if (!doc || !wrapper) return
+
+      try {
+        const page = await doc.getPage(pageNum)
+        const scale = Number(wrapper.dataset.scale) || 1
+        const viewport = page.getViewport({ scale })
+
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        canvas.style.width = '100%'
+        canvas.style.height = 'auto'
+        canvas.style.display = 'block'
+        canvas.dataset.pageNum = String(pageNum)
+
+        const ctx = canvas.getContext('2d')!
+        await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
+
+        // Extract text positions for this page
+        const positions = await extractTextPositions(page, pageNum, viewport)
+        textPositionsRef.current.set(pageNum, positions)
+
+        if (!cancelled) {
+          // Replace placeholder content with rendered canvas
+          wrapper.innerHTML = ''
+          wrapper.style.height = 'auto' // let canvas determine height now
+          wrapper.style.backgroundColor = ''
+          wrapper.appendChild(canvas)
+        }
+      } catch {
+        // Mark as not rendered so it can be retried
+        renderedPagesRef.current.delete(pageNum)
+      }
+    }
+
+    setup()
+    return () => {
+      cancelled = true
+      // Don't destroy the doc here — the IntersectionObserver callbacks may still fire
+      // The doc will be replaced on next effect run
+    }
   }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions])
 
   // Scroll mode: track scroll progress

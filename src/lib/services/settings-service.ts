@@ -3,6 +3,25 @@ const SETTINGS_KEY = 'bbb-settings'
 /** Map of rule id → custom key string (e.g. { 'normal:j': 'ArrowDown' }) */
 export type KeymapOverrides = Record<string, string>
 
+/** Supported target languages for word translation */
+export type TargetLanguage = 'zh' | 'ja' | 'ko' | 'es' | 'fr' | 'de' | 'pt' | 'ru' | 'ar' | 'hi' | 'vi' | 'th' | 'it'
+
+export const TARGET_LANGUAGES: { code: TargetLanguage; label: string; native: string }[] = [
+  { code: 'zh', label: 'Chinese', native: '中文' },
+  { code: 'ja', label: 'Japanese', native: '日本語' },
+  { code: 'ko', label: 'Korean', native: '한국어' },
+  { code: 'es', label: 'Spanish', native: 'Español' },
+  { code: 'fr', label: 'French', native: 'Français' },
+  { code: 'de', label: 'German', native: 'Deutsch' },
+  { code: 'pt', label: 'Portuguese', native: 'Português' },
+  { code: 'ru', label: 'Russian', native: 'Русский' },
+  { code: 'ar', label: 'Arabic', native: 'العربية' },
+  { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
+  { code: 'vi', label: 'Vietnamese', native: 'Tiếng Việt' },
+  { code: 'th', label: 'Thai', native: 'ไทย' },
+  { code: 'it', label: 'Italian', native: 'Italiano' },
+]
+
 export interface AppSettings {
   anthropicApiKey: string | null
   autoReadThresholdSeconds: number
@@ -10,6 +29,7 @@ export interface AppSettings {
   trackingMode: 'timer' | 'endofpage'
   readingMode: 'scroll' | 'flip'
   keymapOverrides: KeymapOverrides
+  targetLanguage: TargetLanguage
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -19,6 +39,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   trackingMode: 'timer',
   readingMode: 'scroll',
   keymapOverrides: {},
+  targetLanguage: 'zh',
 }
 
 export class SettingsService {

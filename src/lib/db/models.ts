@@ -20,6 +20,34 @@ export interface Chapter {
   endPage: number
 }
 
+export interface VocabEntry {
+  id: string
+  /** The word text (original language) */
+  word: string
+  /** Romanized pronunciation (e.g. IPA or pinyin) */
+  pronunciation: string
+  /** Single-word contextual translation in the target language */
+  translation: string
+  /** Target language code */
+  targetLanguage: string
+  /** The sentence the word appeared in */
+  contextSentence: string
+  /** AI explanation of why this translation was chosen (lazy loaded) */
+  explanation: string | null
+  /** Book title for reference */
+  bookTitle: string
+  /** Section title for reference */
+  sectionTitle: string
+  /** Page number */
+  pageNumber: number
+  /** Timestamp when added */
+  createdAt: number
+  /** Number of times reviewed */
+  reviewCount: number
+  /** Last reviewed timestamp */
+  lastReviewedAt: number | null
+}
+
 export interface Section {
   id: string
   chapterId: string

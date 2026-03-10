@@ -20,6 +20,9 @@ export default function HomePage() {
         </div>
         <div className="flex gap-2">
           <UploadDialog onBookImported={refresh} />
+          <Link href="/vocabulary">
+            <Button variant="outline">Vocabulary</Button>
+          </Link>
           <Link href="/settings">
             <Button variant="outline">Settings</Button>
           </Link>
