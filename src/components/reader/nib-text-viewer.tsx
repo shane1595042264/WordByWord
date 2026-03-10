@@ -1,11 +1,26 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useState, useCallback, useRef, useMemo, useImperativeHandle, forwardRef } from 'react'
 import { NibElementBadge } from '@/components/ui/block-tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
 import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
+import { WordInfoPanel } from '@/components/reader/word-info-panel'
 import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
+
+/** Handle exposed by NibTextViewer for vim-driven selection */
+export interface NibTextViewerHandle {
+  /** Select a word by delta from current index. delta=0 means "select first visible word" */
+  selectWordByDelta: (delta: number) => void
+  /** Select a sentence by delta from current sentence */
+  selectSentenceByDelta: (delta: number) => void
+  /** Select all words on the current visual line */
+  selectCurrentLine: () => void
+  /** Clear all vim-driven selection */
+  clearVimSelection: () => void
+  /** Confirm the current selection — show the word info panel */
+  confirmSelection: () => void
+}
 
 interface NibTextViewerProps {
   nibDocument: NibDocument | null
@@ -14,6 +29,10 @@ interface NibTextViewerProps {
   showIndicators?: boolean
   /** Called when a word is tapped — parent can use word.getAIContext() for translation */
   onWordSelect?: (word: NibWord) => void
+  /** Set of word indices currently selected via vim (highlighted) */
+  vimSelectedIndices?: Set<number>
+  /** The scroll container ref for finding visible words */
+  scrollContainerRef?: React.RefObject<HTMLElement | null>
 }
 
 /**
@@ -21,12 +40,16 @@ interface NibTextViewerProps {
  * when math expressions are found. Otherwise uses word-level interactivity.
  */
 function ParagraphRenderer({
-  para, pageNumber, selectedWord, onWordClick,
+  para, pageNumber, selectedWord, onWordClick, flatIndexStart, registerWordSpan, vimSelectedIndices, showIndicators,
 }: {
   para: any
   pageNumber: number
   selectedWord: NibWord | null
-  onWordClick: (word: NibWord) => void
+  onWordClick: (word: NibWord, el: HTMLElement) => void
+  flatIndexStart: number
+  registerWordSpan: (flatIndex: number, el: HTMLSpanElement | null) => void
+  vimSelectedIndices?: Set<number>
+  showIndicators?: boolean
 }) {
   // Build the full paragraph text and check for special content
   const fullText = para.sentences.map((s: any) => s.text).join(' ')
@@ -48,41 +71,46 @@ function ParagraphRenderer({
   }
 
   // Standard word-by-word rendering with hover/click
+  let wordCounter = flatIndexStart
   return (
     <p className="leading-relaxed text-base">
       {para.sentences.map((sentence: any, sIdx: number) => (
         <span key={`s${sIdx}`} className="relative">
-          {sentence.words.map((word: NibWord, wIdx: number) => (
-            <span key={`w${wIdx}`}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
-                      selectedWord === word ? 'bg-primary/20 underline decoration-primary' : ''
-                    }${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
-                    onClick={() => onWordClick(word)}
-                  >
-                    {word.text}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  className="
-                    bg-background/80 backdrop-blur-xl
-                    border border-border/50
-                    rounded-lg shadow-lg shadow-black/10
-                    max-w-sm px-3 py-2
-                  "
-                >
-                  <p className="font-medium text-sm">{word.text}</p>
-                  <p className="text-muted-foreground text-xs mt-1">
-                    {sentence.text}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-              {wIdx < sentence.words.length - 1 ? ' ' : ''}
-            </span>
-          ))}
+          {sentence.words.map((word: NibWord, wIdx: number) => {
+            const flatIdx = wordCounter++
+            const isVimSelected = vimSelectedIndices?.has(flatIdx)
+            const wordSpan = (
+              <span
+                ref={(el) => registerWordSpan(flatIdx, el)}
+                data-word-index={flatIdx}
+                className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
+                  selectedWord === word ? 'bg-primary/20 underline decoration-primary' : ''
+                }${isVimSelected ? ' bg-blue-500/25 ring-1 ring-blue-400/50' : ''}${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
+                onClick={(e) => onWordClick(word, e.currentTarget)}
+              >
+                {word.text}
+              </span>
+            )
+            return (
+              <span key={`w${wIdx}`}>
+                {showIndicators ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      {wordSpan}
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      className="bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg shadow-lg shadow-black/10 max-w-sm px-3 py-2"
+                    >
+                      <p className="font-medium text-sm">{word.text}</p>
+                      <p className="text-muted-foreground text-xs mt-1">{sentence.text}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : wordSpan}
+                {wIdx < sentence.words.length - 1 ? ' ' : ''}
+              </span>
+            )
+          })}
           {' '}
         </span>
       ))}
@@ -96,13 +124,160 @@ function ParagraphRenderer({
  * Headers, footnotes, and body paragraphs are visually separated.
  * Element type indicators can be toggled on/off for testing/debugging.
  */
-export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = false, onWordSelect }: NibTextViewerProps) {
+export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
+  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, vimSelectedIndices, scrollContainerRef },
+  ref
+) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
+  const [wordAnchorEl, setWordAnchorEl] = useState<HTMLElement | null>(null)
+  const wordSpanRefs = useRef<Map<number, HTMLSpanElement>>(new Map())
 
-  const handleWordClick = useCallback((word: NibWord) => {
+  // Build flat word list from nibDocument for vim-driven selection
+  const allWords = useMemo(() => {
+    if (!nibDocument) return [] as NibWord[]
+    const words: NibWord[] = []
+    for (const page of nibDocument.pages) {
+      for (const para of page.paragraphs) {
+        for (const word of para.allWords) {
+          words.push(word)
+        }
+      }
+    }
+    return words
+  }, [nibDocument])
+
+  // Build flat sentence list
+  const allSentences = useMemo(() => {
+    if (!nibDocument) return [] as { text: string; words: NibWord[] }[]
+    const sentences: { text: string; words: NibWord[] }[] = []
+    for (const page of nibDocument.pages) {
+      for (const para of page.paragraphs) {
+        for (const sent of para.sentences) {
+          sentences.push({ text: sent.text, words: sent.words })
+        }
+      }
+    }
+    return sentences
+  }, [nibDocument])
+
+  // Current vim cursor index
+  const vimCursorRef = useRef(0)
+  const vimSentenceCursorRef = useRef(0)
+
+  // Register a word span element for a given flat index
+  const registerWordSpan = useCallback((flatIndex: number, el: HTMLSpanElement | null) => {
+    if (el) {
+      wordSpanRefs.current.set(flatIndex, el)
+    } else {
+      wordSpanRefs.current.delete(flatIndex)
+    }
+  }, [])
+
+  // Find the first visible word in the scroll container
+  const findFirstVisibleWordIndex = useCallback((): number => {
+    const container = scrollContainerRef?.current
+    if (!container) return 0
+    const containerRect = container.getBoundingClientRect()
+    // Iterate word spans to find first one within viewport
+    for (let i = 0; i < allWords.length; i++) {
+      const span = wordSpanRefs.current.get(i)
+      if (span) {
+        const rect = span.getBoundingClientRect()
+        if (rect.top >= containerRect.top && rect.top < containerRect.bottom) {
+          return i
+        }
+      }
+    }
+    return 0
+  }, [allWords, scrollContainerRef])
+
+  // Expose imperative handle for vim engine
+  useImperativeHandle(ref, () => ({
+    selectWordByDelta(delta: number) {
+      if (allWords.length === 0) return
+      if (delta === 0) {
+        // Select first visible word
+        vimCursorRef.current = findFirstVisibleWordIndex()
+      } else {
+        vimCursorRef.current = Math.max(0, Math.min(allWords.length - 1, vimCursorRef.current + delta))
+      }
+      const word = allWords[vimCursorRef.current]
+      if (word) {
+        // Just highlight the word — do NOT show info panel
+        setSelectedWord(word)
+        const span = wordSpanRefs.current.get(vimCursorRef.current)
+        if (span) {
+          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+      }
+    },
+    selectSentenceByDelta(delta: number) {
+      if (allSentences.length === 0) return
+      if (delta === 0) {
+        const visIdx = findFirstVisibleWordIndex()
+        let cumWords = 0
+        for (let i = 0; i < allSentences.length; i++) {
+          cumWords += allSentences[i].words.length
+          if (cumWords > visIdx) {
+            vimSentenceCursorRef.current = i
+            break
+          }
+        }
+      } else {
+        vimSentenceCursorRef.current = Math.max(0, Math.min(allSentences.length - 1, vimSentenceCursorRef.current + delta))
+      }
+      const sent = allSentences[vimSentenceCursorRef.current]
+      if (sent && sent.words.length > 0) {
+        const firstWord = sent.words[0]
+        // Just highlight — do NOT show info panel
+        setSelectedWord(firstWord)
+        let flatIdx = 0
+        for (let i = 0; i < allWords.length; i++) {
+          if (allWords[i] === firstWord) { flatIdx = i; break }
+        }
+        vimCursorRef.current = flatIdx
+        const span = wordSpanRefs.current.get(flatIdx)
+        if (span) {
+          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }
+      }
+    },
+    selectCurrentLine() {
+      const cursorSpan = wordSpanRefs.current.get(vimCursorRef.current)
+      if (!cursorSpan) return
+      // Handled externally via vimSelectedIndices
+    },
+    clearVimSelection() {
+      setSelectedWord(null)
+      setWordAnchorEl(null)
+    },
+    confirmSelection() {
+      // Show the word info panel for the currently selected word
+      const word = allWords[vimCursorRef.current]
+      if (!word) return
+      setSelectedWord(word)
+      const span = wordSpanRefs.current.get(vimCursorRef.current)
+      if (span) {
+        setWordAnchorEl(span)
+      }
+      onWordSelect?.(word)
+    },
+  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect])
+
+  const handleWordClick = useCallback((word: NibWord, el: HTMLElement) => {
     setSelectedWord(word)
+    setWordAnchorEl(el)
+    // Update vim cursor to match clicked word
+    for (let i = 0; i < allWords.length; i++) {
+      if (allWords[i] === word) { vimCursorRef.current = i; break }
+    }
     onWordSelect?.(word)
-  }, [onWordSelect])
+  }, [onWordSelect, allWords])
+
+  const handleClosePanel = useCallback(() => {
+    setSelectedWord(null)
+    setWordAnchorEl(null)
+  }, [])
 
   if (!nibDocument) {
     return (
@@ -111,6 +286,20 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
       </div>
     )
   }
+
+  // Precompute flat word index offsets for each paragraph
+  const paraFlatOffsets = useMemo(() => {
+    if (!nibDocument) return new Map<string, number>()
+    const offsets = new Map<string, number>()
+    let idx = 0
+    for (const page of nibDocument.pages) {
+      for (const para of page.paragraphs) {
+        offsets.set(`${page.pageNumber}-${para.index}`, idx)
+        idx += para.allWords.length
+      }
+    }
+    return offsets
+  }, [nibDocument])
 
   return (
     <div className="p-6 space-y-2">
@@ -139,6 +328,7 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
               const isQuote = blockType === 'blockquote'
               const isEpigraph = blockType === 'epigraph'
               const isSubheading = blockType === 'subheading'
+              const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
 
               // Render sub-headings as styled h3 elements
               if (isSubheading) {
@@ -184,6 +374,10 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
                     pageNumber={page.pageNumber}
                     selectedWord={selectedWord}
                     onWordClick={handleWordClick}
+                    flatIndexStart={flatOffset}
+                    registerWordSpan={registerWordSpan}
+                    vimSelectedIndices={vimSelectedIndices}
+                    showIndicators={showIndicators}
                   />
                 </div>
               )
@@ -250,33 +444,15 @@ export function NibTextViewer({ nibDocument, sectionTitle, showIndicators = fals
           </div>
         ))}
 
-        {/* Selected word context panel */}
-        {selectedWord && (
-          <div className="
-            fixed bottom-4 left-1/2 -translate-x-1/2
-            bg-background/80 backdrop-blur-xl
-            border border-border/50
-            rounded-lg shadow-lg shadow-black/10
-            p-4 max-w-md z-50
-          ">
-            <div className="flex items-center justify-between mb-2">
-              {showIndicators && <NibElementBadge type="word" />}
-              <span className="font-bold text-lg ml-1">{selectedWord.text}</span>
-              <button
-                className="text-muted-foreground hover:text-foreground text-sm"
-                onClick={() => setSelectedWord(null)}
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground mb-1">
-              <span className="font-medium">Sentence:</span> {selectedWord.sentence.text}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Page {selectedWord.page.pageNumber} · Paragraph {selectedWord.paragraph.index + 1} · Word {selectedWord.index + 1}
-            </p>
-          </div>
+        {/* Floating word info panel — only when anchor is set (click or Enter) */}
+        {selectedWord && wordAnchorEl && (
+          <WordInfoPanel
+            word={selectedWord}
+            anchorEl={wordAnchorEl}
+            showIndicators={showIndicators}
+            onClose={handleClosePanel}
+          />
         )}
     </div>
   )
-}
+})

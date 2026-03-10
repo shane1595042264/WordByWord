@@ -3,7 +3,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { PDFViewer, type HighlightWordInfo } from './pdf-viewer'
 import { TextViewer } from './text-viewer'
-import { NibTextViewer } from './nib-text-viewer'
+import { NibTextViewer, type NibTextViewerHandle } from './nib-text-viewer'
 import type { NibDocument, NibWord } from '@/lib/nib'
 
 interface SideBySideViewerProps {
@@ -19,9 +19,11 @@ interface SideBySideViewerProps {
   onPageChange?: (page: number) => void
   onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
   syncScroll?: boolean
+  /** Forward ref for vim-driven word selection */
+  nibTextViewerRef?: React.RefObject<NibTextViewerHandle | null>
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   // Guard to prevent scroll event loops
@@ -92,10 +94,12 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
         <div className="p-4">
           {nibDocument ? (
             <NibTextViewer
+              ref={nibTextViewerRef}
               nibDocument={nibDocument}
               sectionTitle={sectionTitle}
               showIndicators={showIndicators}
               onWordSelect={handleWordSelect}
+              scrollContainerRef={textRef}
             />
           ) : (
             <TextViewer text={text} sectionTitle={sectionTitle} />

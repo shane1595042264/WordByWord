@@ -7,13 +7,17 @@ import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
 import { PDFViewer } from '@/components/reader/pdf-viewer'
 import { TextViewer } from '@/components/reader/text-viewer'
-import { NibTextViewer } from '@/components/reader/nib-text-viewer'
+import { NibTextViewer, type NibTextViewerHandle } from '@/components/reader/nib-text-viewer'
 import { SideBySideViewer } from '@/components/reader/side-by-side-viewer'
 import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
 import { ReaderToolbar } from '@/components/reader/reader-toolbar'
+import { VimStatusBar } from '@/components/reader/vim-status-bar'
+import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
+import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
 import { NibService } from '@/lib/services/nib-service'
 import type { NibDocument } from '@/lib/nib'
+import type { VimRule } from '@/lib/vim'
 
 export default function ReaderPage({ params }: { params: Promise<{ id: string; sectionId: string }> }) {
   const { id: bookId, sectionId } = use(params)
@@ -31,6 +35,40 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
+  const [vimEnabled, setVimEnabled] = useState(false)
+  const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
+  const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
+
+  // Load user keymap overrides on mount
+  useEffect(() => {
+    import('@/lib/services/settings-service').then(({ SettingsService }) => {
+      const svc = new SettingsService()
+      const overrides = svc.getSettings().keymapOverrides ?? {}
+      setEffectiveRulebook(getEffectiveRulebook(overrides))
+    })
+  }, [])
+
+  // ── Vim engine ──
+  const vim = useVimMode({
+    enabled: vimEnabled && (viewMode === 'text' || viewMode === 'side-by-side'),
+    scrollRef: textScrollRef,
+    onSelectWord: useCallback((delta: number) => {
+      nibTextViewerRef.current?.selectWordByDelta(delta)
+    }, []),
+    onSelectSentence: useCallback((delta: number) => {
+      nibTextViewerRef.current?.selectSentenceByDelta(delta)
+    }, []),
+    onSelectLine: useCallback(() => {
+      nibTextViewerRef.current?.selectCurrentLine()
+    }, []),
+    onClearSelection: useCallback(() => {
+      nibTextViewerRef.current?.clearVimSelection()
+    }, []),
+    onConfirmSelection: useCallback(() => {
+      nibTextViewerRef.current?.confirmSelection()
+    }, []),
+    rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
+  })
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
@@ -270,6 +308,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         onNextPage={goToNextPage}
         canGoPrev={canGoPrev}
         canGoNext={canGoNext}
+        vimEnabled={vimEnabled}
+        onVimToggle={() => setVimEnabled(prev => !prev)}
       />
       <div className="flex flex-1 overflow-hidden">
         <SectionSidebar
@@ -290,39 +330,56 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             />
           )}
           {viewMode === 'text' && (
-            <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
-              {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
-                <TocViewer
-                  bookId={bookId}
-                  extractedText={section.extractedText}
-                  sectionTitle={section.title}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex overflow-hidden">
+                <RelativeLineNumbers
+                  scrollContainerRef={textScrollRef}
+                  enabled={vimEnabled}
                 />
-              ) : nibDocument ? (
-                <NibTextViewer
-                  nibDocument={nibDocument}
-                  sectionTitle={section.title}
-                  showIndicators={showIndicators}
-                />
-              ) : (
-                <TextViewer text={section.extractedText} sectionTitle={section.title} />
-              )}
+              <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
+                {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
+                  <TocViewer
+                    bookId={bookId}
+                    extractedText={section.extractedText}
+                    sectionTitle={section.title}
+                  />
+                ) : nibDocument ? (
+                  <NibTextViewer
+                    ref={nibTextViewerRef}
+                    nibDocument={nibDocument}
+                    sectionTitle={section.title}
+                    showIndicators={showIndicators}
+                    scrollContainerRef={textScrollRef}
+                  />
+                ) : (
+                  <TextViewer text={section.extractedText} sectionTitle={section.title} />
+                )}
+              </div>
+              </div>
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
             </div>
           )}
           {viewMode === 'side-by-side' && (
-            <SideBySideViewer
-              pdfBlob={book.pdfBlob}
-              startPage={section.startPage}
-              endPage={effectiveEndPage}
-              text={section.extractedText}
-              nibDocument={nibDocument}
-              sectionTitle={section.title}
-              readingMode={readingMode}
-              showIndicators={showIndicators}
-              currentPage={currentPage}
-              onPageChange={handlePageChange}
-              onPageProgress={handlePageProgress}
-              syncScroll={syncScroll}
-            />
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-hidden">
+                <SideBySideViewer
+                  pdfBlob={book.pdfBlob}
+                  startPage={section.startPage}
+                  endPage={effectiveEndPage}
+                  text={section.extractedText}
+                  nibDocument={nibDocument}
+                  sectionTitle={section.title}
+                  readingMode={readingMode}
+                  showIndicators={showIndicators}
+                  currentPage={currentPage}
+                  onPageChange={handlePageChange}
+                  onPageProgress={handlePageProgress}
+                  syncScroll={syncScroll}
+                  nibTextViewerRef={nibTextViewerRef}
+                />
+              </div>
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} />
+            </div>
           )}
         </div>
       </div>

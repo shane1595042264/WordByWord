@@ -31,6 +31,9 @@ interface ReaderToolbarProps {
   onNextPage: () => void
   canGoPrev: boolean
   canGoNext: boolean
+  /** Vim mode toggle */
+  vimEnabled?: boolean
+  onVimToggle?: () => void
 }
 
 export function ReaderToolbar({
@@ -43,6 +46,7 @@ export function ReaderToolbar({
   syncScroll, onSyncScrollChange,
   currentPage, totalSectionPages, startPage,
   onPrevPage, onNextPage, canGoPrev, canGoNext,
+  vimEnabled, onVimToggle,
 }: ReaderToolbarProps) {
   const handleToggleRead = async () => {
     const { SectionRepository } = await import('@/lib/repositories')
@@ -87,6 +91,19 @@ export function ReaderToolbar({
               }`}
             >
               {showIndicators ? '⊟ Labels' : '⊞ Labels'}
+            </button>
+          </BlockTooltip>
+          {/* Vim mode toggle */}
+          <BlockTooltip label={vimEnabled ? 'Disable Vim Mode' : 'Enable Vim Mode'} hint="Navigate with j/k, select with v/w/s">
+            <button
+              onClick={onVimToggle}
+              className={`px-3 py-1 text-xs border rounded-md transition-colors font-mono ${
+                vimEnabled
+                  ? 'bg-emerald-500/20 text-emerald-600 border-emerald-500/30'
+                  : 'hover:bg-muted'
+              }`}
+            >
+              {vimEnabled ? '⌨ Vim' : '⌨ Vim'}
             </button>
           </BlockTooltip>
           {/* View mode toggle */}

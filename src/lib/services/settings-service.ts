@@ -1,11 +1,15 @@
 const SETTINGS_KEY = 'bbb-settings'
 
+/** Map of rule id → custom key string (e.g. { 'normal:j': 'ArrowDown' }) */
+export type KeymapOverrides = Record<string, string>
+
 export interface AppSettings {
   anthropicApiKey: string | null
   autoReadThresholdSeconds: number
   defaultViewMode: 'pdf' | 'text' | 'side-by-side'
   trackingMode: 'timer' | 'endofpage'
   readingMode: 'scroll' | 'flip'
+  keymapOverrides: KeymapOverrides
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -14,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultViewMode: 'side-by-side',
   trackingMode: 'timer',
   readingMode: 'scroll',
+  keymapOverrides: {},
 }
 
 export class SettingsService {
