@@ -24,7 +24,7 @@ interface SideBySideViewerProps {
   /** Book title for vocab context */
   bookTitle?: string
   /** Current vim mode */
-  vimMode?: 'normal' | 'word' | 'sentence' | 'visual'
+  vimMode?: 'normal' | 'sentence' | 'visual'
 }
 
 export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode }: SideBySideViewerProps) {

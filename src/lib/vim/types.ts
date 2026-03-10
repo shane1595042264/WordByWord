@@ -2,7 +2,7 @@
  * Vim-style keybinding system for BitByBit / WordByWord reader.
  *
  * Architecture:
- *   VimMode  — "normal" | "word" | "sentence" | "visual"
+ *   VimMode  — "normal" | "sentence" | "visual"
  *   VimRule  — a single keybinding entry in the rulebook
  *   Rulebook — the full table of rules, easily extensible
  *
@@ -10,29 +10,28 @@
  * actions. A numeric prefix buffer (e.g. "23") multiplies motions.
  *
  * Modes:
- *   Normal mode   — navigation only (j/k cursor, d/u page, gg/G)
- *   Word mode     — word-level selection + translation (h/l/j/k, Enter to translate)
- *   Sentence mode — sentence-level selection + translation (h/l/j/k, Enter to translate)
- *   Visual mode   — pure Vim visual selection (no translation, just selection)
+ *   Normal mode   — word-level cursor (h/l next/prev word, j/k word vertical,
+ *                    d/u half-page, gg/G, Enter to translate)
+ *   Sentence mode — sentence-level selection + translation
+ *   Visual mode   — pure Vim visual selection (character/chunk-level, no translation)
  *
- * From normal: w → word mode, s → sentence mode, v → visual mode
+ * From normal: s → sentence mode, v → visual mode
  */
 
-export type VimMode = 'normal' | 'word' | 'sentence' | 'visual'
+export type VimMode = 'normal' | 'sentence' | 'visual'
 
 /** What kind of action the rule triggers */
 export type VimActionType =
   | 'scroll'              // scroll the text pane by N lines / half-pages
   | 'scroll-to'           // scroll to top / bottom
-  | 'cursor-line'         // move the cursor line up/down (like j/k in a text editor)
-  | 'select-word'         // select next/prev word (h/l in word mode)
-  | 'select-word-vertical' // move word cursor to line above/below (j/k in word mode)
+  | 'select-word'         // select next/prev word (h/l in normal mode)
+  | 'select-word-vertical' // move word cursor to line above/below (j/k in normal mode)
   | 'select-sentence'     // select next/prev sentence (h/l in sentence mode)
   | 'select-sentence-vertical' // move sentence cursor to line above/below (j/k in sentence mode)
   | 'select-line'         // select current visual line (V in visual mode)
   | 'select-to-end'       // extend selection from current to last word (G in visual mode)
   | 'select-to-start'     // extend selection from current to first word (gg in visual mode)
-  | 'confirm-selection'   // confirm current selection (Enter — translate in word/sentence mode)
+  | 'confirm-selection'   // confirm current selection (Enter — translate in normal/sentence mode)
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit to normal mode / clear selection
   | 'custom'              // arbitrary callback (for future extensibility)

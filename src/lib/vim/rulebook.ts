@@ -2,12 +2,12 @@
  * The Vim Rulebook — all keybindings in one place.
  *
  * Modes:
- *   normal   — navigation (j/k cursor, d/u half-page, gg/G)
- *   word     — word-level selection + translation
- *   sentence — sentence-level selection + translation
+ *   normal   — word-level cursor + navigation + translate
+ *              (h/l word, j/k word-vertical, w/b word, d/u page, gg/G, Enter translate)
+ *   sentence — sentence-level selection + translate
  *   visual   — pure vim visual selection (no translation)
  *
- * From normal: w → word, s → sentence, v → visual
+ * From normal: s → sentence, v → visual
  * From any non-normal: Escape → normal
  */
 
@@ -15,26 +15,62 @@ import type { VimRule } from './types'
 
 export const RULEBOOK: VimRule[] = [
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // NORMAL MODE — Navigation
+  // NORMAL MODE — Word cursor + navigation + translate
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
+    id: 'normal:l',
+    label: 'Next word',
+    modes: ['normal'],
+    key: 'l',
+    action: { type: 'select-word', direction: 1 },
+    acceptsCount: true,
+    description: 'Move cursor to next [count] word(s)',
+  },
+  {
+    id: 'normal:h',
+    label: 'Previous word',
+    modes: ['normal'],
+    key: 'h',
+    action: { type: 'select-word', direction: -1 },
+    acceptsCount: true,
+    description: 'Move cursor to previous [count] word(s)',
+  },
+  {
     id: 'normal:j',
-    label: 'Cursor down',
+    label: 'Word down',
     modes: ['normal'],
     key: 'j',
-    action: { type: 'cursor-line', direction: 1 },
+    action: { type: 'select-word-vertical', direction: 1 },
     acceptsCount: true,
     description: 'Move cursor down [count] line(s)',
   },
   {
     id: 'normal:k',
-    label: 'Cursor up',
+    label: 'Word up',
     modes: ['normal'],
     key: 'k',
-    action: { type: 'cursor-line', direction: -1 },
+    action: { type: 'select-word-vertical', direction: -1 },
     acceptsCount: true,
     description: 'Move cursor up [count] line(s)',
+  },
+  {
+    id: 'normal:w',
+    label: 'Next word (alt)',
+    modes: ['normal'],
+    key: 'w',
+    action: { type: 'select-word', direction: 1 },
+    acceptsCount: true,
+    description: 'Move cursor to next [count] word(s) (same as l)',
+  },
+  {
+    id: 'normal:b',
+    label: 'Previous word (alt)',
+    modes: ['normal'],
+    key: 'b',
+    action: { type: 'select-word', direction: -1 },
+    acceptsCount: true,
+    description: 'Move cursor to previous [count] word(s) (same as h)',
   },
   {
     id: 'normal:d',
@@ -57,11 +93,11 @@ export const RULEBOOK: VimRule[] = [
   {
     id: 'normal:gg',
     label: 'Go to top',
-    modes: ['normal', 'word', 'sentence', 'visual'],
+    modes: ['normal', 'sentence', 'visual'],
     key: 'g', // double-tap detection in engine
     action: { type: 'scroll-to', direction: -1 },
     acceptsCount: false,
-    description: 'Scroll to top of document (gg)',
+    description: 'Go to top of document (gg)',
   },
   {
     id: 'normal:G',
@@ -71,22 +107,22 @@ export const RULEBOOK: VimRule[] = [
     shift: true,
     action: { type: 'scroll-to', direction: 1 },
     acceptsCount: false,
-    description: 'Scroll to bottom of document',
+    description: 'Go to bottom of document',
+  },
+  {
+    id: 'normal:enter',
+    label: 'Translate word',
+    modes: ['normal'],
+    key: 'Enter',
+    action: { type: 'confirm-selection' },
+    acceptsCount: false,
+    description: 'Show translation for the selected word',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // NORMAL MODE — Mode entry
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  {
-    id: 'normal:w',
-    label: 'Enter Word mode',
-    modes: ['normal'],
-    key: 'w',
-    action: { type: 'mode-change', targetMode: 'word' },
-    acceptsCount: false,
-    description: 'Enter word selection mode (translate words)',
-  },
   {
     id: 'normal:s',
     label: 'Enter Sentence mode',
@@ -111,15 +147,6 @@ export const RULEBOOK: VimRule[] = [
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
-    id: 'word:escape',
-    label: 'Exit Word mode',
-    modes: ['word'],
-    key: 'Escape',
-    action: { type: 'escape' },
-    acceptsCount: false,
-    description: 'Exit to normal mode, clear selection',
-  },
-  {
     id: 'sentence:escape',
     label: 'Exit Sentence mode',
     modes: ['sentence'],
@@ -139,80 +166,12 @@ export const RULEBOOK: VimRule[] = [
   },
   {
     id: 'normal:escape',
-    label: 'Clear count',
+    label: 'Clear',
     modes: ['normal'],
     key: 'Escape',
     action: { type: 'escape' },
     acceptsCount: false,
-    description: 'Clear numeric prefix buffer',
-  },
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // WORD MODE — h/l/j/k + Enter
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  {
-    id: 'word:l',
-    label: 'Next word',
-    modes: ['word'],
-    key: 'l',
-    action: { type: 'select-word', direction: 1 },
-    acceptsCount: true,
-    description: 'Select next [count] word(s)',
-  },
-  {
-    id: 'word:h',
-    label: 'Previous word',
-    modes: ['word'],
-    key: 'h',
-    action: { type: 'select-word', direction: -1 },
-    acceptsCount: true,
-    description: 'Select previous [count] word(s)',
-  },
-  {
-    id: 'word:j',
-    label: 'Word down',
-    modes: ['word'],
-    key: 'j',
-    action: { type: 'select-word-vertical', direction: 1 },
-    acceptsCount: true,
-    description: 'Move word selection down [count] line(s)',
-  },
-  {
-    id: 'word:k',
-    label: 'Word up',
-    modes: ['word'],
-    key: 'k',
-    action: { type: 'select-word-vertical', direction: -1 },
-    acceptsCount: true,
-    description: 'Move word selection up [count] line(s)',
-  },
-  {
-    id: 'word:w',
-    label: 'Next word (alt)',
-    modes: ['word'],
-    key: 'w',
-    action: { type: 'select-word', direction: 1 },
-    acceptsCount: true,
-    description: 'Select next [count] word(s) (same as l)',
-  },
-  {
-    id: 'word:b',
-    label: 'Previous word (alt)',
-    modes: ['word'],
-    key: 'b',
-    action: { type: 'select-word', direction: -1 },
-    acceptsCount: true,
-    description: 'Select previous [count] word(s) (same as h)',
-  },
-  {
-    id: 'word:enter',
-    label: 'Translate word',
-    modes: ['word'],
-    key: 'Enter',
-    action: { type: 'confirm-selection' },
-    acceptsCount: false,
-    description: 'Show translation for the selected word',
+    description: 'Clear numeric prefix / close panel',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -335,7 +294,7 @@ export const RULEBOOK: VimRule[] = [
   {
     id: 'visual:V',
     label: 'Select line',
-    modes: ['visual', 'normal', 'word', 'sentence'],
+    modes: ['visual', 'normal', 'sentence'],
     key: 'V',
     shift: true,
     action: { type: 'select-line' },

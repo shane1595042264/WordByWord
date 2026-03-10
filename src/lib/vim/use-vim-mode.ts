@@ -19,7 +19,6 @@ interface UseVimModeOptions {
   onConfirmSelection?: () => void
   onSelectWordVertical?: (direction: number) => void
   onSelectSentenceVertical?: (direction: number) => void
-  onCursorLine?: (direction: number) => void
   rulebook?: VimRule[]
 }
 
@@ -41,7 +40,6 @@ export function useVimMode({
   onConfirmSelection,
   onSelectWordVertical,
   onSelectSentenceVertical,
-  onCursorLine,
   rulebook = RULEBOOK,
 }: UseVimModeOptions): UseVimModeReturn {
   const [mode, setMode] = useState<VimMode>('normal')
@@ -98,9 +96,9 @@ export function useVimMode({
           // In visual mode, gg extends selection to start
           onSelectToStart?.()
         } else {
-          // In normal/word/sentence, scroll to top and reset cursor to line 0
+          // In normal/sentence, scroll to top and move cursor to first word
           dispatchScrollTo(-1)
-          onCursorLine?.(-999999)
+          onSelectWord?.(-999999)
         }
         setCountBuffer('')
         lastGTime.current = 0
@@ -129,21 +127,14 @@ export function useVimMode({
       case 'scroll-to': {
         const dir = rule.action.direction ?? 1
         dispatchScrollTo(dir)
-        // Also move cursor to top/bottom line
+        // Also move word cursor to top/bottom
         if (dir < 0) {
-          onCursorLine?.(-999999)
+          onSelectWord?.(-999999)
         } else {
-          onCursorLine?.(999999)
+          onSelectWord?.(999999)
         }
         break
       }
-
-      case 'cursor-line':
-        if (onCursorLine) {
-          const dir = rule.action.direction ?? 1
-          for (let i = 0; i < count; i++) onCursorLine(dir)
-        }
-        break
 
       case 'select-word':
         if (onSelectWord) {
@@ -195,18 +186,12 @@ export function useVimMode({
         if (rule.action.targetMode) {
           const target = rule.action.targetMode
           setMode(target)
-          // On entering word mode, select first visible word
-          if (target === 'word') {
-            onSelectWord?.(0)
-          }
           // On entering sentence mode, select first visible sentence
           if (target === 'sentence') {
             onSelectSentence?.(0)
           }
-          // On entering visual mode, select first visible word (anchor)
-          if (target === 'visual') {
-            onSelectWord?.(0)
-          }
+          // On entering visual mode, keep current word as anchor
+          // (don't move, just change mode)
         }
         break
 
@@ -220,7 +205,7 @@ export function useVimMode({
     }
 
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onCursorLine, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onClearSelection, onConfirmSelection, rulebook])
 
   useEffect(() => {
     if (!enabled) return

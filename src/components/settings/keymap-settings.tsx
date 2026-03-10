@@ -175,8 +175,7 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
 
   // Group by mode for display
   const normalRules = filteredRules.filter(r => r.modes.includes('normal') && r.modes.length === 1)
-  const wordRules = filteredRules.filter(r => r.modes.includes('word'))
-  const sentenceRules = filteredRules.filter(r => r.modes.includes('sentence'))
+  const sentenceRules = filteredRules.filter(r => r.modes.includes('sentence') && !r.modes.includes('normal'))
   const visualRules = filteredRules.filter(r => r.modes.includes('visual') && !r.modes.includes('normal'))
   const sharedRules = filteredRules.filter(r => r.modes.length > 1 && r.modes.includes('normal'))
 
@@ -209,25 +208,6 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
           </h3>
           <div className="border rounded-lg divide-y divide-border/50">
             {normalRules.map(rule => (
-              <KeymapRow
-                key={rule.id}
-                rule={rule}
-                customKey={overrides[rule.id]}
-                onRemap={handleRemap}
-                onReset={handleReset}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {wordRules.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
-            Word Mode
-          </h3>
-          <div className="border rounded-lg divide-y divide-border/50">
-            {wordRules.map(rule => (
               <KeymapRow
                 key={rule.id}
                 rule={rule}

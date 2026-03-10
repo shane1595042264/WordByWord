@@ -89,11 +89,17 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onSelectSentenceVertical: useCallback((direction: number) => {
       nibTextViewerRef.current?.selectSentenceVertical(direction)
     }, []),
-    onCursorLine: useCallback((direction: number) => {
-      nibTextViewerRef.current?.moveCursorLine(direction)
-    }, []),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
+
+  // Select first visible word when vim is enabled (normal mode = word cursor)
+  useEffect(() => {
+    if (vimEnabled) {
+      // Small delay for DOM to be ready
+      const t = setTimeout(() => nibTextViewerRef.current?.selectWordByDelta(0), 200)
+      return () => clearTimeout(t)
+    }
+  }, [vimEnabled])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1

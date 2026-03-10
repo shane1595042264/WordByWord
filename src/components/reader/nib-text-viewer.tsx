@@ -58,7 +58,7 @@ interface NibTextViewerProps {
   /** Called when cursor line changes (for relative line numbers) */
   onCursorLineChange?: (info: CursorLineInfo) => void
   /** Current vim mode — controls info panel behavior */
-  vimMode?: 'normal' | 'word' | 'sentence' | 'visual'
+  vimMode?: 'normal' | 'sentence' | 'visual'
 }
 
 /**
@@ -481,7 +481,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
     },
     clearVimSelection() {
-      setSelectedWord(null)
+      // Close info panel and clear multi-word highlights, but keep the word cursor
+      // (normal mode always has a word selected as the cursor)
       setWordAnchorEl(null)
       setHighlightedIndices(new Set())
     },

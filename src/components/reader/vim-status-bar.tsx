@@ -15,24 +15,21 @@ export function VimStatusBar({ mode, countBuffer, enabled }: VimStatusBarProps) 
   if (!enabled) return null
 
   const modeColors: Record<VimMode, string> = {
-    normal: 'bg-zinc-700 text-zinc-100',
-    word: 'bg-teal-600 text-white',
+    normal: 'bg-teal-700 text-white',
     sentence: 'bg-amber-600 text-white',
     visual: 'bg-blue-600 text-white',
   }
 
   const modeLabels: Record<VimMode, string> = {
     normal: '-- NORMAL --',
-    word: '-- WORD --',
     sentence: '-- SENTENCE --',
     visual: '-- VISUAL --',
   }
 
   const hints: Record<VimMode, string> = {
-    normal: 'j/k cursor · d/u page · w word · s sent · v visual',
-    word: 'h/l word · j/k line · Enter translate · Esc exit',
-    sentence: 'h/l sent · j/k line · Enter translate · Esc exit',
-    visual: 'h/l extend · j/k line · V line · Esc exit',
+    normal: 'h/l word · j/k line · d/u page · Enter translate · s sent · v visual',
+    sentence: 'h/l sent · j/k line · Enter translate · Esc normal',
+    visual: 'h/l extend · j/k line · V line · G bottom · Esc normal',
   }
 
   return (
