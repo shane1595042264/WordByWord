@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { BlockTooltip } from '@/components/ui/block-tooltip'
 import type { ViewMode } from '@/hooks/use-reader'
 
@@ -31,9 +30,9 @@ interface ReaderToolbarProps {
   onNextPage: () => void
   canGoPrev: boolean
   canGoNext: boolean
-  /** Vim mode toggle */
-  vimEnabled?: boolean
-  onVimToggle?: () => void
+  /** Line numbers toggle */
+  showLineNumbers?: boolean
+  onLineNumbersToggle?: () => void
 }
 
 export function ReaderToolbar({
@@ -46,7 +45,7 @@ export function ReaderToolbar({
   syncScroll, onSyncScrollChange,
   currentPage, totalSectionPages, startPage,
   onPrevPage, onNextPage, canGoPrev, canGoNext,
-  vimEnabled, onVimToggle,
+  showLineNumbers, onLineNumbersToggle,
 }: ReaderToolbarProps) {
   const handleToggleRead = async () => {
     const { SectionRepository } = await import('@/lib/repositories')
@@ -93,19 +92,21 @@ export function ReaderToolbar({
               {showIndicators ? '⊟ Labels' : '⊞ Labels'}
             </button>
           </BlockTooltip>
-          {/* Vim mode toggle */}
-          <BlockTooltip label={vimEnabled ? 'Disable Vim Mode' : 'Enable Vim Mode'} hint="Navigate with j/k, select with v/w/s">
-            <button
-              onClick={onVimToggle}
-              className={`px-3 py-1 text-xs border rounded-md transition-colors font-mono ${
-                vimEnabled
-                  ? 'bg-emerald-500/20 text-emerald-600 border-emerald-500/30'
-                  : 'hover:bg-muted'
-              }`}
-            >
-              {vimEnabled ? '⌨ Vim' : '⌨ Vim'}
-            </button>
-          </BlockTooltip>
+          {/* Line numbers toggle — only in text/side-by-side modes */}
+          {(viewMode === 'text' || viewMode === 'side-by-side') && (
+            <BlockTooltip label={showLineNumbers ? 'Hide Line Numbers' : 'Show Line Numbers'} shortcut="⌃⇧ L" hint="Relative line numbers gutter">
+              <button
+                onClick={onLineNumbersToggle}
+                className={`px-3 py-1 text-xs border rounded-md transition-colors font-mono ${
+                  showLineNumbers
+                    ? 'bg-violet-500/20 text-violet-500 border-violet-500/30'
+                    : 'hover:bg-muted'
+                }`}
+              >
+                {showLineNumbers ? '# Lines' : '# Lines'}
+              </button>
+            </BlockTooltip>
+          )}
           {/* View mode toggle */}
           <div className="flex border rounded-md">
             {(['pdf', 'text', 'side-by-side'] as ViewMode[]).map(mode => {
@@ -189,24 +190,20 @@ export function ReaderToolbar({
         </div>
       </div>
       {/* Section progress bar */}
-      {vimEnabled ? (
-        <div className="relative h-1.5 w-full bg-zinc-800 overflow-hidden">
+      <div className="relative h-1.5 w-full bg-zinc-800 overflow-hidden">
+        <div
+          className="h-full bg-teal-500 transition-all duration-150"
+          style={{ width: `${sectionProgress}%` }}
+        />
+        {/* Segment dividers every 10% */}
+        {[10,20,30,40,50,60,70,80,90].map(p => (
           <div
-            className="h-full bg-teal-500 transition-all duration-150"
-            style={{ width: `${sectionProgress}%` }}
+            key={p}
+            className="absolute top-0 bottom-0 w-px bg-zinc-950/50"
+            style={{ left: `${p}%` }}
           />
-          {/* Segment dividers every 10% */}
-          {[10,20,30,40,50,60,70,80,90].map(p => (
-            <div
-              key={p}
-              className="absolute top-0 bottom-0 w-px bg-zinc-950/50"
-              style={{ left: `${p}%` }}
-            />
-          ))}
-        </div>
-      ) : (
-        <Progress value={sectionProgress} className="h-1.5 rounded-none" />
-      )}
+        ))}
+      </div>
     </div>
   )
 }

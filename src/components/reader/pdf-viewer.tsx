@@ -143,12 +143,15 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       const scaledHeight = rawHeight * viewport.scale
 
       // After convertToViewportPoint, vy is in top-down screen coords at the
-      // text baseline.  Subtract scaledHeight to get the top edge of the glyph.
+      // text baseline. In standard font metrics, ~85% of the em square is above
+      // the baseline (ascent) and ~15% below (descent). We subtract only the
+      // ascent portion to position the top edge accurately.
+      const ascent = scaledHeight * 0.85
       positions.push({
         text: item.str,
         pageNum,
         x: vx,
-        y: vy - scaledHeight,
+        y: vy - ascent,
         width: scaledWidth,
         height: scaledHeight,
       })
@@ -433,10 +436,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         const scaledWidth = pdfRect.width * viewport.scale
         const rawHeight = pdfRect.height || 10
         const scaledHeight = rawHeight * viewport.scale
+        // Ascent is ~85% of em square, descent ~15% — only subtract ascent for top edge
+        const ascent = scaledHeight * 0.85
         setHighlightRect({
           pageNum: sourcePageNum,
           x: vx,
-          y: vy - scaledHeight,
+          y: vy - ascent,
           width: scaledWidth,
           height: scaledHeight,
         })

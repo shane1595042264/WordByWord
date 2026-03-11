@@ -35,7 +35,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
-  const [vimEnabled, setVimEnabled] = useState(false)
+  const [showLineNumbers, setShowLineNumbers] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
@@ -62,9 +62,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     })
   }, [])
 
-  // ── Vim engine ──
+  // ── Vim engine (always enabled for text and side-by-side modes) ──
   const vim = useVimMode({
-    enabled: vimEnabled && (viewMode === 'text' || viewMode === 'side-by-side'),
+    enabled: viewMode === 'text' || viewMode === 'side-by-side',
     scrollRef: textScrollRef,
     onSelectWord: useCallback((delta: number) => {
       nibTextViewerRef.current?.selectWordByDelta(delta)
@@ -118,26 +118,26 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
 
-  // Select first visible word when vim is enabled (normal mode = word cursor)
+  // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
   useEffect(() => {
-    if (vimEnabled) {
+    if (viewMode === 'text' || viewMode === 'side-by-side') {
       // Small delay for DOM to be ready
       const t = setTimeout(() => nibTextViewerRef.current?.selectWordByDelta(0), 200)
       return () => clearTimeout(t)
     }
-  }, [vimEnabled])
+  }, [viewMode])
 
-  // Compute effective progress: vim mode = cursor line / last text line, otherwise scroll-based
-  // In side-by-side mode, use text-side progress instead of PDF-side progress
+  // Compute effective progress: cursor line / last text line for text modes,
+  // text-side scroll for side-by-side, PDF scroll for PDF mode
   const effectiveProgress = useMemo(() => {
-    if (vimEnabled && lastTextLine > 0) {
+    if ((viewMode === 'text' || viewMode === 'side-by-side') && lastTextLine > 0) {
       return Math.min(100, Math.round((cursorLine / lastTextLine) * 100))
     }
     if (viewMode === 'side-by-side') {
       return sideBySideTextProgress
     }
     return sectionProgress
-  }, [vimEnabled, cursorLine, lastTextLine, sectionProgress, viewMode, sideBySideTextProgress])
+  }, [cursorLine, lastTextLine, sectionProgress, viewMode, sideBySideTextProgress])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
@@ -349,8 +349,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     setViewMode('side-by-side')
   }, [setViewMode]))
 
-  useShortcut('toggle-vim', 'Toggle Vim Mode', 'Ctrl+Shift+v', useCallback(() => {
-    setVimEnabled(prev => !prev)
+  useShortcut('toggle-line-numbers', 'Toggle Line Numbers', 'Ctrl+Shift+l', useCallback(() => {
+    setShowLineNumbers(prev => !prev)
   }, []))
 
   useShortcut('prev-page', 'Previous Page', 'Ctrl+ArrowLeft', goToPrevPage)
@@ -392,8 +392,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         onNextPage={goToNextPage}
         canGoPrev={canGoPrev}
         canGoNext={canGoNext}
-        vimEnabled={vimEnabled}
-        onVimToggle={() => setVimEnabled(prev => !prev)}
+        showLineNumbers={showLineNumbers}
+        onLineNumbersToggle={() => setShowLineNumbers(prev => !prev)}
       />
       <div className="flex flex-1 overflow-hidden">
         <SectionSidebar
@@ -419,7 +419,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               <div className="flex-1 flex overflow-hidden">
                 <RelativeLineNumbers
                   scrollContainerRef={textScrollRef}
-                  enabled={vimEnabled}
+                  enabled={showLineNumbers}
                   cursorLine={cursorLine}
                   totalLines={totalVisualLines}
                   linePositions={linePositions}
@@ -447,7 +447,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                 )}
               </div>
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />
             </div>
           )}
           {viewMode === 'side-by-side' && (
@@ -470,11 +470,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   bookTitle={book.title}
                   vimMode={vim.mode}
                   sectionEndPage={section.endPage}
-                  vimEnabled={vimEnabled}
+                  showLineNumbers={showLineNumbers}
                   onTextScrollProgress={setSideBySideTextProgress}
                 />
               </div>
-              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={vim.enabled} flashMessage={yankFlash} />
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />
             </div>
           )}
         </div>

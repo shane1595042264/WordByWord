@@ -28,13 +28,13 @@ interface SideBySideViewerProps {
   vimMode?: 'normal' | 'sentence' | 'visual'
   /** Original section end page (before overlap extension) for divider */
   sectionEndPage?: number
-  /** Whether vim mode is enabled (for relative line numbers) */
-  vimEnabled?: boolean
+  /** Whether to show relative line numbers gutter */
+  showLineNumbers?: boolean
   /** Called with text-side scroll progress (0-100) so parent can use it for progress bar */
   onTextScrollProgress?: (percent: number) => void
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, vimEnabled = false, onTextScrollProgress }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const pdfViewerRef = useRef<PDFViewerHandle>(null)
@@ -185,7 +185,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
       <div className="h-full min-h-0 flex">
         <RelativeLineNumbers
           scrollContainerRef={textRef}
-          enabled={vimEnabled}
+          enabled={showLineNumbers}
           cursorLine={cursorLine}
           totalLines={totalVisualLines}
           linePositions={linePositions}
