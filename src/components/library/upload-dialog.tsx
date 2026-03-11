@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
+import { uploadBook } from '@/lib/api/books'
+import { performSync } from '@/lib/services/sync-service'
 
 interface UploadDialogProps {
   onBookImported: () => void
@@ -53,10 +55,20 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
     setLoading(false)
     setOpen(false)
     setStep('upload')
-    setFile(null)
     setProgressPercent(0)
     setProgressMessage('')
     onBookImported()
+
+    // Background: upload PDF to backend and sync
+    if (file) {
+      const pdfFile = file
+      const pdfName = pdfFile.name.replace('.pdf', '')
+      uploadBook(pdfFile, pdfName).catch(err => {
+        console.warn('Backend upload failed (offline?):', err.message)
+      }).then(() => performSync().catch(() => {}))
+    }
+
+    setFile(null)
   }, [file, onBookImported])
 
   return (
