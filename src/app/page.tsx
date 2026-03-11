@@ -7,6 +7,7 @@ import { useBooks } from '@/hooks/use-books'
 import { LibraryGrid } from '@/components/library/library-grid'
 import { UploadDialog } from '@/components/library/upload-dialog'
 import { Button } from '@/components/ui/button'
+import { UserMenu } from '@/components/auth/user-menu'
 
 export default function HomePage() {
   const { books, loading, refresh } = useBooks()
@@ -18,7 +19,7 @@ export default function HomePage() {
           <h1 className="text-3xl font-bold">Bit by Bit</h1>
           <p className="text-muted-foreground">Your reading progress, section by section</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <UploadDialog onBookImported={refresh} />
           <Link href="/vocabulary">
             <Button variant="outline">Vocabulary</Button>
@@ -26,6 +27,7 @@ export default function HomePage() {
           <Link href="/settings">
             <Button variant="outline">Settings</Button>
           </Link>
+          <UserMenu />
         </div>
       </div>
       {loading ? (
