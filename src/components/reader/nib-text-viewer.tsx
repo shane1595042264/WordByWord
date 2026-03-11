@@ -34,6 +34,10 @@ export interface NibTextViewerHandle {
   getCursorLineInfo: () => { cursorLine: number; totalLines: number }
   /** Get the clean text of whatever is currently selected */
   getSelectedText: () => string
+  /** Get the current vim cursor flat word index */
+  getVimCursorIndex: () => number
+  /** Select a specific word by flat index (for position restore) */
+  selectWordByIndex: (index: number) => void
 }
 
 /** Callback for when cursor line changes */
@@ -729,6 +733,25 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         return selectedWord.text
       }
       return ''
+    },
+    getVimCursorIndex(): number {
+      return vimCursorRef.current
+    },
+    selectWordByIndex(index: number) {
+      if (allWords.length === 0) return
+      const clampedIdx = Math.max(0, Math.min(allWords.length - 1, index))
+      setVimCursor(clampedIdx)
+      const word = allWords[clampedIdx]
+      if (word) {
+        setSelectedWord(word)
+        setHighlightedIndices(new Set())
+        const span = wordSpanRefs.current.get(clampedIdx)
+        if (span) {
+          span.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+        reportCursorLineForWord(clampedIdx)
+        onWordSelect?.(word)
+      }
     },
   }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
 

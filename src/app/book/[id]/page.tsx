@@ -25,11 +25,36 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
     )
   }
 
+  // Continue Reading: prefer the last-accessed section (tracks actual reading position)
+  // Falls back to the old heuristic (last read → first unread) for books without saved position
+  const lastAccessedSection = book.lastAccessedSectionId
+    ? book.allSections.find(s => s.id === book.lastAccessedSectionId)
+    : null
   const lastReadSection = [...book.allSections]
     .filter(s => s.isRead)
     .sort((a, b) => (b.readAt ?? 0) - (a.readAt ?? 0))[0]
   const firstUnreadSection = book.allSections.find(s => !s.isRead)
-  const continueSection = lastReadSection ?? firstUnreadSection
+  const continueSection = lastAccessedSection ?? lastReadSection ?? firstUnreadSection
+
+  // Build URL with position restore params
+  const continueSectionUrl = continueSection
+    ? (() => {
+        const base = `/book/${book.id}/read/${continueSection.id}`
+        // Only include restore params if this is the last-accessed section
+        if (lastAccessedSection && continueSection.id === lastAccessedSection.id) {
+          const params = new URLSearchParams()
+          if (book.lastAccessedScrollProgress != null) {
+            params.set('sp', String(book.lastAccessedScrollProgress))
+          }
+          if (book.lastAccessedWordIndex != null) {
+            params.set('wi', String(book.lastAccessedWordIndex))
+          }
+          const qs = params.toString()
+          return qs ? `${base}?${qs}` : base
+        }
+        return base
+      })()
+    : null
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -53,8 +78,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             <Badge variant="outline">{book.chapters.length} chapters</Badge>
             <Badge variant="outline">{book.allSections.length} sections</Badge>
           </div>
-          {continueSection && (
-            <Link href={`/book/${book.id}/read/${continueSection.id}`} className="mt-2">
+          {continueSection && continueSectionUrl && (
+            <Link href={continueSectionUrl} className="mt-2">
               <Button>Continue Reading</Button>
             </Link>
           )}

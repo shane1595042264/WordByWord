@@ -9,6 +9,12 @@ export interface Book {
   processingStatus: 'pending' | 'processing' | 'complete' | 'error'
   createdAt: number
   lastReadAt: number | null
+  /** Most recently accessed section ID (for Continue Reading) */
+  lastAccessedSectionId: string | null
+  /** Scroll progress 0-100 at time of last access */
+  lastAccessedScrollProgress: number | null
+  /** Flat word index of the selected word (word-level restore) */
+  lastAccessedWordIndex: number | null
 }
 
 export interface Chapter {

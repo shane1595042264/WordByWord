@@ -23,6 +23,9 @@ export class BookRepository {
       processingStatus: 'pending',
       createdAt: Date.now(),
       lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
     }
     await db.books.add(book)
     return book
@@ -38,6 +41,21 @@ export class BookRepository {
 
   async updateLastRead(id: string): Promise<void> {
     await db.books.update(id, { lastReadAt: Date.now() })
+  }
+
+  /** Save last-accessed section + reading position for Continue Reading */
+  async updateLastAccessed(
+    bookId: string,
+    sectionId: string,
+    scrollProgress: number,
+    wordIndex: number | null,
+  ): Promise<void> {
+    await db.books.update(bookId, {
+      lastAccessedSectionId: sectionId,
+      lastAccessedScrollProgress: scrollProgress,
+      lastAccessedWordIndex: wordIndex,
+      lastReadAt: Date.now(),
+    })
   }
 
   async updateProcessingStatus(id: string, status: Book['processingStatus']): Promise<void> {

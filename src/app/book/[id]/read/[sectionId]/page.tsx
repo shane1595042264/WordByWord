@@ -22,6 +22,17 @@ import type { VimRule } from '@/lib/vim'
 export default function ReaderPage({ params }: { params: Promise<{ id: string; sectionId: string }> }) {
   const { id: bookId, sectionId } = use(params)
   const router = useRouter()
+  /** Restore params from Continue Reading (read once on mount from URL) */
+  const restoreRef = useRef<{ scrollProgress: number | null; wordIndex: number | null; applied: boolean } | null>(null)
+  if (restoreRef.current === null) {
+    // Parse once on initial render (safe in client component)
+    const qs = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+    restoreRef.current = {
+      scrollProgress: qs?.get('sp') ? Number(qs.get('sp')) : null,
+      wordIndex: qs?.get('wi') ? Number(qs.get('wi')) : null,
+      applied: false,
+    }
+  }
   const {
     book, section, chapterSections,
     viewMode, setViewMode,
@@ -44,6 +55,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [linePositions, setLinePositions] = useState<number[]>([])
   const [yankFlash, setYankFlash] = useState('')
   const [sideBySideTextProgress, setSideBySideTextProgress] = useState(0)
+  /** Flat word index of the currently selected word (for position restore) */
+  const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null)
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
@@ -51,6 +64,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     setTotalVisualLines(info.totalLines)
     setLastTextLine(info.lastTextLine)
     setLinePositions(info.linePositions)
+    // Track word index for position restore
+    const idx = nibTextViewerRef.current?.getVimCursorIndex()
+    if (idx !== undefined) setSelectedWordIndex(idx)
   }, [])
 
   // Load user keymap overrides on mount
@@ -119,10 +135,28 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   })
 
   // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
+  // On first load, restore to saved word index if available from Continue Reading params
   useEffect(() => {
     if (viewMode === 'text' || viewMode === 'side-by-side') {
-      // Small delay for DOM to be ready
-      const t = setTimeout(() => nibTextViewerRef.current?.selectWordByDelta(0), 200)
+      const t = setTimeout(() => {
+        const restore = restoreRef.current
+        if (!restore.applied && restore.wordIndex != null) {
+          // Restore to exact word position
+          nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
+          restore.applied = true
+        } else if (!restore.applied && restore.scrollProgress != null) {
+          // Restore scroll position (no word selected)
+          const el = textScrollRef.current
+          if (el) {
+            const maxScroll = el.scrollHeight - el.clientHeight
+            el.scrollTop = (restore.scrollProgress / 100) * maxScroll
+          }
+          nibTextViewerRef.current?.selectWordByDelta(0)
+          restore.applied = true
+        } else {
+          nibTextViewerRef.current?.selectWordByDelta(0)
+        }
+      }, 300) // Slightly longer delay for content to render
       return () => clearTimeout(t)
     }
   }, [viewMode])
@@ -138,6 +172,47 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }
     return sectionProgress
   }, [cursorLine, lastTextLine, sectionProgress, viewMode, sideBySideTextProgress])
+
+  // ── Auto-save last-accessed position (for Continue Reading) ──
+  const positionRef = useRef({ sectionId, progress: 0, wordIndex: null as number | null })
+
+  useEffect(() => { positionRef.current.sectionId = sectionId }, [sectionId])
+  useEffect(() => { positionRef.current.progress = effectiveProgress }, [effectiveProgress])
+  useEffect(() => { positionRef.current.wordIndex = selectedWordIndex }, [selectedWordIndex])
+
+  // Debounced save: fires 2s after any position change
+  useEffect(() => {
+    if (!bookId || !sectionId) return
+    const timer = setTimeout(() => {
+      import('@/lib/repositories').then(({ BookRepository }) => {
+        const repo = new BookRepository()
+        repo.updateLastAccessed(
+          bookId,
+          positionRef.current.sectionId,
+          positionRef.current.progress,
+          positionRef.current.wordIndex,
+        )
+      })
+    }, 2000)
+    return () => clearTimeout(timer)
+  }, [bookId, sectionId, effectiveProgress, selectedWordIndex])
+
+  // Save immediately on page unload (best-effort)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      import('@/lib/repositories').then(({ BookRepository }) => {
+        const repo = new BookRepository()
+        repo.updateLastAccessed(
+          bookId,
+          positionRef.current.sectionId,
+          positionRef.current.progress,
+          positionRef.current.wordIndex,
+        )
+      })
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [bookId])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
