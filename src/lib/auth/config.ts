@@ -125,7 +125,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // Expose user ID and role in the session
       if (session.user) {
         session.user.id = token.id as string
-        ;(session.user as Record<string, unknown>).role = token.role
+        ;(session.user as unknown as Record<string, unknown>).role = token.role
       }
       return session
     },

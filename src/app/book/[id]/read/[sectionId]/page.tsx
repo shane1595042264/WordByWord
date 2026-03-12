@@ -140,11 +140,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (viewMode === 'text' || viewMode === 'side-by-side') {
       const t = setTimeout(() => {
         const restore = restoreRef.current
-        if (!restore.applied && restore.wordIndex != null) {
+        if (restore && !restore.applied && restore.wordIndex != null) {
           // Restore to exact word position
           nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
           restore.applied = true
-        } else if (!restore.applied && restore.scrollProgress != null) {
+        } else if (restore && !restore.applied && restore.scrollProgress != null) {
           // Restore scroll position (no word selected)
           const el = textScrollRef.current
           if (el) {
