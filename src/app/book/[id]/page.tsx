@@ -1,6 +1,6 @@
 'use client'
 
-import { use } from 'react'
+import { use, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,35 @@ import { ProcessButton } from '@/components/dashboard/process-button'
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { book, loading, refresh } = useBookDetail(id)
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editAuthor, setEditAuthor] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const startEditing = useCallback(() => {
+    if (!book) return
+    setEditTitle(book.title)
+    setEditAuthor(book.author)
+    setEditing(true)
+  }, [book])
+
+  const cancelEditing = useCallback(() => {
+    setEditing(false)
+  }, [])
+
+  const saveEdits = useCallback(async () => {
+    if (!book) return
+    setSaving(true)
+    const { BookRepository } = await import('@/lib/repositories')
+    const bookRepo = new BookRepository()
+    await bookRepo.updateDetails(book.id, {
+      title: editTitle.trim() || book.title,
+      author: editAuthor.trim(),
+    })
+    setEditing(false)
+    setSaving(false)
+    refresh()
+  }, [book, editTitle, editAuthor, refresh])
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
@@ -70,9 +99,50 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             <span className="text-5xl">📖</span>
           )}
         </div>
-        <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-bold">{book.title}</h1>
-          <p className="text-muted-foreground">{book.author}</p>
+        <div className="flex flex-col gap-2 flex-1">
+          {editing ? (
+            <>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                placeholder="Book title"
+                className="text-2xl font-bold bg-transparent border-b border-primary outline-none pb-1"
+                autoFocus
+                onKeyDown={e => { if (e.key === 'Enter') saveEdits(); if (e.key === 'Escape') cancelEditing() }}
+              />
+              <input
+                type="text"
+                value={editAuthor}
+                onChange={e => setEditAuthor(e.target.value)}
+                placeholder="Author"
+                className="text-muted-foreground bg-transparent border-b border-muted-foreground/30 outline-none pb-1"
+                onKeyDown={e => { if (e.key === 'Enter') saveEdits(); if (e.key === 'Escape') cancelEditing() }}
+              />
+              <div className="flex gap-2 mt-1">
+                <Button size="sm" onClick={saveEdits} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={cancelEditing} disabled={saving}>
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 group">
+                <h1 className="text-2xl font-bold">{book.title}</h1>
+                <button
+                  onClick={startEditing}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  title="Edit book details"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                </button>
+              </div>
+              <p className="text-muted-foreground">{book.author || 'Unknown'}</p>
+            </>
+          )}
           <div className="flex gap-2 mt-1">
             <Badge variant="outline">{book.totalPages} pages</Badge>
             <Badge variant="outline">{book.chapters.length} chapters</Badge>
