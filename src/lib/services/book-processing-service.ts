@@ -6,6 +6,51 @@ import { AIService } from './ai-service'
 import { NibService } from './nib-service'
 
 const PAGES_PER_BATCH = 10
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+
+/**
+ * OCR page images via backend Claude Vision.
+ * Falls back gracefully if backend is unavailable.
+ */
+async function ocrViaBackend(base64Images: string[]): Promise<{ texts: string[]; paymentRequired: boolean }> {
+  const empty = { texts: base64Images.map(() => ''), paymentRequired: false }
+
+  // Get auth token
+  let token: string
+  try {
+    const tokenRes = await fetch('/api/auth/token')
+    if (!tokenRes.ok) return empty
+    const tokenData = await tokenRes.json()
+    token = tokenData.token
+  } catch {
+    return empty
+  }
+
+  try {
+    const cleanImages = base64Images.map(img =>
+      img.replace(/^data:image\/\w+;base64,/, '')
+    )
+
+    const res = await fetch(`${API_URL}/ai/ocr`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ images: cleanImages }),
+    })
+
+    if (res.status === 402) {
+      return { texts: base64Images.map(() => ''), paymentRequired: true }
+    }
+    if (!res.ok) return empty
+
+    const data = await res.json()
+    return { texts: data.texts ?? base64Images.map(() => ''), paymentRequired: false }
+  } catch {
+    return empty
+  }
+}
 
 interface ImportOptions {
   useNativeTOC: boolean
@@ -36,19 +81,25 @@ export class BookProcessingService {
       totalPages: metadata.totalPages,
       pdfBlob: blob,
       coverImage: null,
-      structureSource: options.useNativeTOC && outline ? 'native' : 'ai',
+      structureSource: options.useNativeTOC && outline ? 'native' : 'manual',
       processingStatus: 'pending',
       createdAt: Date.now(),
       lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
     }
     await db.books.add(book)
 
     if (options.useNativeTOC && outline) {
       await this.buildStructureFromOutline(book.id, outline, metadata.totalPages, blob, options.onProgress)
-      await db.books.update(book.id, { processingStatus: 'complete' })
     } else {
-      await this.buildDefaultChapters(book.id, metadata.totalPages)
+      // Re-read blob from DB to ensure it's a fresh copy (File objects can get detached)
+      const savedBook = await db.books.get(book.id)
+      const freshBlob = savedBook?.pdfBlob ?? blob
+      await this.buildDefaultChapters(book.id, metadata.totalPages, freshBlob, metadata.title, metadata.author, options.onProgress)
     }
+    await db.books.update(book.id, { processingStatus: 'complete' })
 
     options.onProgress?.('Done!', 100)
     return book.id
@@ -369,19 +420,128 @@ export class BookProcessingService {
     return result
   }
 
-  private async buildDefaultChapters(bookId: string, totalPages: number): Promise<void> {
-    const chapters: Chapter[] = []
+  private async buildDefaultChapters(
+    bookId: string,
+    totalPages: number,
+    blob: Blob,
+    bookTitle: string,
+    bookAuthor: string,
+    onProgress?: (message: string, percent: number) => void,
+  ): Promise<void> {
+    let sectionOrder = 0
+
     for (let start = 1; start <= totalPages; start += PAGES_PER_BATCH) {
       const end = Math.min(start + PAGES_PER_BATCH - 1, totalPages)
-      chapters.push({
-        id: uuid(),
+      const chapterId = uuid()
+      const percent = 15 + Math.round(((start - 1) / totalPages) * 80)
+      onProgress?.(`Extracting text: pages ${start}-${end}`, percent)
+
+      const chapter: Chapter = {
+        id: chapterId,
         bookId,
         title: `Pages ${start}-${end}`,
-        order: chapters.length + 1,
+        order: Math.ceil(start / PAGES_PER_BATCH),
         startPage: start,
         endPage: end,
-      })
+      }
+      await db.chapters.add(chapter)
+
+      // First pass: try PDF.js text extraction for all pages in this chapter
+      const pageTexts: (string | null)[] = []
+      const needsOcrPages: number[] = [] // page numbers that need Vision OCR
+
+      for (let page = start; page <= end; page++) {
+        let extractedText: string | null = null
+
+        // Try raw PDF.js text extraction
+        try {
+          const rawText = await this.pdfService.extractPageText(blob, page)
+          if (rawText && rawText.trim().length > 0) {
+            extractedText = rawText.trim()
+          }
+        } catch {
+          // PDF.js extraction failed
+        }
+
+        // Try NibService clean text
+        if (!extractedText) {
+          try {
+            const cleanText = await this.nibService.getCleanText(
+              blob, page, page, bookTitle, bookAuthor,
+            )
+            if (cleanText && cleanText.trim().length > 0) {
+              extractedText = cleanText.trim()
+            }
+          } catch {
+            // NibService extraction failed
+          }
+        }
+
+        pageTexts.push(extractedText)
+        if (!extractedText) {
+          needsOcrPages.push(page)
+        }
+      }
+
+      // Second pass: if any pages have no text, try Vision OCR via backend
+      if (needsOcrPages.length > 0) {
+        onProgress?.(`OCR: rendering ${needsOcrPages.length} image-based pages...`, percent + 3)
+
+        // Render pages to images
+        const pageImages: string[] = []
+        for (const page of needsOcrPages) {
+          try {
+            const image = await this.pdfService.renderPageToImage(blob, page, 2)
+            pageImages.push(image)
+          } catch {
+            pageImages.push('')
+          }
+        }
+
+        // Send to backend for OCR
+        const validImages = pageImages.filter(img => img.length > 0)
+        if (validImages.length > 0) {
+          onProgress?.(`OCR: extracting text with AI (${validImages.length} pages)...`, percent + 5)
+          const ocrResult = await ocrViaBackend(validImages)
+
+          if (ocrResult.paymentRequired) {
+            onProgress?.('OCR requires payment — scanned pages imported without text. Use PDF view.', percent + 5)
+          } else {
+            // Map OCR results back to the right pages
+            let ocrIdx = 0
+            for (let i = 0; i < needsOcrPages.length; i++) {
+              if (pageImages[i].length > 0 && ocrIdx < ocrResult.texts.length) {
+                const ocrText = ocrResult.texts[ocrIdx]?.trim()
+                if (ocrText && ocrText.length > 0) {
+                  const pageIdx = needsOcrPages[i] - start
+                  pageTexts[pageIdx] = ocrText
+                }
+                ocrIdx++
+              }
+            }
+          }
+        }
+      }
+
+      // Create sections with whatever text we got
+      for (let page = start; page <= end; page++) {
+        const pageIdx = page - start
+        const section: Section = {
+          id: uuid(),
+          chapterId,
+          bookId,
+          title: `Page ${page}`,
+          order: ++sectionOrder,
+          startPage: page,
+          endPage: page,
+          extractedText: pageTexts[pageIdx],
+          isRead: false,
+          readAt: null,
+          lastPageViewed: null,
+          scrollProgress: null,
+        }
+        await db.sections.add(section)
+      }
     }
-    await db.chapters.bulkAdd(chapters)
   }
 }

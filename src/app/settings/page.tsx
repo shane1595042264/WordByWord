@@ -2,16 +2,20 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
+import { AdminSettings } from '@/components/settings/admin-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
 export default function SettingsPage() {
+  const { data: session } = useSession()
+  const isAdmin = (session?.user as any)?.role === 'admin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [saved, setSaved] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -47,6 +51,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
+          {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="general">
@@ -184,6 +189,14 @@ export default function SettingsPage() {
             />
           </div>
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="admin">
+            <div className="mt-4">
+              <AdminSettings />
+            </div>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )

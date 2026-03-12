@@ -208,4 +208,11 @@ export class UserRepository {
     stmt.free()
     return users
   }
+
+  /** Update user role (admin) */
+  async updateRole(userId: string, role: 'admin' | 'user'): Promise<void> {
+    const db = await getAuthDb()
+    db.run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, Date.now(), userId])
+    persist()
+  }
 }

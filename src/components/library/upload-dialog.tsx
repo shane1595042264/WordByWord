@@ -20,17 +20,6 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const [progressMessage, setProgressMessage] = useState('')
   const [progressPercent, setProgressPercent] = useState(0)
 
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFile(f)
-    const { PDFService } = await import('@/lib/services/pdf-service')
-    const pdfService = new PDFService()
-    const outline = await pdfService.extractOutline(f)
-    setHasOutline(outline !== null && outline.length > 0)
-    setStep('structure')
-  }, [])
-
   const handleImport = useCallback(async (useNativeTOC: boolean) => {
     if (!file) return
     setLoading(true)
@@ -59,8 +48,27 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
     onBookImported()
   }, [file, onBookImported])
 
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setFile(f)
+    const { PDFService } = await import('@/lib/services/pdf-service')
+    const pdfService = new PDFService()
+    const outline = await pdfService.extractOutline(f)
+    const hasTOC = outline !== null && outline.length > 0
+    setHasOutline(hasTOC)
+
+    if (hasTOC) {
+      // Show choice: use native TOC or page-by-page
+      setStep('structure')
+    } else {
+      // No TOC — import directly with page-by-page text extraction (no AI needed)
+      setStep('structure')
+    }
+  }, [handleImport])
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!loading) setOpen(v) }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!loading) { setOpen(v); if (!v) { setStep('upload'); setFile(null) } } }}>
       <DialogTrigger asChild>
         <Button>Upload PDF</Button>
       </DialogTrigger>
@@ -78,21 +86,30 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         )}
         {step === 'structure' && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              {hasOutline
-                ? 'We detected a table of contents in this PDF. Would you like to use it?'
-                : 'No table of contents detected. We\'ll use AI to split the book into sections.'}
-            </p>
-            <div className="flex gap-2">
-              {hasOutline && (
-                <Button onClick={() => handleImport(true)} disabled={loading}>
-                  Use Native TOC
+            {hasOutline ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  We detected a table of contents in this PDF. Would you like to use it, or import page-by-page?
+                </p>
+                <div className="flex gap-2">
+                  <Button onClick={() => handleImport(true)} disabled={loading}>
+                    Use Native TOC
+                  </Button>
+                  <Button variant="outline" onClick={() => handleImport(false)} disabled={loading}>
+                    Page-by-Page
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  No table of contents detected. The book will be imported page-by-page with text extracted locally.
+                </p>
+                <Button onClick={() => handleImport(false)} disabled={loading}>
+                  Import Book
                 </Button>
-              )}
-              <Button variant={hasOutline ? 'outline' : 'default'} onClick={() => handleImport(false)} disabled={loading}>
-                Use AI Splitting
-              </Button>
-            </div>
+              </>
+            )}
           </div>
         )}
         {step === 'importing' && (
