@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useCallback, useMemo, useRef, useState, useEffect } from 'react'
+import { use, useCallback, useMemo, useRef, useState, useEffect, type MutableRefObject } from 'react'
 import { useRouter } from 'next/navigation'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
@@ -42,7 +42,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   } = useReader(bookId, sectionId)
 
   const contentRef = useRef<HTMLDivElement>(null)
-  const textScrollRef = useRef<HTMLDivElement>(null)
+  const textScrollRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
@@ -394,7 +394,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   // Use a callback ref to detect when the text scroll container mounts
   const textScrollCallbackRef = useCallback((node: HTMLDivElement | null) => {
-    (textScrollRef as any).current = node
+    textScrollRef.current = node
     setTextScrollReady(!!node)
   }, [])
 
