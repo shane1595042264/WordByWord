@@ -26,6 +26,58 @@ export class AIService {
     this.client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
   }
 
+  /**
+   * OCR page images using Claude Vision directly (client-side).
+   * Used as the primary OCR path for image-only/scanned PDFs.
+   * Processes pages individually to get clean text per page.
+   */
+  async ocrPages(pageImages: string[]): Promise<string[]> {
+    const results: string[] = []
+
+    for (const image of pageImages) {
+      if (!image || image.length === 0) {
+        results.push('')
+        continue
+      }
+
+      try {
+        const base64 = image.replace(/^data:image\/\w+;base64,/, '')
+
+        const response = await this.client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: base64 },
+              },
+              {
+                type: 'text',
+                text: `Extract ALL text from this page image. Preserve the original structure as much as possible:
+- Keep paragraph breaks (use double newlines)
+- Keep headings on their own lines
+- For mathematical formulas, write them in plain text notation (e.g. "f(x) = x^2 + 1", "sum from i=1 to n")
+- For tables, preserve the tabular structure using spaces or pipes
+- For numbered/bulleted lists, preserve the markers
+- Do NOT add any commentary or explanation — output ONLY the extracted text.`,
+              },
+            ],
+          }],
+        })
+
+        const text = response.content.find(c => c.type === 'text')?.text || ''
+        results.push(text.trim())
+      } catch (err) {
+        console.error('Client-side OCR failed for page:', err)
+        results.push('')
+      }
+    }
+
+    return results
+  }
+
   async splitPagesIntoSections(input: SplitPagesInput): Promise<SplitPagesOutput> {
     const { pageImages, pageTexts, startPage, bookTitle, previousSectionTitle } = input
 

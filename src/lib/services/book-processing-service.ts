@@ -54,6 +54,7 @@ async function ocrViaBackend(base64Images: string[]): Promise<{ texts: string[];
 
 interface ImportOptions {
   useNativeTOC: boolean
+  useNibProcess?: boolean
   onProgress?: (message: string, percent: number) => void
 }
 
@@ -74,6 +75,10 @@ export class BookProcessingService {
     options.onProgress?.('Detecting table of contents...', 10)
     const outline = await this.pdfService.extractOutline(blob)
 
+    const structureSource = (options.useNativeTOC && outline) ? 'native'
+      : options.useNibProcess ? 'native'
+      : 'manual'
+
     const book: Book = {
       id: uuid(),
       title: metadata.title,
@@ -81,7 +86,7 @@ export class BookProcessingService {
       totalPages: metadata.totalPages,
       pdfBlob: blob,
       coverImage: null,
-      structureSource: options.useNativeTOC && outline ? 'native' : 'manual',
+      structureSource,
       processingStatus: 'pending',
       createdAt: Date.now(),
       lastReadAt: null,
@@ -93,6 +98,16 @@ export class BookProcessingService {
 
     if (options.useNativeTOC && outline) {
       await this.buildStructureFromOutline(book.id, outline, metadata.totalPages, blob, options.onProgress)
+    } else if (options.useNibProcess) {
+      // NIB Process: use the rich NibParser for all pages (no AI needed)
+      // If there's a TOC outline, use it for structure; otherwise do page-by-page with NIB
+      if (outline && outline.length > 0) {
+        await this.buildStructureFromOutline(book.id, outline, metadata.totalPages, blob, options.onProgress)
+      } else {
+        const savedBook = await db.books.get(book.id)
+        const freshBlob = savedBook?.pdfBlob ?? blob
+        await this.buildNibChapters(book.id, metadata.totalPages, freshBlob, metadata.title, metadata.author, options.onProgress)
+      }
     } else {
       // Re-read blob from DB to ensure it's a fresh copy (File objects can get detached)
       const savedBook = await db.books.get(book.id)
@@ -420,6 +435,81 @@ export class BookProcessingService {
     return result
   }
 
+  /**
+   * Build chapters using the rich NibParser (font/position-aware) for PDFs without TOC.
+   * Groups pages into chapters and extracts clean text via NibService — no AI needed.
+   * This gives much better text quality than raw PDF.js extraction since it strips
+   * headers, footers, footnotes, and properly joins paragraphs across pages.
+   */
+  private async buildNibChapters(
+    bookId: string,
+    totalPages: number,
+    blob: Blob,
+    bookTitle: string,
+    bookAuthor: string,
+    onProgress?: (message: string, percent: number) => void,
+  ): Promise<void> {
+    let sectionOrder = 0
+
+    for (let start = 1; start <= totalPages; start += PAGES_PER_BATCH) {
+      const end = Math.min(start + PAGES_PER_BATCH - 1, totalPages)
+      const chapterId = uuid()
+      const percent = 15 + Math.round(((start - 1) / totalPages) * 80)
+      onProgress?.(`NIB processing: pages ${start}-${end}`, percent)
+
+      const chapter: Chapter = {
+        id: chapterId,
+        bookId,
+        title: `Pages ${start}-${end}`,
+        order: Math.ceil(start / PAGES_PER_BATCH),
+        startPage: start,
+        endPage: end,
+      }
+      await db.chapters.add(chapter)
+
+      // Use NibService rich parsing for each page — extracts clean text with
+      // header/footer/footnote removal and proper paragraph joining
+      for (let page = start; page <= end; page++) {
+        let sectionText: string | null = null
+
+        try {
+          const cleanText = await this.nibService.getCleanText(
+            blob, page, page, bookTitle, bookAuthor,
+          )
+          if (cleanText && cleanText.trim().length > 0) {
+            sectionText = cleanText.trim()
+          }
+        } catch {
+          // Fallback: try raw PDF.js text extraction
+          try {
+            const rawText = await this.pdfService.extractPageText(blob, page)
+            if (rawText && rawText.trim().length > 0) {
+              sectionText = rawText.trim()
+            }
+          } catch {
+            // Page has no extractable text (image-only)
+          }
+        }
+
+        const section: Section = {
+          id: uuid(),
+          chapterId,
+          bookId,
+          title: `Page ${page}`,
+          order: ++sectionOrder,
+          startPage: page,
+          endPage: page,
+          extractedText: sectionText,
+          isRead: false,
+          readAt: null,
+          lastPageViewed: null,
+          scrollProgress: null,
+        }
+        await db.sections.add(section)
+      }
+    }
+  }
+
   private async buildDefaultChapters(
     bookId: string,
     totalPages: number,
@@ -483,7 +573,7 @@ export class BookProcessingService {
         }
       }
 
-      // Second pass: if any pages have no text, try Vision OCR via backend
+      // Second pass: if any pages have no text, try OCR
       if (needsOcrPages.length > 0) {
         onProgress?.(`OCR: rendering ${needsOcrPages.length} image-based pages...`, percent + 3)
 
@@ -498,20 +588,42 @@ export class BookProcessingService {
           }
         }
 
-        // Send to backend for OCR
         const validImages = pageImages.filter(img => img.length > 0)
         if (validImages.length > 0) {
+          let ocrTexts: string[] = []
+
+          // Try backend OCR first
           onProgress?.(`OCR: extracting text with AI (${validImages.length} pages)...`, percent + 5)
           const ocrResult = await ocrViaBackend(validImages)
 
           if (ocrResult.paymentRequired) {
-            onProgress?.('OCR requires payment — scanned pages imported without text. Use PDF view.', percent + 5)
+            onProgress?.('OCR requires payment — trying client-side OCR...', percent + 5)
+          }
+
+          // Check if backend returned any useful text
+          const backendHasText = ocrResult.texts.some(t => t && t.trim().length > 0)
+
+          if (backendHasText && !ocrResult.paymentRequired) {
+            ocrTexts = ocrResult.texts
+          } else if (this.aiService) {
+            // Fallback: client-side OCR using Anthropic SDK directly
+            onProgress?.(`OCR: using client-side AI for ${validImages.length} pages...`, percent + 5)
+            try {
+              ocrTexts = await this.aiService.ocrPages(validImages)
+            } catch (err) {
+              console.error('Client-side OCR failed:', err)
+              onProgress?.('OCR failed — scanned pages imported without text. Use PDF view.', percent + 5)
+            }
           } else {
-            // Map OCR results back to the right pages
+            onProgress?.('No API key configured — scanned pages imported without text. Use PDF view.', percent + 5)
+          }
+
+          // Map OCR results back to the right pages
+          if (ocrTexts.length > 0) {
             let ocrIdx = 0
             for (let i = 0; i < needsOcrPages.length; i++) {
-              if (pageImages[i].length > 0 && ocrIdx < ocrResult.texts.length) {
-                const ocrText = ocrResult.texts[ocrIdx]?.trim()
+              if (pageImages[i].length > 0 && ocrIdx < ocrTexts.length) {
+                const ocrText = ocrTexts[ocrIdx]?.trim()
                 if (ocrText && ocrText.length > 0) {
                   const pageIdx = needsOcrPages[i] - start
                   pageTexts[pageIdx] = ocrText

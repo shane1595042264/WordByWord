@@ -20,7 +20,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const [progressMessage, setProgressMessage] = useState('')
   const [progressPercent, setProgressPercent] = useState(0)
 
-  const handleImport = useCallback(async (useNativeTOC: boolean) => {
+  const handleImport = useCallback(async (opts: { useNativeTOC?: boolean; useNibProcess?: boolean }) => {
     if (!file) return
     setLoading(true)
     setStep('importing')
@@ -33,7 +33,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
     const apiKey = settings.getApiKey()
     const service = new BookProcessingService(apiKey ?? undefined)
     await service.importBook(file, {
-      useNativeTOC,
+      useNativeTOC: opts.useNativeTOC ?? false,
+      useNibProcess: opts.useNibProcess ?? false,
       onProgress: (message, percent) => {
         setProgressMessage(message)
         setProgressPercent(percent)
@@ -89,25 +90,39 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
             {hasOutline ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  We detected a table of contents in this PDF. Would you like to use it, or import page-by-page?
+                  We detected a table of contents in this PDF. Choose how to process it:
                 </p>
-                <div className="flex gap-2">
-                  <Button onClick={() => handleImport(true)} disabled={loading}>
+                <div className="flex flex-col gap-2">
+                  <Button onClick={() => handleImport({ useNibProcess: true })} disabled={loading}>
+                    NIB Process (Recommended)
+                  </Button>
+                  <p className="text-xs text-muted-foreground ml-1">
+                    Uses TOC structure + rich text extraction with header/footer removal. Fast, no AI needed.
+                  </p>
+                  <Button variant="outline" onClick={() => handleImport({ useNativeTOC: true })} disabled={loading}>
                     Use Native TOC
                   </Button>
-                  <Button variant="outline" onClick={() => handleImport(false)} disabled={loading}>
-                    Page-by-Page
+                  <Button variant="outline" onClick={() => handleImport({})} disabled={loading}>
+                    Page-by-Page (with AI OCR for scanned pages)
                   </Button>
                 </div>
               </>
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">
-                  No table of contents detected. The book will be imported page-by-page with text extracted locally.
+                  No table of contents detected. Choose how to process:
                 </p>
-                <Button onClick={() => handleImport(false)} disabled={loading}>
-                  Import Book
-                </Button>
+                <div className="flex flex-col gap-2">
+                  <Button onClick={() => handleImport({ useNibProcess: true })} disabled={loading}>
+                    NIB Process (Recommended)
+                  </Button>
+                  <p className="text-xs text-muted-foreground ml-1">
+                    Rich text extraction with header/footer removal. Fast, no AI needed.
+                  </p>
+                  <Button variant="outline" onClick={() => handleImport({})} disabled={loading}>
+                    Page-by-Page (with AI OCR for scanned pages)
+                  </Button>
+                </div>
               </>
             )}
           </div>

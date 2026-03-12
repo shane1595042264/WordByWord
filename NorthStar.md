@@ -56,9 +56,12 @@ View mode and reading mode (scroll/flip) **persist across navigation** via `Sett
 
 ### 2.5 — AI-Powered Book Processing
 
+- **NIB Process (recommended):** Uses the rich NibParser for all PDFs — extracts text with font/position awareness, strips headers/footers/footnotes automatically. If the PDF has a TOC outline, it uses the TOC for structure; otherwise groups pages into 10-page chapters. Fast, no AI needed. Always available as an option during import.
+- **Page-by-Page (with AI OCR):** For scanned/image-only PDFs, uses client-side Claude Vision OCR via Anthropic SDK to extract text. Falls back to backend OCR if available. Each page becomes its own section.
 - PDFs with a text layer → structure extracted from native PDF.js outline.
-- Scanned PDFs (no text layer) → processed via Claude vision API.
-  - 10 pages per batch, with context overlap for continuity.
+- Scanned PDFs (no text layer) → processed via Claude vision API (client-side or backend).
+  - Client-side OCR via Anthropic SDK — works without a backend server.
+  - Backend OCR available as an alternative when the server is running.
   - Extracts text + detects chapter/section boundaries.
   - Results cached in `Section.extractedText` — process once.
   - **Priority queue:** user-clicked chapters jump the queue; background processing continues for the rest.
@@ -197,7 +200,7 @@ Stored in `localStorage` as `bbb-settings`:
 
 4. **Page navigation vs section navigation:** Prev/Next in the toolbar navigate **pages** within a section. At boundaries, they auto-navigate to adjacent sections via `router.push()`. This is controlled in the reader `page.tsx`, not in the toolbar component.
 
-5. **Scanned PDFs have no text layer and no outline.** They go through the AI processing path exclusively. The `walkOutlineTree` outline fix only applies to PDFs with native TOC structure.
+5. **Scanned PDFs have no text layer and no outline.** They can go through either the NIB Process path (which will produce sections with no text — use PDF view) or the AI OCR path (Page-by-Page option) which extracts text via client-side Claude Vision. The `walkOutlineTree` outline fix only applies to PDFs with native TOC structure.
 
 ---
 
