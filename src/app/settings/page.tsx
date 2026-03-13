@@ -10,6 +10,7 @@ import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import { AdminSettings } from '@/components/settings/admin-settings'
+import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
@@ -51,6 +52,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
+          <TabsTrigger value="cloud">Cloud Sync</TabsTrigger>
           {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
         </TabsList>
 
@@ -170,6 +172,12 @@ export default function SettingsPage() {
             <Button onClick={handleSave}>
               {saved ? 'Saved!' : 'Save Settings'}
             </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="cloud">
+          <div className="mt-4">
+            <CloudSyncSettings />
           </div>
         </TabsContent>
 

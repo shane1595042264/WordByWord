@@ -1,8 +1,18 @@
+import { v4 as uuid } from 'uuid'
 import { db } from '../db/database'
 import type { Book, Chapter, Section, VocabEntry } from '../db/models'
 
 const SYNC_DEBOUNCE_MS = 30_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
+
+export interface CloudStatus {
+  bookCount: number
+  chapterCount: number
+  sectionCount: number
+  vocabCount: number
+  lastUpdated: string | null
+  books: { id: string; customTitle: string | null; catalogId: string; updatedAt: string }[]
+}
 
 class SyncService {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -24,6 +34,7 @@ class SyncService {
     window.addEventListener('beforeunload', onBeforeUnload)
     this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
+    // Auto-download from cloud on init
     this.sync()
   }
 
@@ -67,6 +78,26 @@ class SyncService {
     return process.env.NEXT_PUBLIC_API_URL || ''
   }
 
+  // ── Cloud status ─────────────────────────────────────────────
+
+  async getCloudStatus(): Promise<CloudStatus | null> {
+    const token = await this.getToken()
+    if (!token) return null
+    try {
+      const res = await fetch(`${this.getApiUrl()}/sync/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }
+
+  getLastSyncedAt(): string | null {
+    return localStorage.getItem(LAST_SYNCED_KEY)
+  }
+
   // ── Book upload ──────────────────────────────────────────────
 
   async uploadBook(
@@ -105,7 +136,23 @@ class SyncService {
     }
   }
 
-  // ── Core sync ────────────────────────────────────────────────
+  // ── Download PDF from cloud ──────────────────────────────────
+
+  private async downloadPdf(remoteBookId: string): Promise<Blob | null> {
+    const token = await this.getToken()
+    if (!token) return null
+    try {
+      const res = await fetch(`${this.getApiUrl()}/books/${remoteBookId}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return null
+      return await res.blob()
+    } catch {
+      return null
+    }
+  }
+
+  // ── Core sync (bidirectional) ────────────────────────────────
 
   async sync(): Promise<void> {
     if (this.isSyncing) return
@@ -148,17 +195,6 @@ class SyncService {
         .filter(v => !v.bookId || bookRemoteIdMap.has(v.bookId))
         .map(v => this.vocabToSync(v, bookRemoteIdMap))
 
-      // Skip if nothing to push and not first sync
-      if (
-        syncBooks.length === 0 &&
-        syncChapters.length === 0 &&
-        syncSections.length === 0 &&
-        syncVocab.length === 0 &&
-        lastSyncedAt !== '1970-01-01T00:00:00.000Z'
-      ) {
-        return
-      }
-
       const res = await fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
         headers: {
@@ -192,11 +228,176 @@ class SyncService {
       const result = await res.json()
       await this.applyServerChanges(result.serverChanges, bookRemoteIdMap)
       localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+      console.log('[sync] complete')
     } catch (err) {
       console.error('[sync] error:', err)
     } finally {
       this.isSyncing = false
     }
+  }
+
+  // ── Force upload: override cloud with local ──────────────────
+
+  async forceUpload(): Promise<void> {
+    // Reset lastSyncedAt to epoch so ALL local entities are sent
+    localStorage.setItem(LAST_SYNCED_KEY, '1970-01-01T00:00:00.000Z')
+    await this.sync()
+  }
+
+  // ── Download from cloud: pull all server data ────────────────
+
+  async downloadFromCloud(): Promise<{ booksDownloaded: number }> {
+    const token = await this.getToken()
+    if (!token) return { booksDownloaded: 0 }
+
+    // Get all server data by syncing from epoch with no local changes
+    const res = await fetch(`${this.getApiUrl()}/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        lastSyncedAt: '1970-01-01T00:00:00.000Z',
+        changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: null, exerciseProgress: [] },
+      }),
+    })
+
+    if (!res.ok) throw new Error(`Sync failed: ${res.status}`)
+
+    const result = await res.json()
+    const allBooks = await db.books.toArray()
+    const existingRemoteIds = new Set(allBooks.map(b => b.remoteId).filter(Boolean))
+
+    let booksDownloaded = 0
+
+    // Create local books for server books that don't exist locally
+    for (const sb of result.serverChanges.books ?? []) {
+      const remoteId = sb.id as string
+      if (existingRemoteIds.has(remoteId)) continue // already have it
+
+      // Download the PDF
+      console.log(`[sync] downloading PDF for ${sb.customTitle || remoteId}...`)
+      const pdfBlob = await this.downloadPdf(remoteId)
+      if (!pdfBlob) {
+        console.error('[sync] failed to download PDF for', remoteId)
+        continue
+      }
+
+      // Get book summary for catalog info
+      let title = (sb.customTitle as string) || 'Untitled'
+      let author = ''
+      try {
+        const summaryRes = await fetch(`${this.getApiUrl()}/books/${remoteId}/summary`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (summaryRes.ok) {
+          const summary = await summaryRes.json()
+          title = summary.catalog?.title || title
+          author = summary.catalog?.author || ''
+        }
+      } catch { /* use defaults */ }
+
+      const localId = uuid()
+      const now = Date.now()
+      const newBook: Book = {
+        id: localId,
+        title,
+        author,
+        totalPages: (sb.totalPages as number) ?? 0,
+        pdfBlob,
+        coverImage: null,
+        structureSource: (sb.structureSource as Book['structureSource']) || 'native',
+        processingStatus: (sb.processingStatus as Book['processingStatus']) || 'complete',
+        createdAt: sb.createdAt ? new Date(sb.createdAt as string).getTime() : now,
+        updatedAt: now,
+        lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
+        lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
+        lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? null,
+        lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
+        remoteId: remoteId,
+        catalogId: sb.catalogId as string,
+      }
+      await db.books.add(newBook)
+      booksDownloaded++
+
+      // Download chapters for this book
+      const serverChapters = (result.serverChanges.chapters ?? []).filter(
+        (ch: Record<string, unknown>) => ch.bookId === remoteId
+      )
+      for (const sch of serverChapters) {
+        const existing = await db.chapters.get(sch.id as string)
+        if (existing) continue
+        await db.chapters.add({
+          id: sch.id as string,
+          bookId: localId, // use local book ID
+          title: (sch.title as string) || '',
+          order: (sch.sortOrder as number) ?? 0,
+          startPage: (sch.startPage as number) ?? 0,
+          endPage: (sch.endPage as number) ?? 0,
+          updatedAt: now,
+        })
+      }
+
+      // Download sections for this book
+      const serverSections = (result.serverChanges.sections ?? []).filter(
+        (sec: Record<string, unknown>) => sec.bookId === remoteId
+      )
+      for (const ss of serverSections) {
+        const existing = await db.sections.get(ss.id as string)
+        if (existing) continue
+        await db.sections.add({
+          id: ss.id as string,
+          chapterId: ss.chapterId as string,
+          bookId: localId, // use local book ID
+          title: (ss.title as string) || '',
+          order: (ss.sortOrder as number) ?? 0,
+          startPage: (ss.startPage as number) ?? 0,
+          endPage: (ss.endPage as number) ?? 0,
+          extractedText: (ss.extractedText as string) ?? null,
+          isRead: (ss.isRead as boolean) ?? false,
+          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
+          lastPageViewed: (ss.lastPageViewed as number) ?? null,
+          scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100, // 0-1 → 0-100
+          updatedAt: now,
+        })
+      }
+    }
+
+    // Also update existing books with server changes
+    const bookRemoteIdMap = new Map<string, string>()
+    const refreshedBooks = await db.books.toArray()
+    for (const b of refreshedBooks) {
+      if (b.remoteId) bookRemoteIdMap.set(b.id, b.remoteId)
+    }
+    await this.applyServerChanges(result.serverChanges, bookRemoteIdMap)
+
+    // Download vocabulary that doesn't exist locally
+    for (const sv of result.serverChanges.vocabulary ?? []) {
+      const local = await db.vocabulary.get(sv.id as string)
+      if (!local) {
+        await db.vocabulary.add({
+          id: sv.id as string,
+          word: sv.word as string,
+          pronunciation: (sv.pronunciation as string) ?? '',
+          translation: (sv.translation as string) ?? '',
+          targetLanguage: (sv.targetLanguage as string) ?? '',
+          contextSentence: (sv.contextSentence as string) ?? '',
+          explanation: (sv.explanation as string) ?? null,
+          bookTitle: (sv.bookTitle as string) ?? '',
+          sectionTitle: (sv.sectionTitle as string) ?? '',
+          pageNumber: (sv.page as number) ?? 0,
+          bookId: sv.bookId as string,
+          reviewCount: (sv.reviewCount as number) ?? 0,
+          lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
+          createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
+          updatedAt: new Date(sv.updatedAt as string).getTime(),
+        } as VocabEntry)
+      }
+    }
+
+    localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+    return { booksDownloaded }
   }
 
   // ── Best-effort sync on tab close ────────────────────────────
@@ -288,7 +489,7 @@ class SyncService {
     }
   }
 
-  // ── Apply server changes: Backend → Local ────────────────────
+  // ── Apply server changes to existing local entities ──────────
 
   private async applyServerChanges(
     serverChanges: {
@@ -304,6 +505,7 @@ class SyncService {
       remoteToLocal.set(remoteId, localId)
     }
 
+    // Update existing books
     for (const sb of serverChanges.books ?? []) {
       const localId = remoteToLocal.get(sb.id as string)
       if (!localId) continue
@@ -324,6 +526,7 @@ class SyncService {
       }
     }
 
+    // Update existing sections (reading progress merge)
     for (const ss of serverChanges.sections ?? []) {
       const local = await db.sections.get(ss.id as string)
       if (!local) continue
@@ -342,6 +545,7 @@ class SyncService {
       }
     }
 
+    // Update/create vocabulary
     for (const sv of serverChanges.vocabulary ?? []) {
       const local = await db.vocabulary.get(sv.id as string)
       if (!local) {
