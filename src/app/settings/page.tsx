@@ -169,6 +169,30 @@ export default function SettingsPage() {
               </p>
             </div>
 
+            <div className="space-y-2">
+              <Label>Sync behavior</Label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.warnBeforeSync}
+                  onClick={() => setSettings({ ...settings, warnBeforeSync: !settings.warnBeforeSync })}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                    settings.warnBeforeSync ? 'bg-primary' : 'bg-muted'
+                  }`}
+                >
+                  <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-background shadow-lg ring-0 transition-transform ${
+                    settings.warnBeforeSync ? 'translate-x-5' : 'translate-x-0'
+                  }`} />
+                </button>
+                <span className="text-sm">Warn before sync</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                When enabled, you&apos;ll be asked before cloud changes are applied (e.g. deletions from another device).
+                When disabled, sync happens automatically with recency bias — most recent change wins.
+              </p>
+            </div>
+
             <Button onClick={handleSave}>
               {saved ? 'Saved!' : 'Save Settings'}
             </Button>

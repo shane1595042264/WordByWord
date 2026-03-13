@@ -70,6 +70,15 @@ export class BookProcessingService {
     this.nibService = new NibService()
   }
 
+  /** Render PDF page 1 as a cover image (base64 data URL) */
+  private async generateCover(blob: Blob): Promise<string | null> {
+    try {
+      return await this.pdfService.renderPageToImage(blob, 1, 1.5)
+    } catch {
+      return null
+    }
+  }
+
   async importBook(blob: Blob, options: ImportOptions): Promise<string> {
     options.onProgress?.('Reading PDF metadata...', 5)
     const metadata = await this.pdfService.extractMetadata(blob)
@@ -86,7 +95,7 @@ export class BookProcessingService {
       author: metadata.author,
       totalPages: metadata.totalPages,
       pdfBlob: blob,
-      coverImage: null,
+      coverImage: await this.generateCover(blob),
       structureSource,
       processingStatus: 'pending',
       createdAt: Date.now(),
@@ -124,11 +133,16 @@ export class BookProcessingService {
       const pdfFile = new File([blob], `${metadata.title}.pdf`, { type: 'application/pdf' })
       const uploadResult = await syncService.uploadBook(pdfFile, metadata.title, metadata.author, metadata.totalPages)
       if (uploadResult) {
-        await db.books.update(book.id, {
+        const updateData: Partial<Book> = {
           remoteId: uploadResult.remoteId,
           catalogId: uploadResult.catalogId,
           updatedAt: Date.now(),
-        })
+        }
+        // If backend found a Google Books cover, use it (better quality than PDF page 1)
+        if (uploadResult.coverUrl) {
+          updateData.coverImage = uploadResult.coverUrl
+        }
+        await db.books.update(book.id, updateData)
         // Immediate sync to push chapters and sections
         await syncService.sync()
       }

@@ -4,6 +4,7 @@ import type { Book, Chapter, Section, VocabEntry } from '../db/models'
 
 const SYNC_DEBOUNCE_MS = 30_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
+const SYNC_LOG_KEY = 'nibble_syncLog'
 
 export interface CloudStatus {
   bookCount: number
@@ -14,14 +15,29 @@ export interface CloudStatus {
   books: { id: string; customTitle: string | null; catalogId: string; updatedAt: string }[]
 }
 
+export interface SyncConflict {
+  localOnlyBooks: number
+  cloudOnlyBooks: number
+  cloudDeletedBooks: number
+}
+
+type ConflictResolver = (conflict: SyncConflict) => Promise<'cloud' | 'local' | 'auto'>
+
 class SyncService {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
   private isSyncing = false
   private token: string | null = null
   private tokenExp = 0
   private cleanupFns: (() => void)[] = []
+  private conflictResolver: ConflictResolver | null = null
+  private hasInitSynced = false
 
   // ── Lifecycle ────────────────────────────────────────────────
+
+  /** Register a callback for when sync finds conflicts (used by UI) */
+  onConflict(resolver: ConflictResolver) {
+    this.conflictResolver = resolver
+  }
 
   init() {
     const onVisibility = () => {
@@ -34,7 +50,8 @@ class SyncService {
     window.addEventListener('beforeunload', onBeforeUnload)
     this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
-    // Auto-download from cloud on init
+    // Full sync on init — always sync from epoch on first load to catch all changes
+    this.hasInitSynced = false
     this.sync()
   }
 
@@ -42,6 +59,26 @@ class SyncService {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.cleanupFns.forEach(fn => fn())
     this.cleanupFns = []
+  }
+
+  // ── Logging ───────────────────────────────────────────────────
+
+  private log(action: string, details?: string) {
+    const entry = `[${new Date().toISOString()}] ${action}${details ? ': ' + details : ''}`
+    console.log('[sync]', entry)
+    try {
+      const logs = JSON.parse(localStorage.getItem(SYNC_LOG_KEY) || '[]') as string[]
+      logs.push(entry)
+      // Keep last 100 entries
+      if (logs.length > 100) logs.splice(0, logs.length - 100)
+      localStorage.setItem(SYNC_LOG_KEY, JSON.stringify(logs))
+    } catch { /* ignore */ }
+  }
+
+  getSyncLog(): string[] {
+    try {
+      return JSON.parse(localStorage.getItem(SYNC_LOG_KEY) || '[]')
+    } catch { return [] }
   }
 
   // ── Dirty trigger ────────────────────────────────────────────
@@ -105,7 +142,7 @@ class SyncService {
     title: string,
     author?: string,
     totalPages?: number,
-  ): Promise<{ remoteId: string; catalogId: string } | null> {
+  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string } | null> {
     const token = await this.getToken()
     if (!token) return null
 
@@ -129,6 +166,7 @@ class SyncService {
       return {
         remoteId: data.book.id,
         catalogId: data.catalogEntry.id,
+        coverUrl: data.catalogEntry.coverUrl || undefined,
       }
     } catch (err) {
       console.error('[sync] upload error:', err)
@@ -161,8 +199,15 @@ class SyncService {
 
     this.isSyncing = true
     try {
-      const lastSyncedAt = localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z'
+      // On first sync after init, always sync from epoch to catch everything (deletions, new books)
+      const isInitSync = !this.hasInitSynced
+      const lastSyncedAt = isInitSync
+        ? '1970-01-01T00:00:00.000Z'
+        : (localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z')
       const sinceMs = new Date(lastSyncedAt).getTime()
+      this.hasInitSynced = true
+
+      this.log('sync:start', isInitSync ? 'full sync (init)' : 'incremental')
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(sinceMs).toArray(),
@@ -195,6 +240,8 @@ class SyncService {
         .filter(v => !v.bookId || bookRemoteIdMap.has(v.bookId))
         .map(v => this.vocabToSync(v, bookRemoteIdMap))
 
+      this.log('sync:push', `${syncBooks.length} books, ${syncChapters.length} chapters, ${syncSections.length} sections, ${syncVocab.length} vocab`)
+
       const res = await fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
         headers: {
@@ -221,32 +268,75 @@ class SyncService {
       }
 
       if (!res.ok) {
-        console.error('[sync] failed:', res.status)
+        this.log('sync:error', `HTTP ${res.status}`)
         return
       }
 
       const result = await res.json()
+      const serverBooks = (result.serverChanges.books ?? []) as Record<string, unknown>[]
+
+      // Detect what the server has
+      const existingRemoteIds = new Set(allBooks.map(b => b.remoteId).filter(Boolean))
+      const activeServerBooks = serverBooks.filter(sb => !sb.deletedAt)
+      const deletedServerBooks = serverBooks.filter(sb => sb.deletedAt)
+      const cloudOnlyBooks = activeServerBooks.filter(sb => !existingRemoteIds.has(sb.id as string))
+      const localOnlyBooks = allBooks.filter(b => b.remoteId && !serverBooks.some(sb => sb.id === b.remoteId))
+      // Books that exist locally but server says deleted
+      const cloudDeletedBooks = deletedServerBooks.filter(sb => existingRemoteIds.has(sb.id as string))
+
+      this.log('sync:analysis', `cloud-only: ${cloudOnlyBooks.length}, local-only: ${localOnlyBooks.length}, cloud-deleted: ${cloudDeletedBooks.length}`)
+
+      // Check if we need conflict resolution
+      const hasConflict = cloudOnlyBooks.length > 0 || cloudDeletedBooks.length > 0
+      let resolution: 'auto' | 'cloud' | 'local' = 'auto'
+
+      if (hasConflict && this.conflictResolver) {
+        // Check settings for warn preference
+        const { SettingsService } = await import('./settings-service')
+        const settings = new SettingsService().getSettings()
+        if (settings.warnBeforeSync) {
+          resolution = await this.conflictResolver({
+            localOnlyBooks: localOnlyBooks.length,
+            cloudOnlyBooks: cloudOnlyBooks.length,
+            cloudDeletedBooks: cloudDeletedBooks.length,
+          })
+        }
+      }
+
+      // Apply server changes to existing local entities (updates + reading progress)
       await this.applyServerChanges(result.serverChanges, bookRemoteIdMap)
 
-      // Download any cloud books that don't exist locally
-      const existingRemoteIds = new Set(
-        (await db.books.toArray()).map(b => b.remoteId).filter(Boolean)
-      )
-      for (const sb of result.serverChanges.books ?? []) {
-        const remoteId = sb.id as string
-        if (existingRemoteIds.has(remoteId)) continue
-        if (sb.deletedAt) continue
+      if (resolution === 'local') {
+        // User chose local wins — don't download cloud books or apply deletions
+        this.log('sync:resolve', 'local wins — skipping cloud changes')
+      } else {
+        // Auto or cloud wins — apply deletions and download new books
 
-        console.log(`[sync] downloading new book from cloud: ${sb.customTitle || remoteId}`)
-        try {
-          await this.createLocalBookFromServer(sb, result.serverChanges, token)
-        } catch (err) {
-          console.error('[sync] failed to download book:', remoteId, err)
+        // 1. Remove locally any books the server soft-deleted (recency: server delete is newer)
+        for (const sb of cloudDeletedBooks) {
+          const localBook = allBooks.find(b => b.remoteId === (sb.id as string))
+          if (localBook) {
+            this.log('sync:delete-local', `"${localBook.title}" deleted on cloud`)
+            await db.sections.where('bookId').equals(localBook.id).delete()
+            await db.chapters.where('bookId').equals(localBook.id).delete()
+            await db.books.delete(localBook.id)
+          }
+        }
+
+        // 2. Download cloud-only books
+        for (const sb of cloudOnlyBooks) {
+          const remoteId = sb.id as string
+          this.log('sync:download', `"${sb.customTitle || remoteId}"`)
+          try {
+            await this.createLocalBookFromServer(sb, result.serverChanges, token)
+          } catch (err) {
+            this.log('sync:download-error', `${remoteId}: ${err}`)
+          }
         }
       }
 
       localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
-      console.log('[sync] complete')
+      this.log('sync:complete', `synced at ${result.syncedAt}`)
     } catch (err) {
       console.error('[sync] error:', err)
     } finally {

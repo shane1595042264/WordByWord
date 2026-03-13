@@ -109,10 +109,30 @@ export class BookRepository {
   }
 
   async delete(id: string): Promise<void> {
+    // Get remoteId before deleting locally
+    const book = await db.books.get(id)
+    const remoteId = book?.remoteId
+
     await db.transaction('rw', [db.books, db.chapters, db.sections], async () => {
       await db.sections.where('bookId').equals(id).delete()
       await db.chapters.where('bookId').equals(id).delete()
       await db.books.delete(id)
     })
+
+    // Delete from backend too
+    if (remoteId) {
+      try {
+        const tokenRes = await fetch('/api/auth/token')
+        if (!tokenRes.ok) return
+        const { token } = await tokenRes.json()
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+        await fetch(`${apiUrl}/books/${remoteId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      } catch {
+        console.warn('Failed to delete book from backend')
+      }
+    }
   }
 }

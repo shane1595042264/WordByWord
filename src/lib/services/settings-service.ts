@@ -30,6 +30,7 @@ export interface AppSettings {
   readingMode: 'scroll' | 'flip'
   keymapOverrides: KeymapOverrides
   targetLanguage: TargetLanguage
+  warnBeforeSync: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -40,6 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   readingMode: 'scroll',
   keymapOverrides: {},
   targetLanguage: 'zh',
+  warnBeforeSync: false,
 }
 
 export class SettingsService {
