@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
+import { useSession } from 'next-auth/react'
 import { useBooks } from '@/hooks/use-books'
 import { LibraryGrid } from '@/components/library/library-grid'
 import { UploadDialog } from '@/components/library/upload-dialog'
@@ -12,6 +13,8 @@ import { UserMenu } from '@/components/auth/user-menu'
 import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 
 export default function HomePage() {
+  const { data: session } = useSession()
+  const isAdmin = (session?.user as any)?.role === 'admin'
   const { books, loading, refresh } = useBooks()
   const [editMode, setEditMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -99,6 +102,11 @@ export default function HomePage() {
               <Link href="/settings">
                 <Button variant="outline">Settings</Button>
               </Link>
+              {isAdmin && (
+                <Link href="/marketplace">
+                  <Button variant="outline">Marketplace</Button>
+                </Link>
+              )}
               <UserMenu />
             </>
           )}
