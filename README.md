@@ -1,6 +1,3 @@
-## TODO
-- [ ] Add user settings persistence so that the app remembers the settings. Currently it refreshes everytime the user exits the setting
-- [ ] Fix the pdf view and flip view.
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
