@@ -127,8 +127,8 @@ export function CloudSyncSettings() {
         <div className="rounded-lg border border-blue-500/50 bg-blue-500/10 p-4 space-y-3">
           <p className="text-sm font-semibold">Download from Cloud</p>
           <p className="text-sm">
-            This will download all books, chapters, sections, and vocabulary from the cloud
-            and merge them into your local library. Your existing local data will NOT be deleted.
+            This will <strong>replace</strong> your local library with the cloud version.
+            All local books will be cleared and re-downloaded from the cloud.
           </p>
           {status && status.bookCount > 0 && (
             <p className="text-sm">
