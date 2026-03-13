@@ -32,6 +32,28 @@ export class BitByBitDB extends Dexie {
         if (book.lastAccessedWordIndex === undefined) book.lastAccessedWordIndex = null
       })
     })
+    this.version(4).stores({
+      books: 'id, title, createdAt, lastReadAt, updatedAt, remoteId',
+      chapters: 'id, bookId, order, updatedAt',
+      sections: 'id, chapterId, bookId, order, isRead, updatedAt',
+      vocabulary: 'id, word, targetLanguage, bookTitle, createdAt, reviewCount, updatedAt, bookId',
+    }).upgrade(tx => {
+      const now = Date.now()
+      return Promise.all([
+        tx.table('books').toCollection().modify(book => {
+          book.updatedAt = book.updatedAt ?? book.createdAt ?? now
+        }),
+        tx.table('chapters').toCollection().modify(ch => {
+          ch.updatedAt = ch.updatedAt ?? now
+        }),
+        tx.table('sections').toCollection().modify(sec => {
+          sec.updatedAt = sec.updatedAt ?? now
+        }),
+        tx.table('vocabulary').toCollection().modify(v => {
+          v.updatedAt = v.updatedAt ?? v.createdAt ?? now
+        }),
+      ])
+    })
   }
 }
 

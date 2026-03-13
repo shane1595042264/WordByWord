@@ -1,0 +1,379 @@
+import { db } from '../db/database'
+import type { Book, Chapter, Section, VocabEntry } from '../db/models'
+
+const SYNC_DEBOUNCE_MS = 30_000
+const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
+
+class SyncService {
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null
+  private isSyncing = false
+  private token: string | null = null
+  private tokenExp = 0
+  private cleanupFns: (() => void)[] = []
+
+  // ── Lifecycle ────────────────────────────────────────────────
+
+  init() {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') this.sync()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    this.cleanupFns.push(() => document.removeEventListener('visibilitychange', onVisibility))
+
+    const onBeforeUnload = () => this.flushSync()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
+
+    this.sync()
+  }
+
+  destroy() {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    this.cleanupFns.forEach(fn => fn())
+    this.cleanupFns = []
+  }
+
+  // ── Dirty trigger ────────────────────────────────────────────
+
+  markDirty() {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    this.debounceTimer = setTimeout(() => this.sync(), SYNC_DEBOUNCE_MS)
+  }
+
+  // ── Token management ─────────────────────────────────────────
+
+  private async getToken(): Promise<string | null> {
+    if (this.token && Date.now() < this.tokenExp - 60_000) {
+      return this.token
+    }
+    try {
+      const res = await fetch('/api/auth/token')
+      if (!res.ok) return null
+      const { token } = await res.json()
+      this.token = token
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        this.tokenExp = payload.exp * 1000
+      } catch {
+        this.tokenExp = Date.now() + 23 * 60 * 60 * 1000
+      }
+      return this.token
+    } catch {
+      return null
+    }
+  }
+
+  private getApiUrl(): string {
+    return process.env.NEXT_PUBLIC_API_URL || ''
+  }
+
+  // ── Book upload ──────────────────────────────────────────────
+
+  async uploadBook(
+    file: File | Blob,
+    title: string,
+    author?: string,
+    totalPages?: number,
+  ): Promise<{ remoteId: string; catalogId: string } | null> {
+    const token = await this.getToken()
+    if (!token) return null
+
+    const formData = new FormData()
+    formData.append('file', file, `${title}.pdf`)
+    formData.append('title', title)
+    if (author) formData.append('author', author)
+    if (totalPages) formData.append('totalPages', String(totalPages))
+
+    try {
+      const res = await fetch(`${this.getApiUrl()}/books/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+      if (!res.ok) {
+        console.error('[sync] upload failed:', res.status)
+        return null
+      }
+      const data = await res.json()
+      return {
+        remoteId: data.book.id,
+        catalogId: data.catalogEntry.id,
+      }
+    } catch (err) {
+      console.error('[sync] upload error:', err)
+      return null
+    }
+  }
+
+  // ── Core sync ────────────────────────────────────────────────
+
+  async sync(): Promise<void> {
+    if (this.isSyncing) return
+    const token = await this.getToken()
+    if (!token) return
+
+    this.isSyncing = true
+    try {
+      const lastSyncedAt = localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z'
+      const sinceMs = new Date(lastSyncedAt).getTime()
+
+      const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
+        db.books.where('updatedAt').above(sinceMs).toArray(),
+        db.chapters.where('updatedAt').above(sinceMs).toArray(),
+        db.sections.where('updatedAt').above(sinceMs).toArray(),
+        db.vocabulary.where('updatedAt').above(sinceMs).toArray(),
+      ])
+
+      // Build local→remote ID map for books
+      const bookRemoteIdMap = new Map<string, string>()
+      const allBooks = await db.books.toArray()
+      for (const b of allBooks) {
+        if (b.remoteId) bookRemoteIdMap.set(b.id, b.remoteId)
+      }
+
+      // Transform — only entities whose parent book has a remoteId
+      const syncBooks = dirtyBooks
+        .filter(b => b.remoteId)
+        .map(b => this.bookToSync(b))
+
+      const syncChapters = dirtyChapters
+        .filter(ch => bookRemoteIdMap.has(ch.bookId))
+        .map(ch => this.chapterToSync(ch, bookRemoteIdMap))
+
+      const syncSections = dirtySections
+        .filter(sec => bookRemoteIdMap.has(sec.bookId))
+        .map(sec => this.sectionToSync(sec, bookRemoteIdMap))
+
+      const syncVocab = dirtyVocab
+        .filter(v => !v.bookId || bookRemoteIdMap.has(v.bookId))
+        .map(v => this.vocabToSync(v, bookRemoteIdMap))
+
+      // Skip if nothing to push and not first sync
+      if (
+        syncBooks.length === 0 &&
+        syncChapters.length === 0 &&
+        syncSections.length === 0 &&
+        syncVocab.length === 0 &&
+        lastSyncedAt !== '1970-01-01T00:00:00.000Z'
+      ) {
+        return
+      }
+
+      const res = await fetch(`${this.getApiUrl()}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          lastSyncedAt,
+          changes: {
+            books: syncBooks,
+            chapters: syncChapters,
+            sections: syncSections,
+            vocabulary: syncVocab,
+            settings: null,
+            exerciseProgress: [],
+          },
+        }),
+      })
+
+      if (res.status === 401) {
+        this.token = null
+        this.isSyncing = false
+        return this.sync()
+      }
+
+      if (!res.ok) {
+        console.error('[sync] failed:', res.status)
+        return
+      }
+
+      const result = await res.json()
+      await this.applyServerChanges(result.serverChanges, bookRemoteIdMap)
+      localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+    } catch (err) {
+      console.error('[sync] error:', err)
+    } finally {
+      this.isSyncing = false
+    }
+  }
+
+  // ── Best-effort sync on tab close ────────────────────────────
+
+  private flushSync() {
+    const token = this.token
+    if (!token) return
+    const lastSyncedAt = localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z'
+    try {
+      fetch(`${this.getApiUrl()}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          lastSyncedAt,
+          changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: null, exerciseProgress: [] },
+        }),
+        keepalive: true,
+      })
+    } catch {
+      // best effort
+    }
+  }
+
+  // ── Transforms: Local → Backend ──────────────────────────────
+
+  private bookToSync(book: Book): Record<string, unknown> {
+    return {
+      id: book.remoteId,
+      customTitle: book.title,
+      structureSource: book.structureSource,
+      processingStatus: book.processingStatus,
+      lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
+      lastAccessedSectionId: book.lastAccessedSectionId ?? null,
+      lastAccessedScrollProgress: book.lastAccessedScrollProgress ?? 0,
+      lastAccessedWordIndex: book.lastAccessedWordIndex ?? null,
+      updatedAt: new Date(book.updatedAt).toISOString(),
+    }
+  }
+
+  private chapterToSync(ch: Chapter, bookMap: Map<string, string>): Record<string, unknown> {
+    return {
+      id: ch.id,
+      bookId: bookMap.get(ch.bookId),
+      title: ch.title,
+      startPage: ch.startPage ?? null,
+      endPage: ch.endPage ?? null,
+      sortOrder: ch.order,
+      updatedAt: new Date(ch.updatedAt).toISOString(),
+    }
+  }
+
+  private sectionToSync(sec: Section, bookMap: Map<string, string>): Record<string, unknown> {
+    return {
+      id: sec.id,
+      bookId: bookMap.get(sec.bookId),
+      chapterId: sec.chapterId,
+      title: sec.title,
+      startPage: sec.startPage ?? null,
+      endPage: sec.endPage ?? null,
+      isRead: sec.isRead,
+      readAt: sec.readAt ? new Date(sec.readAt).toISOString() : null,
+      lastPageViewed: sec.lastPageViewed ?? null,
+      scrollProgress: (sec.scrollProgress ?? 0) / 100, // 0-100 → 0-1
+      sortOrder: sec.order,
+      sectionType: 'content',
+      updatedAt: new Date(sec.updatedAt).toISOString(),
+    }
+  }
+
+  private vocabToSync(v: VocabEntry, bookMap: Map<string, string>): Record<string, unknown> {
+    return {
+      id: v.id,
+      bookId: v.bookId ? bookMap.get(v.bookId) ?? null : null,
+      word: v.word,
+      pronunciation: v.pronunciation ?? null,
+      translation: v.translation ?? null,
+      targetLanguage: v.targetLanguage ?? null,
+      contextSentence: v.contextSentence ?? null,
+      explanation: v.explanation ?? null,
+      bookTitle: v.bookTitle ?? null,
+      sectionTitle: v.sectionTitle ?? null,
+      page: v.pageNumber ?? null,
+      reviewCount: v.reviewCount ?? 0,
+      lastReviewedAt: v.lastReviewedAt ? new Date(v.lastReviewedAt).toISOString() : null,
+      updatedAt: new Date(v.updatedAt).toISOString(),
+    }
+  }
+
+  // ── Apply server changes: Backend → Local ────────────────────
+
+  private async applyServerChanges(
+    serverChanges: {
+      books?: Record<string, unknown>[]
+      chapters?: Record<string, unknown>[]
+      sections?: Record<string, unknown>[]
+      vocabulary?: Record<string, unknown>[]
+    },
+    bookRemoteIdMap: Map<string, string>,
+  ) {
+    const remoteToLocal = new Map<string, string>()
+    for (const [localId, remoteId] of bookRemoteIdMap) {
+      remoteToLocal.set(remoteId, localId)
+    }
+
+    for (const sb of serverChanges.books ?? []) {
+      const localId = remoteToLocal.get(sb.id as string)
+      if (!localId) continue
+      const local = await db.books.get(localId)
+      if (!local) continue
+      const serverUpdated = new Date(sb.updatedAt as string).getTime()
+      if (serverUpdated > local.updatedAt) {
+        await db.books.update(localId, {
+          title: (sb.customTitle as string) || local.title,
+          structureSource: (sb.structureSource as Book['structureSource']) || local.structureSource,
+          processingStatus: (sb.processingStatus as Book['processingStatus']) || local.processingStatus,
+          lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : local.lastReadAt,
+          lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? local.lastAccessedSectionId,
+          lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? local.lastAccessedScrollProgress,
+          lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? local.lastAccessedWordIndex,
+          updatedAt: serverUpdated,
+        })
+      }
+    }
+
+    for (const ss of serverChanges.sections ?? []) {
+      const local = await db.sections.get(ss.id as string)
+      if (!local) continue
+      const serverUpdated = new Date(ss.updatedAt as string).getTime()
+      if (serverUpdated > local.updatedAt) {
+        await db.sections.update(ss.id as string, {
+          isRead: (ss.isRead as boolean) || local.isRead,
+          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
+          scrollProgress: Math.max(
+            local.scrollProgress ?? 0,
+            ((ss.scrollProgress as number) ?? 0) * 100,
+          ),
+          lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
+          updatedAt: serverUpdated,
+        })
+      }
+    }
+
+    for (const sv of serverChanges.vocabulary ?? []) {
+      const local = await db.vocabulary.get(sv.id as string)
+      if (!local) {
+        await db.vocabulary.add({
+          id: sv.id as string,
+          word: sv.word as string,
+          pronunciation: (sv.pronunciation as string) ?? '',
+          translation: (sv.translation as string) ?? '',
+          targetLanguage: (sv.targetLanguage as string) ?? '',
+          contextSentence: (sv.contextSentence as string) ?? '',
+          explanation: (sv.explanation as string) ?? null,
+          bookTitle: (sv.bookTitle as string) ?? '',
+          sectionTitle: (sv.sectionTitle as string) ?? '',
+          pageNumber: (sv.page as number) ?? 0,
+          bookId: sv.bookId as string,
+          reviewCount: (sv.reviewCount as number) ?? 0,
+          lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
+          createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
+          updatedAt: new Date(sv.updatedAt as string).getTime(),
+        } as VocabEntry)
+      } else {
+        const serverUpdated = new Date(sv.updatedAt as string).getTime()
+        if (serverUpdated > local.updatedAt) {
+          await db.vocabulary.update(sv.id as string, {
+            reviewCount: Math.max(local.reviewCount ?? 0, (sv.reviewCount as number) ?? 0),
+            lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : local.lastReviewedAt,
+            updatedAt: serverUpdated,
+          })
+        }
+      }
+    }
+  }
+}
+
+export const syncService = new SyncService()

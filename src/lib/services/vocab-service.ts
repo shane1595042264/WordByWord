@@ -1,17 +1,21 @@
+import { v4 as uuid } from 'uuid'
 import { db } from '@/lib/db/database'
 import type { VocabEntry } from '@/lib/db/models'
+import { syncService } from './sync-service'
 
 export class VocabService {
   /** Add a word to the vocabulary book */
-  async add(entry: Omit<VocabEntry, 'id' | 'createdAt' | 'reviewCount' | 'lastReviewedAt'>): Promise<string> {
-    const id = `vocab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  async add(entry: Omit<VocabEntry, 'id' | 'createdAt' | 'reviewCount' | 'lastReviewedAt' | 'updatedAt'>): Promise<string> {
+    const id = uuid()
     await db.vocabulary.add({
       ...entry,
       id,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       reviewCount: 0,
       lastReviewedAt: null,
     })
+    syncService.markDirty()
     return id
   }
 

@@ -32,8 +32,8 @@ describe('BookRepository', () => {
 
   it('should delete a book and its chapters/sections', async () => {
     const book = await repo.create({ title: 'Del', author: 'A', totalPages: 10, pdfBlob: new Blob(['a']) })
-    await db.chapters.add({ id: 'ch1', bookId: book.id, title: 'Ch', order: 1, startPage: 1, endPage: 10 })
-    await db.sections.add({ id: 's1', chapterId: 'ch1', bookId: book.id, title: 'S', order: 1, startPage: 1, endPage: 5, extractedText: null, isRead: false, readAt: null, lastPageViewed: null, scrollProgress: null })
+    await db.chapters.add({ id: 'ch1', bookId: book.id, title: 'Ch', order: 1, startPage: 1, endPage: 10, updatedAt: Date.now() })
+    await db.sections.add({ id: 's1', chapterId: 'ch1', bookId: book.id, title: 'S', order: 1, startPage: 1, endPage: 5, extractedText: null, isRead: false, readAt: null, lastPageViewed: null, scrollProgress: null, updatedAt: Date.now() })
     await repo.delete(book.id)
     expect(await db.books.get(book.id)).toBeUndefined()
     expect(await db.chapters.where('bookId').equals(book.id).count()).toBe(0)

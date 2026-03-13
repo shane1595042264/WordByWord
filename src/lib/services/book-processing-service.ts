@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid'
 import { db } from '@/lib/db/database'
+import { syncService } from './sync-service'
 import type { Book, Chapter, Section } from '@/lib/db/models'
 import { PDFService } from './pdf-service'
 import { AIService } from './ai-service'
@@ -89,6 +90,7 @@ export class BookProcessingService {
       structureSource,
       processingStatus: 'pending',
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       lastReadAt: null,
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
@@ -114,7 +116,26 @@ export class BookProcessingService {
       const freshBlob = savedBook?.pdfBlob ?? blob
       await this.buildDefaultChapters(book.id, metadata.totalPages, freshBlob, metadata.title, metadata.author, options.onProgress)
     }
-    await db.books.update(book.id, { processingStatus: 'complete' })
+    await db.books.update(book.id, { processingStatus: 'complete', updatedAt: Date.now() })
+
+    // Upload PDF to backend and sync structure
+    options.onProgress?.('Syncing to cloud...', 95)
+    try {
+      const pdfFile = new File([blob], `${metadata.title}.pdf`, { type: 'application/pdf' })
+      const uploadResult = await syncService.uploadBook(pdfFile, metadata.title, metadata.author, metadata.totalPages)
+      if (uploadResult) {
+        await db.books.update(book.id, {
+          remoteId: uploadResult.remoteId,
+          catalogId: uploadResult.catalogId,
+          updatedAt: Date.now(),
+        })
+        // Immediate sync to push chapters and sections
+        await syncService.sync()
+      }
+    } catch (err) {
+      console.error('[sync] upload after processing failed:', err)
+      // Non-blocking — local data is fine, sync will retry later
+    }
 
     options.onProgress?.('Done!', 100)
     return book.id
@@ -179,6 +200,7 @@ export class BookProcessingService {
         readAt: null,
         lastPageViewed: null,
         scrollProgress: null,
+        updatedAt: Date.now(),
       }
     })
 
@@ -284,6 +306,7 @@ export class BookProcessingService {
         order: ++chapterOrder,
         startPage: firstPage,
         endPage: Math.max(firstPage, endPage),
+        updatedAt: Date.now(),
       }
       await db.chapters.add(chapter)
 
@@ -340,6 +363,7 @@ export class BookProcessingService {
           readAt: null,
           lastPageViewed: null,
           scrollProgress: null,
+          updatedAt: Date.now(),
         }
         await db.sections.add(section)
       }
@@ -464,6 +488,7 @@ export class BookProcessingService {
         order: Math.ceil(start / PAGES_PER_BATCH),
         startPage: start,
         endPage: end,
+        updatedAt: Date.now(),
       }
       await db.chapters.add(chapter)
 
@@ -504,6 +529,7 @@ export class BookProcessingService {
           readAt: null,
           lastPageViewed: null,
           scrollProgress: null,
+          updatedAt: Date.now(),
         }
         await db.sections.add(section)
       }
@@ -533,6 +559,7 @@ export class BookProcessingService {
         order: Math.ceil(start / PAGES_PER_BATCH),
         startPage: start,
         endPage: end,
+        updatedAt: Date.now(),
       }
       await db.chapters.add(chapter)
 
@@ -651,6 +678,7 @@ export class BookProcessingService {
           readAt: null,
           lastPageViewed: null,
           scrollProgress: null,
+          updatedAt: Date.now(),
         }
         await db.sections.add(section)
       }

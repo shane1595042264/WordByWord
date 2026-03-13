@@ -19,7 +19,11 @@ describe('Database', () => {
       structureSource: 'native' as const,
       processingStatus: 'pending' as const,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
     }
     await db.books.add(book)
     const retrieved = await db.books.get(book.id)
@@ -35,6 +39,7 @@ describe('Database', () => {
       order: 1,
       startPage: 1,
       endPage: 20,
+      updatedAt: Date.now(),
     }
     await db.chapters.add(chapter)
     const chapters = await db.chapters.where('bookId').equals(bookId).toArray()
@@ -58,6 +63,7 @@ describe('Database', () => {
       readAt: null,
       lastPageViewed: null,
       scrollProgress: null,
+      updatedAt: Date.now(),
     }
     await db.sections.add(section)
     const sections = await db.sections.where('chapterId').equals(chapterId).toArray()

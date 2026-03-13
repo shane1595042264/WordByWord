@@ -1,9 +1,13 @@
 import { db } from '@/lib/db/database'
 import type { Chapter } from '@/lib/db/models'
+import { syncService } from '../services/sync-service'
 
 export class ChapterRepository {
   async bulkCreate(chapters: Chapter[]): Promise<void> {
-    await db.chapters.bulkAdd(chapters)
+    const now = Date.now()
+    const withUpdatedAt = chapters.map(c => ({ ...c, updatedAt: c.updatedAt ?? now }))
+    await db.chapters.bulkAdd(withUpdatedAt)
+    syncService.markDirty()
   }
 
   async getByBook(bookId: string): Promise<Chapter[]> {

@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import { db } from '@/lib/db/database'
 import type { Book } from '@/lib/db/models'
+import { syncService } from '../services/sync-service'
 
 interface CreateBookInput {
   title: string
@@ -22,12 +23,14 @@ export class BookRepository {
       structureSource: 'native',
       processingStatus: 'pending',
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       lastReadAt: null,
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
     }
     await db.books.add(book)
+    syncService.markDirty()
     return book
   }
 
@@ -40,7 +43,8 @@ export class BookRepository {
   }
 
   async updateLastRead(id: string): Promise<void> {
-    await db.books.update(id, { lastReadAt: Date.now() })
+    await db.books.update(id, { lastReadAt: Date.now(), updatedAt: Date.now() })
+    syncService.markDirty()
   }
 
   /** Save last-accessed section + reading position for Continue Reading */
@@ -55,11 +59,14 @@ export class BookRepository {
       lastAccessedScrollProgress: scrollProgress,
       lastAccessedWordIndex: wordIndex,
       lastReadAt: Date.now(),
+      updatedAt: Date.now(),
     })
+    syncService.markDirty()
   }
 
   async updateProcessingStatus(id: string, status: Book['processingStatus']): Promise<void> {
-    await db.books.update(id, { processingStatus: status })
+    await db.books.update(id, { processingStatus: status, updatedAt: Date.now() })
+    syncService.markDirty()
   }
 
   /** Update book metadata (title, author, cover, etc.) — local + backend sync */
@@ -68,11 +75,12 @@ export class BookRepository {
     data: { title?: string; author?: string; coverImage?: string | null },
   ): Promise<void> {
     // Update local Dexie DB immediately
-    const update: Partial<Book> = {}
+    const update: Partial<Book> = { updatedAt: Date.now() }
     if (data.title !== undefined) update.title = data.title
     if (data.author !== undefined) update.author = data.author
     if (data.coverImage !== undefined) update.coverImage = data.coverImage
     await db.books.update(id, update)
+    syncService.markDirty()
 
     // Sync to backend
     try {

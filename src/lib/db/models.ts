@@ -15,6 +15,9 @@ export interface Book {
   lastAccessedScrollProgress: number | null
   /** Flat word index of the selected word (word-level restore) */
   lastAccessedWordIndex: number | null
+  updatedAt: number
+  remoteId?: string
+  catalogId?: string
 }
 
 export interface Chapter {
@@ -24,6 +27,7 @@ export interface Chapter {
   order: number
   startPage: number
   endPage: number
+  updatedAt: number
 }
 
 export interface VocabEntry {
@@ -52,6 +56,8 @@ export interface VocabEntry {
   reviewCount: number
   /** Last reviewed timestamp */
   lastReviewedAt: number | null
+  updatedAt: number
+  bookId?: string
 }
 
 export interface Section {
@@ -67,4 +73,5 @@ export interface Section {
   readAt: number | null
   lastPageViewed: number | null  // last page user was on within this section
   scrollProgress: number | null  // 0-100 scroll percentage in scroll mode
+  updatedAt: number
 }
