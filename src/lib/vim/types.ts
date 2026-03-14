@@ -11,7 +11,7 @@
  *
  * Modes:
  *   Normal mode   — word-level cursor (h/l next/prev word, j/k word vertical,
- *                    d/u half-page, gg/G, Enter to translate)
+ *                    d/u half-page, gg/G, Enter translate)
  *   Sentence mode — sentence-level selection + translation
  *   Visual mode   — pure Vim visual selection (character/chunk-level, no translation)
  *
@@ -85,6 +85,8 @@ export interface VimRule {
   key: string
   /** Whether Shift must be held (for distinguishing 'v' vs 'V') */
   shift?: boolean
+  /** Whether Ctrl must be held (for distinguishing 'e' vs 'Ctrl+E') */
+  ctrl?: boolean
   /** The action to dispatch */
   action: VimAction
   /** Whether this binding accepts a numeric count prefix */
