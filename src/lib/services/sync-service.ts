@@ -622,6 +622,11 @@ class SyncService {
       const local = await db.books.get(localId)
       if (!local) continue
       const serverUpdated = new Date(sb.updatedAt as string).getTime()
+      // Always update processingStatus from server (processing → complete transition)
+      const serverProcessingStatus = sb.processingStatus as Book['processingStatus'] | undefined
+      if (serverProcessingStatus === 'complete' && local.processingStatus === 'processing') {
+        await db.books.update(localId, { processingStatus: 'complete', updatedAt: serverUpdated })
+      }
       if (serverUpdated > local.updatedAt) {
         await db.books.update(localId, {
           title: (sb.customTitle as string) || local.title,
@@ -636,22 +641,65 @@ class SyncService {
       }
     }
 
-    // Update existing sections (reading progress merge)
-    for (const ss of serverChanges.sections ?? []) {
-      const local = await db.sections.get(ss.id as string)
-      if (!local) continue
-      const serverUpdated = new Date(ss.updatedAt as string).getTime()
-      if (serverUpdated > local.updatedAt) {
-        await db.sections.update(ss.id as string, {
-          isRead: (ss.isRead as boolean) || local.isRead,
-          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
-          scrollProgress: Math.max(
-            local.scrollProgress ?? 0,
-            ((ss.scrollProgress as number) ?? 0) * 100,
-          ),
-          lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
-          updatedAt: serverUpdated,
+    // Update/create chapters
+    for (const sch of serverChanges.chapters ?? []) {
+      if (sch.deletedAt) continue
+      const remoteBookId = sch.bookId as string
+      const localBookId = remoteToLocal.get(remoteBookId)
+      if (!localBookId) continue
+      const local = await db.chapters.get(sch.id as string)
+      if (!local) {
+        await db.chapters.add({
+          id: sch.id as string,
+          bookId: localBookId,
+          title: (sch.title as string) || '',
+          order: (sch.sortOrder as number) ?? 0,
+          startPage: (sch.startPage as number) ?? 0,
+          endPage: (sch.endPage as number) ?? 0,
+          updatedAt: Date.now(),
         })
+      }
+    }
+
+    // Update/create sections
+    for (const ss of serverChanges.sections ?? []) {
+      if (ss.deletedAt) continue
+      const remoteBookId = ss.bookId as string
+      const localBookId = remoteToLocal.get(remoteBookId)
+      const local = await db.sections.get(ss.id as string)
+      if (!local && localBookId) {
+        // Create new section from server
+        await db.sections.add({
+          id: ss.id as string,
+          chapterId: ss.chapterId as string,
+          bookId: localBookId,
+          title: (ss.title as string) || '',
+          order: (ss.sortOrder as number) ?? 0,
+          startPage: (ss.startPage as number) ?? 0,
+          endPage: (ss.endPage as number) ?? 0,
+          extractedText: (ss.extractedText as string) ?? null,
+          isRead: (ss.isRead as boolean) ?? false,
+          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
+          lastPageViewed: (ss.lastPageViewed as number) ?? null,
+          scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
+          updatedAt: Date.now(),
+        })
+      } else if (local) {
+        // Update existing section (reading progress merge)
+        const serverUpdated = new Date(ss.updatedAt as string).getTime()
+        if (serverUpdated > local.updatedAt) {
+          await db.sections.update(ss.id as string, {
+            isRead: (ss.isRead as boolean) || local.isRead,
+            readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
+            scrollProgress: Math.max(
+              local.scrollProgress ?? 0,
+              ((ss.scrollProgress as number) ?? 0) * 100,
+            ),
+            lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
+            extractedText: (ss.extractedText as string) ?? local.extractedText,
+            updatedAt: serverUpdated,
+          })
+        }
       }
     }
 
