@@ -88,6 +88,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // Use the existing user's ID
           user.id = existingUser.id
           user.name = existingUser.name ?? user.name
+          user.image = existingUser.image
           ;(user as Record<string, unknown>).role = existingUser.role
         } else {
           // New user — create account from OAuth
@@ -105,6 +106,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             tokenType: account.token_type ?? undefined,
           })
           user.id = newUser.id
+          user.image = newUser.image
           ;(user as Record<string, unknown>).role = newUser.role
         }
       }
@@ -112,20 +114,32 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true
     },
 
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session: updateData }) {
       // On initial sign-in, add user data to the JWT
       if (user) {
         token.id = user.id
         token.role = (user as Record<string, unknown>).role ?? 'user'
+        token.picture = user.image ?? null
+      }
+      // Handle session updates (e.g. profile changes from settings page)
+      if (trigger === 'update' && updateData) {
+        if ((updateData as Record<string, unknown>).name !== undefined) {
+          token.name = (updateData as Record<string, unknown>).name as string
+        }
+        if ((updateData as Record<string, unknown>).image !== undefined) {
+          token.picture = (updateData as Record<string, unknown>).image as string
+        }
       }
       return token
     },
 
     async session({ session, token }) {
-      // Expose user ID and role in the session
+      // Expose user ID, role, and image in the session
       if (session.user) {
         session.user.id = token.id as string
         ;(session.user as unknown as Record<string, unknown>).role = token.role
+        session.user.image = (token.picture as string) ?? null
+        if (token.name) session.user.name = token.name as string
       }
       return session
     },

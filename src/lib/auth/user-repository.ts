@@ -6,6 +6,17 @@
 import { getDb, generateId } from './db'
 import bcrypt from 'bcryptjs'
 
+const EMOJI_AVATARS = [
+  '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
+  '🐢', '🦈', '🐬', '🦜', '🐝', '🦄', '🐲', '🌸', '🌻', '🍀',
+  '🌈', '⭐', '🔥', '💎', '🎯', '🎨', '🎵', '🚀', '🌊', '🍄',
+  '🎪', '🎭', '🧊', '🪐', '🌙', '☀️', '🍉', '🥑', '🧁', '🍩',
+]
+
+function randomEmoji(): string {
+  return EMOJI_AVATARS[Math.floor(Math.random() * EMOJI_AVATARS.length)]
+}
+
 export interface AuthUser {
   id: string
   name: string | null
@@ -78,9 +89,10 @@ export class UserRepository {
   ): Promise<AuthUser> {
     const sql = getDb()
     const passwordHash = await bcrypt.hash(password, 12)
+    const emoji = randomEmoji()
     const rows = await sql<UserRow[]>`
-      INSERT INTO users (email, password_hash, name, auth_role)
-      VALUES (${email.toLowerCase()}, ${passwordHash}, ${name}, ${role})
+      INSERT INTO users (email, password_hash, name, auth_role, avatar_url)
+      VALUES (${email.toLowerCase()}, ${passwordHash}, ${name}, ${role}, ${emoji})
       RETURNING *
     `
     return rowToUser(rows[0])
@@ -93,9 +105,10 @@ export class UserRepository {
     image: string | null,
   ): Promise<AuthUser> {
     const sql = getDb()
+    const avatarUrl = image ?? randomEmoji()
     const rows = await sql<UserRow[]>`
       INSERT INTO users (email, name, avatar_url, email_verified)
-      VALUES (${email.toLowerCase()}, ${name}, ${image}, ${true})
+      VALUES (${email.toLowerCase()}, ${name}, ${avatarUrl}, ${true})
       RETURNING *
     `
     return rowToUser(rows[0])

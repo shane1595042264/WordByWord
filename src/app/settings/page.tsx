@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import { AdminSettings } from '@/components/settings/admin-settings'
 import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
+import { ProfileSettings } from '@/components/settings/profile-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
@@ -48,13 +49,18 @@ export default function SettingsPage() {
       </Link>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      <Tabs defaultValue="general">
+      <Tabs defaultValue="profile">
         <TabsList>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
           <TabsTrigger value="cloud">Cloud Sync</TabsTrigger>
           {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
         </TabsList>
+
+        <TabsContent value="profile">
+          <ProfileSettings />
+        </TabsContent>
 
         <TabsContent value="general">
           <div className="space-y-6 mt-4">
