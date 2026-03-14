@@ -130,14 +130,40 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         )}
 
         {(isProcessing || isFailed) && book.jobId && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full text-xs"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLog(true) }}
-          >
-            Check Progress
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLog(true) }}
+            >
+              Check Progress
+            </Button>
+            {isProcessing && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="text-xs"
+                onClick={async (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  try {
+                    const tokenRes = await fetch('/api/auth/token')
+                    if (!tokenRes.ok) return
+                    const { token } = await tokenRes.json()
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                    await fetch(`${apiUrl}/processing/${book.jobId}/cancel`, {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}` },
+                    })
+                    onProcessingComplete?.() // refresh
+                  } catch { /* ignore */ }
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
