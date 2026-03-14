@@ -18,32 +18,45 @@ export interface PDFOutlineItem {
 }
 
 export class PDFService {
+  private onDebugLog?: (message: string) => void;
+
+  constructor(onDebugLog?: (message: string) => void) {
+    this.onDebugLog = onDebugLog;
+  }
+
   async extractMetadata(blob: Blob): Promise<PDFMetadata> {
+    this.onDebugLog?.("Starting PDF metadata extraction...");
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const metadata = await doc.getMetadata()
       const info = metadata.info as Record<string, any>
-      return {
+      const result = {
         title: info?.Title || 'Untitled',
         author: info?.Author || 'Unknown',
         totalPages: doc.numPages,
-      }
+      };
+      this.onDebugLog?.(`Extracted metadata: Title="${result.title}", Author="${result.author}", TotalPages=${result.totalPages}`);
+      return result;
     } finally {
       doc.destroy()
+      this.onDebugLog?.("Finished PDF metadata extraction.");
     }
   }
 
   async extractOutline(blob: Blob): Promise<PDFOutlineItem[] | null> {
+    this.onDebugLog?.("Starting PDF outline extraction...");
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const outline = await doc.getOutline()
       if (!outline || outline.length === 0) {
+        this.onDebugLog?.("No PDF outline found.");
         return null
       }
-      // Resolve all page numbers from destinations
+      this.onDebugLog?.(`Found ${outline.length} top-level outline items.`);
       const items = await this.mapOutlineItems(outline, doc)
+      this.onDebugLog?.("Finished PDF outline extraction.");
       return items
     } finally {
       doc.destroy()
@@ -51,6 +64,7 @@ export class PDFService {
   }
 
   async renderPageToImage(blob: Blob, pageNumber: number, scale: number = 2): Promise<string> {
+    this.onDebugLog?.(`Rendering page ${pageNumber} to image (scale: ${scale})...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
@@ -61,19 +75,24 @@ export class PDFService {
       canvas.height = viewport.height
       const ctx = canvas.getContext('2d')!
       await page.render({ canvasContext: ctx, viewport, canvas } as unknown as import('pdfjs-dist/types/src/display/api').RenderParameters).promise
-      return canvas.toDataURL('image/png')
+      const result = canvas.toDataURL('image/png');
+      this.onDebugLog?.(`Successfully rendered page ${pageNumber} to image.`);
+      return result;
     } finally {
       doc.destroy()
     }
   }
 
   async extractPageText(blob: Blob, pageNumber: number): Promise<string> {
+    this.onDebugLog?.(`Extracting raw text from page ${pageNumber}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const page = await doc.getPage(pageNumber)
       const textContent = await page.getTextContent()
-      return textContent.items.map((item: any) => item.str).join(' ')
+      const text = textContent.items.map((item: any) => item.str).join(' ');
+      this.onDebugLog?.(`Extracted ${textContent.items.length} text items from page ${pageNumber}.`);
+      return text;
     } finally {
       doc.destroy()
     }
@@ -84,6 +103,7 @@ export class PDFService {
    * This powers the .nib parser for header/footnote detection.
    */
   async extractRichPageData(blob: Blob, pageNumber: number): Promise<RawPageData> {
+    this.onDebugLog?.(`Extracting rich data from page ${pageNumber}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
@@ -101,13 +121,16 @@ export class PDFService {
           fontName: item.fontName ?? '',
           hasEOL: item.hasEOL ?? false,
         }))
+      this.onDebugLog?.(`Page ${pageNumber}: Extracted ${items.length} text items.`);
 
-      return {
+      const result = {
         pageNumber,
         items,
         pageHeight: viewport.height,
         pageWidth: viewport.width,
-      }
+      };
+      this.onDebugLog?.(`Finished rich data extraction for page ${pageNumber}.`);
+      return result;
     } finally {
       doc.destroy()
     }
@@ -117,11 +140,13 @@ export class PDFService {
    * Extract rich text data for a range of pages at once (more efficient).
    */
   async extractRichPageRange(blob: Blob, startPage: number, endPage: number): Promise<RawPageData[]> {
+    this.onDebugLog?.(`Starting rich data extraction for pages ${startPage}-${endPage}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const results: RawPageData[] = []
       for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+        this.onDebugLog?.(`Processing page ${pageNum} for rich data...`);
         const page = await doc.getPage(pageNum)
         const viewport = page.getViewport({ scale: 1 })
         const textContent = await page.getTextContent()
@@ -138,7 +163,14 @@ export class PDFService {
         await page.render({ canvasContext: offCtx, viewport: imageViewport, canvas: offscreen } as unknown as import('pdfjs-dist/types/src/display/api').RenderParameters).promise
 
         // Extract figure images from this page
-        const images = await this.extractPageImages(page, viewport, offscreen, imageRenderScale)
+        let images: RawImageRegion[] = [];
+        try {
+          images = await this.extractPageImages(page, viewport, offscreen, imageRenderScale);
+          this.onDebugLog?.(`Page ${pageNum}: Detected ${images.length} image regions.`);
+        } catch (e) {
+          this.onDebugLog?.(`Page ${pageNum}: Error extracting images: ${e instanceof Error ? e.message : String(e)}`);
+        }
+
 
         // Build a map from font ID → actual font name (e.g. "TimesNewRomanPS-BoldMT")
         const fontNameMap = new Map<string, string>()
@@ -154,6 +186,7 @@ export class PDFService {
             }
           } catch {
             // Font not resolved — fall back to opaque ID
+            this.onDebugLog?.(`Page ${pageNum}: Could not resolve font name for ID: ${fontId}`);
           }
         }
 
@@ -167,6 +200,7 @@ export class PDFService {
             fontName: fontNameMap.get(item.fontName) ?? item.fontName ?? '',
             hasEOL: item.hasEOL ?? false,
           }))
+        this.onDebugLog?.(`Page ${pageNum}: Extracted ${items.length} text items.`);
 
         results.push({
           pageNumber: pageNum,
@@ -175,7 +209,9 @@ export class PDFService {
           pageWidth: viewport.width,
           images,
         })
+        this.onDebugLog?.(`Finished rich data processing for page ${pageNum}.`);
       }
+      this.onDebugLog?.(`Finished rich data extraction for pages ${startPage}-${endPage}.`);
       return results
     } finally {
       doc.destroy()
@@ -199,14 +235,14 @@ export class PDFService {
       const meaningful = regions.filter(r =>
         this.isMeaningfulImageRegion(r, viewport.width, viewport.height)
       )
-      // Dedupe overlapping regions
       const deduped = this.dedupeImageRegions(meaningful)
-      // Crop each region from the rendered canvas
+      this.onDebugLog?.(`  - Found ${regions.length} raw image regions, ${meaningful.length} meaningful, ${deduped.length} deduped.`);
       return deduped.map(region => ({
         ...region,
         imageSrc: this.cropImageRegion(renderedCanvas, region, renderScale, viewport.width),
       })).filter(r => r.imageSrc)
-    } catch {
+    } catch (e) {
+      this.onDebugLog?.(`  - Error in extractPageImages: ${e instanceof Error ? e.message : String(e)}`);
       return []
     }
   }
@@ -359,7 +395,8 @@ export class PDFService {
       const pageRef = resolved[0]
       const pageIndex = await doc.getPageIndex(pageRef)
       return pageIndex + 1 // PDF.js pages are 0-indexed, we use 1-indexed
-    } catch {
+    } catch (e) {
+      this.onDebugLog?.(`Error resolving destination page: ${e instanceof Error ? e.message : String(e)}`);
       return null
     }
   }
