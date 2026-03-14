@@ -54,6 +54,12 @@ export class BitByBitDB extends Dexie {
         }),
       ])
     })
+    this.version(5).stores({
+      books: 'id, title, createdAt, lastReadAt, updatedAt, remoteId, jobId',
+      chapters: 'id, bookId, order, updatedAt',
+      sections: 'id, chapterId, bookId, order, isRead, updatedAt',
+      vocabulary: 'id, word, targetLanguage, bookTitle, createdAt, reviewCount, updatedAt, bookId',
+    })
   }
 }
 

@@ -142,7 +142,7 @@ class SyncService {
     title: string,
     author?: string,
     totalPages?: number,
-  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string } | null> {
+  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string; jobId?: string } | null> {
     const token = await this.getToken()
     if (!token) return null
 
@@ -167,6 +167,7 @@ class SyncService {
         remoteId: data.book.id,
         catalogId: data.catalogEntry.id,
         coverUrl: data.catalogEntry.coverUrl || undefined,
+        jobId: data.jobId || undefined,
       }
     } catch (err) {
       console.error('[sync] upload error:', err)

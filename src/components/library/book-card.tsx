@@ -1,27 +1,96 @@
 'use client'
 
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import type { BookWithProgress } from '@/hooks/use-books'
+import { useProcessingStatus } from '@/hooks/use-processing-status'
+import { ProcessingLogDialog } from './processing-log-dialog'
 
 interface BookCardProps {
   book: BookWithProgress
   editMode?: boolean
   selected?: boolean
   onToggleSelect?: (id: string, event?: React.MouseEvent) => void
+  onProcessingComplete?: () => void
 }
 
-export function BookCard({ book, editMode, selected, onToggleSelect }: BookCardProps) {
-  const content = (
+const STAGE_LABELS: Record<string, string> = {
+  download: 'Downloading...',
+  metadata: 'Reading metadata...',
+  outline: 'Parsing TOC...',
+  structure: 'Building structure...',
+  extract_text: 'Extracting text...',
+  ocr: 'Running OCR...',
+  cover: 'Generating cover...',
+  finalize: 'Finalizing...',
+  complete: 'Complete!',
+}
+
+export function BookCard({ book, editMode, selected, onToggleSelect, onProcessingComplete }: BookCardProps) {
+  const isProcessing = book.processingStatus === 'processing'
+  const isFailed = book.processingStatus === 'error'
+  const processing = useProcessingStatus(isProcessing ? book.jobId : undefined)
+  const [showLog, setShowLog] = useState(false)
+  const completedRef = useRef(false)
+
+  // Trigger refresh when processing completes
+  useEffect(() => {
+    if (processing?.status === 'completed' && !completedRef.current) {
+      completedRef.current = true
+      onProcessingComplete?.()
+    }
+  }, [processing?.status, onProcessingComplete])
+
+  const stageLabel = processing?.stage ? (STAGE_LABELS[processing.stage] || 'Processing...') : 'Processing...'
+
+  const coverContent = (
+    <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden relative">
+      {book.coverImage ? (
+        <img
+          src={book.coverImage}
+          alt={book.title}
+          className={`object-cover w-full h-full transition-all ${isProcessing || isFailed ? 'brightness-[0.3]' : ''}`}
+        />
+      ) : (
+        <span className={`text-4xl text-muted-foreground ${isProcessing || isFailed ? 'opacity-30' : ''}`}>📖</span>
+      )}
+
+      {isProcessing && processing && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
+          <span className="text-2xl font-bold tabular-nums">{processing.progress}%</span>
+          <span className="text-xs text-center mt-1 opacity-80">{stageLabel}</span>
+          <Progress value={processing.progress} className="h-1 mt-2 w-3/4" />
+        </div>
+      )}
+
+      {isProcessing && !processing && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
+          <span className="text-sm opacity-80">Starting...</span>
+        </div>
+      )}
+
+      {isFailed && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
+          <span className="text-2xl">&#x26A0;</span>
+          <span className="text-xs mt-1">Processing failed</span>
+        </div>
+      )}
+    </div>
+  )
+
+  const cardBody = (
     <Card
-      className={`transition-all cursor-pointer h-full ${
+      className={`transition-all h-full ${
         editMode
           ? selected
-            ? 'ring-2 ring-primary shadow-lg scale-[0.97]'
-            : 'hover:ring-1 hover:ring-muted-foreground/30'
-          : 'hover:shadow-lg'
+            ? 'ring-2 ring-primary shadow-lg scale-[0.97] cursor-pointer'
+            : 'hover:ring-1 hover:ring-muted-foreground/30 cursor-pointer'
+          : isProcessing || isFailed
+            ? 'opacity-90'
+            : 'hover:shadow-lg cursor-pointer'
       }`}
       onClick={editMode ? (e: React.MouseEvent) => {
         e.preventDefault()
@@ -42,38 +111,51 @@ export function BookCard({ book, editMode, selected, onToggleSelect }: BookCardP
             )}
           </div>
         )}
-        <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden">
-          {book.coverImage ? (
-            <img src={book.coverImage} alt={book.title} className="object-cover w-full h-full" />
-          ) : (
-            <span className="text-4xl text-muted-foreground">📖</span>
-          )}
-        </div>
+
+        {coverContent}
+
         <div className="space-y-1">
           <h3 className="font-semibold text-sm line-clamp-2">{book.title}</h3>
           <p className="text-xs text-muted-foreground">{book.author}</p>
         </div>
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{book.progress.percentage}%</span>
-            <span>{book.progress.read}/{book.progress.total} sections</span>
+
+        {!isProcessing && !isFailed && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>{book.progress.percentage}%</span>
+              <span>{book.progress.read}/{book.progress.total} sections</span>
+            </div>
+            <Progress value={book.progress.percentage} className="h-2" />
           </div>
-          <Progress value={book.progress.percentage} className="h-2" />
-        </div>
-        {book.processingStatus === 'processing' && (
-          <Badge variant="secondary" className="text-xs w-fit">Processing...</Badge>
+        )}
+
+        {(isProcessing || isFailed) && book.jobId && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLog(true) }}
+          >
+            Check Progress
+          </Button>
         )}
       </CardContent>
     </Card>
   )
 
-  if (editMode) {
-    return content
-  }
-
   return (
-    <Link href={`/book/${book.id}`}>
-      {content}
-    </Link>
+    <>
+      {editMode || isProcessing || isFailed ? cardBody : (
+        <Link href={`/book/${book.id}`}>{cardBody}</Link>
+      )}
+      {showLog && book.jobId && (
+        <ProcessingLogDialog
+          jobId={book.jobId}
+          bookTitle={book.title}
+          open={showLog}
+          onClose={() => setShowLog(false)}
+        />
+      )}
+    </>
   )
 }

@@ -18,6 +18,7 @@ export interface Book {
   updatedAt: number
   remoteId?: string
   catalogId?: string
+  jobId?: string
 }
 
 export interface Chapter {

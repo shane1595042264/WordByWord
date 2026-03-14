@@ -8,9 +8,10 @@ interface LibraryGridProps {
   editMode?: boolean
   selectedIds?: Set<string>
   onToggleSelect?: (id: string, event?: React.MouseEvent) => void
+  onProcessingComplete?: () => void
 }
 
-export function LibraryGrid({ books, editMode, selectedIds, onToggleSelect }: LibraryGridProps) {
+export function LibraryGrid({ books, editMode, selectedIds, onToggleSelect, onProcessingComplete }: LibraryGridProps) {
   if (books.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -30,6 +31,7 @@ export function LibraryGrid({ books, editMode, selectedIds, onToggleSelect }: Li
           editMode={editMode}
           selected={selectedIds?.has(book.id)}
           onToggleSelect={onToggleSelect}
+          onProcessingComplete={onProcessingComplete}
         />
       ))}
     </div>

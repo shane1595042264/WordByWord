@@ -120,6 +120,12 @@ export default function HomePage() {
           editMode={editMode}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
+          onProcessingComplete={async () => {
+            // Sync from cloud to get processed chapters/sections
+            const { syncService } = await import('@/lib/services/sync-service')
+            await syncService.sync()
+            refresh()
+          }}
         />
       )}
 
