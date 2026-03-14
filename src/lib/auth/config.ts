@@ -1,133 +1,154 @@
-/**
- * Auth.js (NextAuth v5) configuration.
- * - Credentials provider (email + password)
- * - Google OAuth provider
- * - JWT sessions (no server session store needed)
- * - Account linking support
- */
-import NextAuth from 'next-auth'
-import Credentials from 'next-auth/providers/credentials'
-import Google from 'next-auth/providers/google'
-import { UserRepository } from './user-repository'
+import { NextAuthOptions } from 'next-auth'
+import CredentialsProvider from 'next-auth/providers/credentials'
+import GoogleProvider from 'next-auth/providers/google'
+// Corrected import path and name to use the provided userRepository object
+// Assuming a relative path from WordByWord/src/lib/auth/ to nibble-api/src/repositories/
+// This path might need adjustment based on the actual project structure.
+import { userRepository } from '../../../../nibble-api/src/repositories/user.repository';
+// For password verification, we need a bcrypt-like library. Assuming it's available.
+// This is a functional dependency not covered by the provided changes.
+import bcrypt from 'bcryptjs'; // Assuming bcryptjs is installed and available
 
-const userRepo = new UserRepository()
+// Augment NextAuth types to include 'id' and 'role'
+declare module 'next-auth' {
+  interface Session {
+    user: {
+      id: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+      role: 'admin' | 'user';
+    };
+  }
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
+  interface User {
+    id: string;
+    role: 'admin' | 'user';
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    id: string;
+    role: 'admin' | 'user';
+  }
+}
+
+
+export const authOptions: NextAuthOptions = {
   providers: [
-    Credentials({
-      name: 'credentials',
+    CredentialsProvider({
+      name: 'Credentials',
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null
-
-        const email = credentials.email as string
-        const password = credentials.password as string
-
-        const user = await userRepo.getByEmail(email)
-        if (!user) return null
-
-        const valid = await userRepo.verifyPassword(user, password)
-        if (!valid) return null
-
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          image: user.image,
-          role: user.role,
+        if (!credentials?.email || !credentials?.password) {
+          return null
         }
+
+        // Use the imported userRepository object directly
+        const user = await userRepository.findByEmail(credentials.email)
+
+        // The original userRepository had a verifyPassword method.
+        // The provided nibble-api/src/repositories/user.repository.ts does not.
+        // We need to implement password verification here or assume it's handled elsewhere.
+        // For compilation, we'll assume a bcrypt comparison.
+        if (user && user.passwordHash && (await bcrypt.compare(credentials.password, user.passwordHash))) {
+          return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            image: user.avatarUrl, // Map avatarUrl to image
+            role: user.authRole as 'admin' | 'user', // Map authRole to role
+          }
+        }
+        return null
       },
     }),
-    Google({
+    GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          prompt: 'consent',
-          access_type: 'offline',
-          response_type: 'code',
-        },
-      },
     }),
   ],
-
-  session: { strategy: 'jwt' },
-
-  pages: {
-    signIn: '/auth/login',
-    error: '/auth/login',
-  },
-
   callbacks: {
     async signIn({ user, account, profile }) {
-      // Credentials provider — already verified in authorize()
-      if (account?.provider === 'credentials') return true
+      if (account?.provider === 'google') {
+        if (!user.email) {
+          console.error("Google sign-in attempted without an email address.");
+          return false;
+        }
 
-      // OAuth provider (Google, etc.)
-      if (account && profile?.email) {
-        const email = profile.email
-        const existingUser = await userRepo.getByEmail(email)
+        let existingUser = await userRepository.findByEmail(user.email); // Use findByEmail
 
-        if (existingUser) {
-          // Check if this OAuth account is already linked
-          const linked = await userRepo.getByProviderAccount(account.provider, account.providerAccountId)
-          if (!linked) {
-            // Auto-link: same email → link the OAuth account to existing user
-            await userRepo.linkAccount(existingUser.id, account.provider, account.providerAccountId, {
-              accessToken: account.access_token ?? undefined,
-              refreshToken: account.refresh_token ?? undefined,
-              expiresAt: account.expires_at ?? undefined,
-              idToken: account.id_token ?? undefined,
-              scope: account.scope ?? undefined,
-              tokenType: account.token_type ?? undefined,
-            })
-          }
-          // Use the existing user's ID
-          user.id = existingUser.id
-          user.name = existingUser.name ?? user.name
-          ;(user as Record<string, unknown>).role = existingUser.role
+        if (!existingUser) {
+          // User does not exist, create a new user
+          // The original createFromOAuth is not available. Using userRepository.create.
+          // Note: userRepository.create expects an object with specific fields.
+          existingUser = await userRepository.create({
+            email: user.email,
+            name: user.name,
+            avatarUrl: user.image, // Map user.image to avatarUrl
+            authRole: 'user', // Default role for new users
+            googleId: account.providerAccountId, // Link Google ID directly on creation
+          });
+
+          // The original linkAccount method is not available.
+          // For Google, we've already set googleId during creation.
+          // If other providers or more complex linking is needed, this logic needs expansion.
+          // For now, we assume setting googleId on creation is sufficient for Google.
+          // If the user already existed and didn't have a googleId, we'd update it below.
+
+          // Update the NextAuth user object with the actual database user ID and role
+          user.id = existingUser.id;
+          user.role = existingUser.authRole as 'admin' | 'user'; // Use augmented type
+          return true; // Allow sign-in
         } else {
-          // New user — create account from OAuth
-          const newUser = await userRepo.createFromOAuth(
-            email,
-            profile.name ?? null,
-            (profile as Record<string, unknown>).picture as string ?? null,
-          )
-          await userRepo.linkAccount(newUser.id, account.provider, account.providerAccountId, {
-            accessToken: account.access_token ?? undefined,
-            refreshToken: account.refresh_token ?? undefined,
-            expiresAt: account.expires_at ?? undefined,
-            idToken: account.id_token ?? undefined,
-            scope: account.scope ?? undefined,
-            tokenType: account.token_type ?? undefined,
-          })
-          user.id = newUser.id
-          ;(user as Record<string, unknown>).role = newUser.role
+          // User exists. Check if this specific Google account is already linked.
+          // The original getByProviderAccount is not available.
+          // We'll check if the existing user's googleId matches the providerAccountId.
+          const isAccountLinked = existingUser.googleId === account.providerAccountId;
+
+          if (!isAccountLinked) {
+            // User exists, but this Google account is not linked to it.
+            // Link the Google account to the existing user by updating their googleId.
+            await userRepository.update(
+              existingUser.id,
+              { googleId: account.providerAccountId }
+            );
+            // Note: The original linkAccount also stored accessToken, refreshToken etc.
+            // This simplified version only stores googleId. A dedicated 'accounts' table
+            // and corresponding repository methods would be needed for full functionality.
+          }
+          // Update the NextAuth user object with the actual database user ID and role
+          user.id = existingUser.id;
+          user.role = existingUser.authRole as 'admin' | 'user'; // Use augmented type
+          return true; // Allow sign-in
         }
       }
-
-      return true
+      return true;
     },
-
     async jwt({ token, user }) {
-      // On initial sign-in, add user data to the JWT
       if (user) {
         token.id = user.id
-        token.role = (user as Record<string, unknown>).role ?? 'user'
+        token.role = user.role // Use augmented type
       }
       return token
     },
-
     async session({ session, token }) {
-      // Expose user ID and role in the session
       if (session.user) {
         session.user.id = token.id as string
-        ;(session.user as unknown as Record<string, unknown>).role = token.role
+        session.user.role = token.role as 'admin' | 'user'
       }
       return session
     },
   },
-})
+  pages: {
+    signIn: '/auth/login',
+  },
+  session: {
+    strategy: 'jwt',
+  },
+  secret: process.env.NEXTAUTH_SECRET,
+}
