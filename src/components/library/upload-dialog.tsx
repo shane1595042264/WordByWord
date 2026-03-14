@@ -1,140 +1,200 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
+import { Switch } from '@/components/ui/switch'
+import { BookProcessingService } from '@/lib/services/book-processing-service'
+import { useAuth } from '@/hooks/use-auth'
+import { useRouter } from 'next/navigation'
+import { DebugLogDialog } from './debug-log-dialog' // Import the new component
 
 interface UploadDialogProps {
-  onBookImported: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onUploadSuccess: (bookId: string) => void
 }
 
-export function UploadDialog({ onBookImported }: UploadDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [file, setFile] = useState<File | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [hasOutline, setHasOutline] = useState<boolean | null>(null)
-  const [step, setStep] = useState<'upload' | 'structure' | 'importing'>('upload')
-  const [progressMessage, setProgressMessage] = useState('')
-  const [progressPercent, setProgressPercent] = useState(0)
+export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDialogProps) {
+  const { user } = useAuth()
+  const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [progress, setProgress] = useState(0)
+  const [message, setMessage] = useState('Waiting for file...')
+  const [error, setError] = useState<string | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [useNativeTOC, setUseNativeTOC] = useState(true)
+  const [useNibProcess, setUseNibProcess] = useState(true) // New state for NIB processing
+  const [showDebugLog, setShowDebugLog] = useState(false); // State for debug log dialog
+  const [debugLogs, setDebugLogs] = useState<string[]>([]); // State for debug log messages
 
-  const handleImport = useCallback(async (opts: { useNativeTOC?: boolean; useNibProcess?: boolean }) => {
-    if (!file) return
-    setLoading(true)
-    setStep('importing')
-    setProgressPercent(0)
-    setProgressMessage('Starting import...')
+  const bookProcessingService = useRef<BookProcessingService | null>(null)
 
-    const { SettingsService } = await import('@/lib/services/settings-service')
-    const { BookProcessingService } = await import('@/lib/services/book-processing-service')
-    const settings = new SettingsService()
-    const apiKey = settings.getApiKey()
-    const service = new BookProcessingService(apiKey ?? undefined)
-    await service.importBook(file, {
-      useNativeTOC: opts.useNativeTOC ?? false,
-      useNibProcess: opts.useNibProcess ?? false,
-      onProgress: (message, percent) => {
-        setProgressMessage(message)
-        setProgressPercent(percent)
-      },
-    })
-    setLoading(false)
-    setOpen(false)
-    setStep('upload')
-    setFile(null)
-    setProgressPercent(0)
-    setProgressMessage('')
-    onBookImported()
-  }, [file, onBookImported])
-
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFile(f)
-    const { PDFService } = await import('@/lib/services/pdf-service')
-    const pdfService = new PDFService()
-    const outline = await pdfService.extractOutline(f)
-    const hasTOC = outline !== null && outline.length > 0
-    setHasOutline(hasTOC)
-
-    if (hasTOC) {
-      // Show choice: use native TOC or page-by-page
-      setStep('structure')
+  useEffect(() => {
+    if (user?.apiKey) {
+      // Initialize BookProcessingService with API key and debug logger
+      bookProcessingService.current = new BookProcessingService(user.apiKey, (logMessage) => {
+        setDebugLogs(prev => [...prev, logMessage]);
+      });
     } else {
-      // No TOC — import directly with page-by-page text extraction (no AI needed)
-      setStep('structure')
+      // Initialize without API key, or if API key is removed
+      bookProcessingService.current = new BookProcessingService(undefined, (logMessage) => {
+        setDebugLogs(prev => [...prev, logMessage]);
+      });
     }
-  }, [handleImport])
+  }, [user?.apiKey]);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0]
+      if (file.type !== 'application/pdf') {
+        setError('Please upload a PDF file.')
+        setSelectedFile(null)
+        return
+      }
+      setSelectedFile(file)
+      setError(null)
+      setMessage(`Selected: ${file.name}`)
+      setProgress(0)
+      setDebugLogs([]); // Clear logs on new file selection
+    }
+  }
+
+  const handleUpload = useCallback(async () => {
+    if (!selectedFile) {
+      setError('No file selected.')
+      return
+    }
+
+    if (!bookProcessingService.current) {
+      setError('Book processing service not initialized. Please refresh or check API key.')
+      return
+    }
+
+    setIsProcessing(true)
+    setError(null)
+    setDebugLogs([]); // Clear logs before starting new process
+    setShowDebugLog(true); // Automatically open debug log when processing starts
+
+    try {
+      const bookId = await bookProcessingService.current.importBook(selectedFile, {
+        useNativeTOC,
+        useNibProcess,
+        onProgress: (msg, percent) => {
+          setMessage(msg)
+          setProgress(percent)
+          setDebugLogs(prev => [...prev, `[Progress] ${msg} (${percent}%)`]); // Add progress to debug log
+        },
+        onDebugLog: (logMessage) => { // Pass the debug log callback
+          setDebugLogs(prev => [...prev, logMessage]);
+        }
+      })
+      onUploadSuccess(bookId)
+      setMessage('Upload and processing complete!')
+      setProgress(100)
+      onOpenChange(false) // Close dialog on success
+      router.push(`/book/${bookId}`) // Navigate to the new book
+    } catch (e) {
+      console.error('Error during book import:', e)
+      setError(`Failed to process book: ${e instanceof Error ? e.message : String(e)}`)
+      setMessage('Processing failed.')
+      setProgress(0)
+      setDebugLogs(prev => [...prev, `[ERROR] ${e instanceof Error ? e.message : String(e)}`]); // Add error to debug log
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [selectedFile, useNativeTOC, useNibProcess, onUploadSuccess, onOpenChange, router])
+
+  const handleClose = useCallback(() => {
+    setSelectedFile(null)
+    setProgress(0)
+    setMessage('Waiting for file...')
+    setError(null)
+    setIsProcessing(false)
+    setDebugLogs([]); // Clear logs when dialog is closed
+    setShowDebugLog(false); // Close debug log dialog
+    onOpenChange(false)
+  }, [onOpenChange])
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!loading) { setOpen(v); if (!v) { setStep('upload'); setFile(null) } } }}>
-      <DialogTrigger asChild>
-        <Button>Upload PDF</Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Import a Book</DialogTitle>
-        </DialogHeader>
-        {step === 'upload' && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="pdf-file">Select PDF file</Label>
-              <Input id="pdf-file" type="file" accept=".pdf" onChange={handleFileChange} />
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Upload PDF Book</DialogTitle>
+            <DialogDescription>
+              Upload a PDF file to start reading. We'll process it to extract text, chapters, and sections.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid w-full max-w-sm items-center gap-1.5">
+              <Label htmlFor="pdf-file">PDF File</Label>
+              <Input
+                id="pdf-file"
+                type="file"
+                accept=".pdf"
+                onChange={handleFileChange}
+                ref={fileInputRef}
+                disabled={isProcessing}
+              />
+              {selectedFile && <p className="text-sm text-muted-foreground">Selected: {selectedFile.name}</p>}
+              {error && <p className="text-sm text-destructive">{error}</p>}
             </div>
-          </div>
-        )}
-        {step === 'structure' && (
-          <div className="space-y-4">
-            {hasOutline ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  We detected a table of contents in this PDF. Choose how to process it:
-                </p>
-                <div className="flex flex-col gap-2">
-                  <Button onClick={() => handleImport({ useNibProcess: true })} disabled={loading}>
-                    NIB Process (Recommended)
-                  </Button>
-                  <p className="text-xs text-muted-foreground ml-1">
-                    Uses TOC structure + rich text extraction with header/footer removal. Fast, no AI needed.
-                  </p>
-                  <Button variant="outline" onClick={() => handleImport({ useNativeTOC: true })} disabled={loading}>
-                    Use Native TOC
-                  </Button>
-                  <Button variant="outline" onClick={() => handleImport({})} disabled={loading}>
-                    Page-by-Page (with AI OCR for scanned pages)
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  No table of contents detected. Choose how to process:
-                </p>
-                <div className="flex flex-col gap-2">
-                  <Button onClick={() => handleImport({ useNibProcess: true })} disabled={loading}>
-                    NIB Process (Recommended)
-                  </Button>
-                  <p className="text-xs text-muted-foreground ml-1">
-                    Rich text extraction with header/footer removal. Fast, no AI needed.
-                  </p>
-                  <Button variant="outline" onClick={() => handleImport({})} disabled={loading}>
-                    Page-by-Page (with AI OCR for scanned pages)
-                  </Button>
-                </div>
-              </>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="use-native-toc"
+                checked={useNativeTOC}
+                onCheckedChange={setUseNativeTOC}
+                disabled={isProcessing}
+              />
+              <Label htmlFor="use-native-toc">Use native PDF Table of Contents (if available)</Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="use-nib-process"
+                checked={useNibProcess}
+                onCheckedChange={setUseNibProcess}
+                disabled={isProcessing}
+              />
+              <Label htmlFor="use-nib-process">Use NIB (Neural Information Book) processing for content extraction</Label>
+            </div>
+
+            {isProcessing && (
+              <div className="space-y-2 mt-4">
+                <p className="text-sm text-muted-foreground">{message}</p>
+                <Progress value={progress} className="w-full" />
+              </div>
             )}
           </div>
-        )}
-        {step === 'importing' && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">{progressMessage}</p>
-            <Progress value={progressPercent} className="h-2" />
-            <p className="text-xs text-muted-foreground text-right">{progressPercent}%</p>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowDebugLog(true)} // Button to open debug log
+              disabled={!isProcessing && debugLogs.length === 0} // Disable if not processing and no logs
+            >
+              Show Debug Log
+            </Button>
+            <Button variant="outline" onClick={handleClose} disabled={isProcessing}>
+              Cancel
+            </Button>
+            <Button type="submit" onClick={handleUpload} disabled={!selectedFile || isProcessing}>
+              {isProcessing ? 'Processing...' : 'Upload & Process'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <DebugLogDialog
+        open={showDebugLog}
+        onClose={() => setShowDebugLog(false)}
+        logs={debugLogs}
+      />
+    </>
   )
 }
