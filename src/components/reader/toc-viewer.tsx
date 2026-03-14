@@ -13,13 +13,12 @@ interface TocChapterGroup {
 
 interface TocViewerProps {
   bookId: string
-  extractedText: string
   sectionTitle: string
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function TocViewer({ bookId, extractedText, sectionTitle }: TocViewerProps) {
+export function TocViewer({ bookId, sectionTitle }: TocViewerProps) {
   const [groups, setGroups] = useState<TocChapterGroup[]>([])
   const [loading, setLoading] = useState(true)
 
