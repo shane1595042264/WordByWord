@@ -1,6 +1,6 @@
 import * as pdfjs from 'pdfjs-dist'
 import type { RawTextItem, RawPageData, RawImageRegion, NibDocumentData } from '@/lib/nib'
-import { NibParser } from '@/lib/nib/parser'
+import { NibParser } => from '@/lib/nib/parser'
 import { NibTextParser } from '@/lib/nib/text-parser'
 
 if (typeof window !== 'undefined') {
@@ -66,6 +66,10 @@ export class PDFService {
   }
 
   async renderPageToImage(blob: Blob, pageNumber: number, scale: number = 2): Promise<string> {
+    if (typeof window === 'undefined') {
+      this.onDebugLog?.("PDFService: Skipping renderPageToImage on server.");
+      return '';
+    }
     this.onDebugLog?.(`PDFService: Rendering page ${pageNumber} to image (scale: ${scale})...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
@@ -166,6 +170,10 @@ export class PDFService {
    * Extract rich text data for a range of pages at once (more efficient).
    */
   async extractRichPageRange(blob: Blob, startPage: number, endPage: number): Promise<RawPageData[]> {
+    if (typeof window === 'undefined') {
+      this.onDebugLog?.("PDFService: Skipping extractRichPageRange on server.");
+      return [];
+    }
     this.onDebugLog?.(`PDFService: Starting rich data extraction for pages ${startPage}-${endPage}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
