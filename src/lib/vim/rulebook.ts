@@ -91,6 +91,26 @@ export const RULEBOOK: VimRule[] = [
     description: 'Scroll up half a page',
   },
   {
+    id: 'normal:ctrl-e',
+    label: 'Scroll down (Ctrl+E)',
+    modes: ['normal', 'sentence', 'visual'],
+    key: 'e',
+    ctrl: true,
+    action: { type: 'scroll', direction: 1, magnitude: 1 }, // Scroll by full line height
+    acceptsCount: true,
+    description: 'Scroll down [count] line(s) (Ctrl+E)',
+  },
+  {
+    id: 'normal:ctrl-y',
+    label: 'Scroll up (Ctrl+Y)',
+    modes: ['normal', 'sentence', 'visual'],
+    key: 'y',
+    ctrl: true,
+    action: { type: 'scroll', direction: -1, magnitude: 1 }, // Scroll by full line height
+    acceptsCount: true,
+    description: 'Scroll up [count] line(s) (Ctrl+Y)',
+  },
+  {
     id: 'normal:gg',
     label: 'Go to top',
     modes: ['normal', 'sentence', 'visual'],
@@ -353,18 +373,25 @@ export function getEffectiveRulebook(overrides: Record<string, string>): VimRule
     const customKey = overrides[rule.id]
     if (!customKey) return rule
     const isShift = customKey.startsWith('Shift+')
-    const actualKey = isShift ? customKey.slice(6) : customKey
-    return { ...rule, key: actualKey, shift: isShift || undefined }
+    const isCtrl = customKey.startsWith('Ctrl+')
+    let actualKey = customKey
+    if (isShift) actualKey = actualKey.slice(6)
+    if (isCtrl) actualKey = actualKey.slice(5)
+
+    return { ...rule, key: actualKey, shift: isShift || undefined, ctrl: isCtrl || undefined }
   })
 }
 
 /**
  * Find a matching rule for a keystroke in the given mode.
  */
-export function findRule(mode: string, key: string, shiftKey: boolean, rulebook: VimRule[] = RULEBOOK): VimRule | undefined {
+export function findRule(mode: string, key: string, shiftKey: boolean, ctrlKey: boolean, rulebook: VimRule[] = RULEBOOK): VimRule | undefined {
   return rulebook.find(r => {
     if (!r.modes.includes(mode as any)) return false
-    if (r.shift) return r.key === key && shiftKey
-    return r.key === key && !shiftKey
+    // Check for shift and ctrl keys
+    const shiftMatch = (r.shift === undefined && !shiftKey) || (r.shift === true && shiftKey)
+    const ctrlMatch = (r.ctrl === undefined && !ctrlKey) || (r.ctrl === true && ctrlKey)
+
+    return r.key === key && shiftMatch && ctrlMatch
   })
 }
