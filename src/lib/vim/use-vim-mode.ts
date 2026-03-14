@@ -87,7 +87,13 @@ export function useVimMode({
       return
     }
 
-    if (e.ctrlKey || e.metaKey || e.altKey) return
+    // Allow Ctrl+E and Ctrl+Y to pass through for Vim scrolling, but block other Ctrl/Meta/Alt combinations
+    // The actual scrolling action will be handled by the rulebook lookup.
+    if (e.ctrlKey && (e.key === 'e' || e.key === 'y')) {
+      // Do nothing here, let the rulebook handle it.
+    } else if (e.ctrlKey || e.metaKey || e.altKey) {
+      return
+    }
 
     const key = e.key
 
@@ -99,7 +105,7 @@ export function useVimMode({
     }
 
     // gg detection (double-tap g) — works in all modes
-    if (key === 'g' && !e.shiftKey) {
+    if (key === 'g' && !e.shiftKey && !e.ctrlKey) {
       const now = Date.now()
       if (now - lastGTime.current < GG_TIMEOUT) {
         e.preventDefault()
@@ -121,7 +127,7 @@ export function useVimMode({
     }
 
     // Find matching rule
-    const rule = findRule(mode, key, e.shiftKey, rulebook)
+    const rule = findRule(mode, key, e.shiftKey, e.ctrlKey, rulebook)
     if (!rule) {
       setCountBuffer('')
       return
