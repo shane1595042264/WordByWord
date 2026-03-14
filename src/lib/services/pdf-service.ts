@@ -25,7 +25,7 @@ export class PDFService {
   }
 
   async extractMetadata(blob: Blob): Promise<PDFMetadata> {
-    this.onDebugLog?.("Starting PDF metadata extraction...");
+    this.onDebugLog?.("PDFService: Starting metadata extraction...");
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
@@ -36,27 +36,27 @@ export class PDFService {
         author: info?.Author || 'Unknown',
         totalPages: doc.numPages,
       };
-      this.onDebugLog?.(`Extracted metadata: Title="${result.title}", Author="${result.author}", TotalPages=${result.totalPages}`);
+      this.onDebugLog?.(`PDFService: Extracted metadata: Title="${result.title}", Author="${result.author}", TotalPages=${result.totalPages}`);
       return result;
     } finally {
       doc.destroy()
-      this.onDebugLog?.("Finished PDF metadata extraction.");
+      this.onDebugLog?.("PDFService: Finished metadata extraction.");
     }
   }
 
   async extractOutline(blob: Blob): Promise<PDFOutlineItem[] | null> {
-    this.onDebugLog?.("Starting PDF outline extraction...");
+    this.onDebugLog?.("PDFService: Starting outline extraction...");
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const outline = await doc.getOutline()
       if (!outline || outline.length === 0) {
-        this.onDebugLog?.("No PDF outline found.");
+        this.onDebugLog?.("PDFService: No outline found.");
         return null
       }
-      this.onDebugLog?.(`Found ${outline.length} top-level outline items.`);
+      this.onDebugLog?.(`PDFService: Found ${outline.length} top-level outline items.`);
       const items = await this.mapOutlineItems(outline, doc)
-      this.onDebugLog?.("Finished PDF outline extraction.");
+      this.onDebugLog?.("PDFService: Finished outline extraction.");
       return items
     } finally {
       doc.destroy()
@@ -64,7 +64,7 @@ export class PDFService {
   }
 
   async renderPageToImage(blob: Blob, pageNumber: number, scale: number = 2): Promise<string> {
-    this.onDebugLog?.(`Rendering page ${pageNumber} to image (scale: ${scale})...`);
+    this.onDebugLog?.(`PDFService: Rendering page ${pageNumber} to image (scale: ${scale})...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
@@ -76,7 +76,7 @@ export class PDFService {
       const ctx = canvas.getContext('2d')!
       await page.render({ canvasContext: ctx, viewport, canvas } as unknown as import('pdfjs-dist/types/src/display/api').RenderParameters).promise
       const result = canvas.toDataURL('image/png');
-      this.onDebugLog?.(`Successfully rendered page ${pageNumber} to image.`);
+      this.onDebugLog?.(`PDFService: Successfully rendered page ${pageNumber} to image.`);
       return result;
     } finally {
       doc.destroy()
@@ -84,14 +84,14 @@ export class PDFService {
   }
 
   async extractPageText(blob: Blob, pageNumber: number): Promise<string> {
-    this.onDebugLog?.(`Extracting raw text from page ${pageNumber}...`);
+    this.onDebugLog?.(`PDFService: Extracting raw text from page ${pageNumber}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const page = await doc.getPage(pageNumber)
       const textContent = await page.getTextContent()
       const text = textContent.items.map((item: any) => item.str).join(' ');
-      this.onDebugLog?.(`Extracted ${textContent.items.length} text items from page ${pageNumber}.`);
+      this.onDebugLog?.(`PDFService: Extracted ${textContent.items.length} text items from page ${pageNumber}.`);
       return text;
     } finally {
       doc.destroy()
@@ -103,7 +103,7 @@ export class PDFService {
    * This powers the .nib parser for header/footnote detection.
    */
   async extractRichPageData(blob: Blob, pageNumber: number): Promise<RawPageData> {
-    this.onDebugLog?.(`Extracting rich data from page ${pageNumber}...`);
+    this.onDebugLog?.(`PDFService: Extracting rich data from page ${pageNumber}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
@@ -121,7 +121,7 @@ export class PDFService {
           fontName: item.fontName ?? '',
           hasEOL: item.hasEOL ?? false,
         }))
-      this.onDebugLog?.(`Page ${pageNumber}: Extracted ${items.length} text items.`);
+      this.onDebugLog?.(`PDFService: Page ${pageNumber}: Extracted ${items.length} text items.`);
 
       const result = {
         pageNumber,
@@ -129,7 +129,7 @@ export class PDFService {
         pageHeight: viewport.height,
         pageWidth: viewport.width,
       };
-      this.onDebugLog?.(`Finished rich data extraction for page ${pageNumber}.`);
+      this.onDebugLog?.(`PDFService: Finished rich data extraction for page ${pageNumber}.`);
       return result;
     } finally {
       doc.destroy()
@@ -140,13 +140,13 @@ export class PDFService {
    * Extract rich text data for a range of pages at once (more efficient).
    */
   async extractRichPageRange(blob: Blob, startPage: number, endPage: number): Promise<RawPageData[]> {
-    this.onDebugLog?.(`Starting rich data extraction for pages ${startPage}-${endPage}...`);
+    this.onDebugLog?.(`PDFService: Starting rich data extraction for pages ${startPage}-${endPage}...`);
     const arrayBuffer = await blob.arrayBuffer()
     const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
     try {
       const results: RawPageData[] = []
       for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
-        this.onDebugLog?.(`Processing page ${pageNum} for rich data...`);
+        this.onDebugLog?.(`PDFService: Processing page ${pageNum} for rich data...`);
         const page = await doc.getPage(pageNum)
         const viewport = page.getViewport({ scale: 1 })
         const textContent = await page.getTextContent()
@@ -166,9 +166,9 @@ export class PDFService {
         let images: RawImageRegion[] = [];
         try {
           images = await this.extractPageImages(page, viewport, offscreen, imageRenderScale);
-          this.onDebugLog?.(`Page ${pageNum}: Detected ${images.length} image regions.`);
+          this.onDebugLog?.(`PDFService: Page ${pageNum}: Detected ${images.length} image regions.`);
         } catch (e) {
-          this.onDebugLog?.(`Page ${pageNum}: Error extracting images: ${e instanceof Error ? e.message : String(e)}`);
+          this.onDebugLog?.(`PDFService: Page ${pageNum}: Error extracting images: ${e instanceof Error ? e.message : String(e)}`);
         }
 
 
@@ -186,7 +186,7 @@ export class PDFService {
             }
           } catch {
             // Font not resolved — fall back to opaque ID
-            this.onDebugLog?.(`Page ${pageNum}: Could not resolve font name for ID: ${fontId}`);
+            this.onDebugLog?.(`PDFService: Page ${pageNum}: Could not resolve font name for ID: ${fontId}`);
           }
         }
 
@@ -200,7 +200,7 @@ export class PDFService {
             fontName: fontNameMap.get(item.fontName) ?? item.fontName ?? '',
             hasEOL: item.hasEOL ?? false,
           }))
-        this.onDebugLog?.(`Page ${pageNum}: Extracted ${items.length} text items.`);
+        this.onDebugLog?.(`PDFService: Page ${pageNum}: Extracted ${items.length} text items.`);
 
         results.push({
           pageNumber: pageNum,
@@ -209,9 +209,9 @@ export class PDFService {
           pageWidth: viewport.width,
           images,
         })
-        this.onDebugLog?.(`Finished rich data processing for page ${pageNum}.`);
+        this.onDebugLog?.(`PDFService: Finished rich data processing for page ${pageNum}.`);
       }
-      this.onDebugLog?.(`Finished rich data extraction for pages ${startPage}-${endPage}.`);
+      this.onDebugLog?.(`PDFService: Finished rich data extraction for pages ${startPage}-${endPage}.`);
       return results
     } finally {
       doc.destroy()
@@ -230,19 +230,22 @@ export class PDFService {
     renderScale: number,
   ): Promise<RawImageRegion[]> {
     try {
+      this.onDebugLog?.(`PDFService: Extracting images for page ${page.pageNumber}...`);
       const ops = await page.getOperatorList()
       const regions = this.collectImageRegions(ops, viewport)
       const meaningful = regions.filter(r =>
         this.isMeaningfulImageRegion(r, viewport.width, viewport.height)
       )
       const deduped = this.dedupeImageRegions(meaningful)
-      this.onDebugLog?.(`  - Found ${regions.length} raw image regions, ${meaningful.length} meaningful, ${deduped.length} deduped.`);
-      return deduped.map(region => ({
+      this.onDebugLog?.(`PDFService: Page ${page.pageNumber}: Found ${regions.length} raw image regions, ${meaningful.length} meaningful, ${deduped.length} deduped.`);
+      const croppedImages = deduped.map(region => ({
         ...region,
         imageSrc: this.cropImageRegion(renderedCanvas, region, renderScale, viewport.width),
-      })).filter(r => r.imageSrc)
+      })).filter(r => r.imageSrc);
+      this.onDebugLog?.(`PDFService: Page ${page.pageNumber}: Successfully cropped ${croppedImages.length} images.`);
+      return croppedImages;
     } catch (e) {
-      this.onDebugLog?.(`  - Error in extractPageImages: ${e instanceof Error ? e.message : String(e)}`);
+      this.onDebugLog?.(`PDFService: Page ${page.pageNumber}: Error in extractPageImages: ${e instanceof Error ? e.message : String(e)}`);
       return []
     }
   }
@@ -360,7 +363,10 @@ export class PDFService {
     canvas.width = cropWidth
     canvas.height = cropHeight
     const context = canvas.getContext('2d')
-    if (!context) return ''
+    if (!context) {
+      this.onDebugLog?.(`PDFService: Failed to get 2D context for cropping image region.`);
+      return ''
+    }
     context.drawImage(source, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
     return canvas.toDataURL('image/png')
   }
@@ -371,6 +377,7 @@ export class PDFService {
   ): Promise<PDFOutlineItem[]> {
     const result: PDFOutlineItem[] = []
     for (const item of items) {
+      this.onDebugLog?.(`PDFService: Mapping outline item: "${item.title}"`);
       const pageNumber = await this.resolveDestPage(item.dest, doc)
       const children = item.items?.length
         ? await this.mapOutlineItems(item.items, doc)
@@ -388,15 +395,20 @@ export class PDFService {
       // dest can be a string (named dest) or an array (explicit dest)
       let resolved = dest
       if (typeof dest === 'string') {
+        this.onDebugLog?.(`PDFService: Resolving named destination: "${dest}"`);
         resolved = await doc.getDestination(dest)
       }
-      if (!resolved || !Array.isArray(resolved)) return null
+      if (!resolved || !Array.isArray(resolved)) {
+        this.onDebugLog?.(`PDFService: Destination "${dest}" could not be resolved or is not an array.`);
+        return null
+      }
       // resolved[0] is a page ref object
       const pageRef = resolved[0]
       const pageIndex = await doc.getPageIndex(pageRef)
+      this.onDebugLog?.(`PDFService: Resolved destination to page index ${pageIndex}.`);
       return pageIndex + 1 // PDF.js pages are 0-indexed, we use 1-indexed
     } catch (e) {
-      this.onDebugLog?.(`Error resolving destination page: ${e instanceof Error ? e.message : String(e)}`);
+      this.onDebugLog?.(`PDFService: Error resolving destination page for "${dest}": ${e instanceof Error ? e.message : String(e)}`);
       return null
     }
   }
