@@ -574,6 +574,7 @@ class SyncService {
       scrollProgress: (sec.scrollProgress ?? 0) / 100, // 0-100 → 0-1
       sortOrder: sec.order,
       sectionType: 'content',
+      extractedText: sec.extractedText ?? null,
       updatedAt: new Date(sec.updatedAt).toISOString(),
     }
   }
