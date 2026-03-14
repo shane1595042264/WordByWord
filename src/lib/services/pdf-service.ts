@@ -1,5 +1,7 @@
 import * as pdfjs from 'pdfjs-dist'
-import type { RawTextItem, RawPageData, RawImageRegion } from '@/lib/nib'
+import type { RawTextItem, RawPageData, RawImageRegion, NibDocumentData } from '@/lib/nib'
+import { NibParser } from '@/lib/nib/parser'
+import { NibTextParser } from '@/lib/nib/text-parser'
 
 if (typeof window !== 'undefined') {
   pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -99,6 +101,30 @@ export class PDFService {
   }
 
   /**
+   * Extract all text from the PDF, concatenating page by page.
+   * This is used for "general PDFs" where rich parsing might not be effective.
+   */
+  async extractAllText(blob: Blob): Promise<string> {
+    this.onDebugLog?.("PDFService: Extracting all text from document...");
+    const arrayBuffer = await blob.arrayBuffer();
+    const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    try {
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join(' ');
+        fullText += pageText + '\n\n'; // Add double newline as a page separator heuristic
+        this.onDebugLog?.(`PDFService: Extracted text from page ${i}.`);
+      }
+      this.onDebugLog?.("PDFService: Finished extracting all text.");
+      return fullText.trim();
+    } finally {
+      doc.destroy();
+    }
+  }
+
+  /**
    * Extract rich text data from a page, including position and font info.
    * This powers the .nib parser for header/footnote detection.
    */
@@ -180,7 +206,7 @@ export class PDFService {
         }
         for (const fontId of seenFontIds) {
           try {
-            const fontObj = page.commonObjs.get(fontId)
+            const fontObj = page.objs.get(fontId) // CORRECTED: Changed page.commonObjs to page.objs
             if (fontObj?.name) {
               fontNameMap.set(fontId, fontObj.name)
             }
@@ -215,6 +241,30 @@ export class PDFService {
       return results
     } finally {
       doc.destroy()
+    }
+  }
+
+  /**
+   * Processes a PDF document to extract structured text data,
+   * intelligently choosing between rich PDF parsing (for structured PDFs)
+   * and plain text parsing (for general/scanned PDFs without TOC).
+   */
+  async processPdfDocument(blob: Blob, title: string, author: string): Promise<NibDocumentData> {
+    this.onDebugLog?.("PDFService: Starting document processing...");
+    const metadata = await this.extractMetadata(blob);
+    const outline = await this.extractOutline(blob);
+
+    if (outline && outline.length > 0) {
+      this.onDebugLog?.("PDFService: Outline detected. Using rich PDF parser.");
+      const richPageData = await this.extractRichPageRange(blob, 1, metadata.totalPages);
+      const nibParser = new NibParser();
+      return nibParser.parseDocument(richPageData, title, author);
+    } else {
+      this.onDebugLog?.("PDFService: No outline detected. Using plain text parser for general PDF.");
+      const fullText = await this.extractAllText(blob);
+      const nibTextParser = new NibTextParser();
+      // Use parseMultiPageText to leverage page break heuristics
+      return nibTextParser.parseMultiPageText(fullText, title, author, 1);
     }
   }
 
@@ -259,7 +309,7 @@ export class PDFService {
     const OPS = pdfjs.OPS
     // Track current transformation matrix
     const matrixStack: number[][] = []
-    let ctm = [1, 0, 0, 1, 0, 0] // identity
+    let ctm = [1, 0, 0, 1, 0, 0] // identity matrix [a, b, c, d, e, f]
 
     for (let i = 0; i < ops.fnArray.length; i++) {
       const fn = ops.fnArray[i]
@@ -270,34 +320,33 @@ export class PDFService {
       } else if (fn === OPS.restore) {
         ctm = matrixStack.pop() || [1, 0, 0, 1, 0, 0]
       } else if (fn === OPS.transform) {
-        // Multiply current CTM by new transform
+        // Multiply current CTM by new transform [a, b, c, d, e, f]
         const [a, b, c, d, e, f] = args
         const [ca, cb, cc, cd, ce, cf] = ctm
         ctm = [
-          ca * a + cc * b,
-          cb * a + cd * b,
-          ca * c + cc * d,
-          cb * c + cd * d,
-          ca * e + cc * f + ce,
-          cb * e + cd * f + cf,
+          ca * a + cc * b, // new a
+          cb * a + cd * b, // new b
+          ca * c + cc * d, // new c
+          cb * c + cd * d, // new d
+          ca * e + cc * f + ce, // new e (translateX)
+          cb * e + cd * f + cf, // new f (translateY)
         ]
       } else if (fn === OPS.paintImageXObject || fn === OPS.paintImageXObjectRepeat) {
         // Image paint operation — extract bounding box from CTM
         // CTM maps unit square [0,1]×[0,1] to page coordinates
-        const [scaleX, , , scaleY, tx, ty] = ctm
-        // Convert from PDF coordinates (origin bottom-left) to viewport coordinates (origin top-left)
-        const pdfX = tx
-        const pdfY = ty
-        const pdfW = Math.abs(scaleX)
-        const pdfH = Math.abs(scaleY)
+        const [scaleX, , , scaleY, tx, ty] = ctm // tx, ty are the translation components
 
-        // PDF Y is bottom-up, viewport Y is top-down
-        const x = pdfX
-        const y = viewport.height - pdfY - (scaleY < 0 ? 0 : pdfH)
-        const width = pdfW
-        const height = pdfH
+        const imgWidth = Math.abs(scaleX);
+        const imgHeight = Math.abs(scaleY);
 
-        regions.push({ x, y, width, height })
+        // PDF Y coordinates are from bottom-left. Viewport Y are from top-left.
+        // The y coordinate in RawImageRegion should be the top-left corner in viewport coordinates.
+        // ty is the bottom-left Y coordinate in PDF space.
+        // So, top-left Y in viewport space is viewport.height - (ty + imgHeight).
+        const x = tx;
+        const y = viewport.height - (ty + imgHeight);
+
+        regions.push({ x, y, width: imgWidth, height: imgHeight });
       }
     }
     return regions
@@ -382,8 +431,7 @@ export class PDFService {
       const children = item.items?.length
         ? await this.mapOutlineItems(item.items, doc)
         : []
-      result.push({ title: item.title, pageNumber, children })
-    }
+      result.push({ title: item.title, pageNumber, children })n    }
     return result
   }
 
