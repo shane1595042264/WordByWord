@@ -338,6 +338,9 @@ class SyncService {
 
       localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
       this.log('sync:complete', `synced at ${result.syncedAt}`)
+
+      // Notify listeners (e.g. useBooks) that sync finished so they can refresh
+      window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
     } catch (err) {
       console.error('[sync] error:', err)
     } finally {

@@ -29,5 +29,12 @@ export function useBooks() {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Re-fetch books from IndexedDB whenever a cloud sync completes
+  useEffect(() => {
+    const onSyncComplete = () => { refresh() }
+    window.addEventListener('nibble:sync-complete', onSyncComplete)
+    return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
+  }, [refresh])
+
   return { books, loading, refresh }
 }
