@@ -206,7 +206,7 @@ export class PDFService {
         }
         for (const fontId of seenFontIds) {
           try {
-            const fontObj = page.objs.get(fontId) // CORRECTED: Changed page.commonObjs to page.objs
+            const fontObj = page.commonObjs.get(fontId) // Reverted to page.commonObjs
             if (fontObj?.name) {
               fontNameMap.set(fontId, fontObj.name)
             }
@@ -431,7 +431,8 @@ export class PDFService {
       const children = item.items?.length
         ? await this.mapOutlineItems(item.items, doc)
         : []
-      result.push({ title: item.title, pageNumber, children })n    }
+      result.push({ title: item.title, pageNumber, children })
+    }
     return result
   }
 
