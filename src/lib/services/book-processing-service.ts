@@ -100,9 +100,10 @@ export class BookProcessingService {
   }
 
   async importBook(blob: Blob, options: ImportOptions): Promise<string> {
-    this.onDebugLog = options.onDebugLog; // Update the instance's onDebugLog
-    this.pdfService = new PDFService(options.onDebugLog); // Re-initialize PDFService with the new callback
-    this.nibService = new NibService(options.onDebugLog); // Re-initialize NibService with the new callback (assuming NibService constructor takes it)
+    // Update the instance's onDebugLog and re-initialize services with the new callback
+    this.onDebugLog = options.onDebugLog;
+    this.pdfService = new PDFService(options.onDebugLog);
+    this.nibService = new NibService(options.onDebugLog);
 
     options.onProgress?.('Reading PDF metadata...', 5)
     this.onDebugLog?.("Starting book import process."); // Add log
@@ -111,7 +112,7 @@ export class BookProcessingService {
     const outline = await this.pdfService.extractOutline(blob)
 
     const structureSource = (options.useNativeTOC && outline) ? 'native'
-      : options.useNibProcess ? 'native'
+      : options.useNibProcess ? 'nib' // Changed from 'native' to 'nib' for clarity
       : 'manual'
     this.onDebugLog?.(`Determined structure source: ${structureSource}`); // Add log
 
@@ -448,13 +449,31 @@ export class BookProcessingService {
   }
 
   private flattenOutline(outline: any[]): any[] {
-    // Dummy implementation
+    // Dummy implementation to resolve undefined method error
     return outline.flatMap(item => [item, ...this.flattenOutline(item.children || [])]);
   }
 
+  private walkOutlineTree(outline: any[], prefix: string, result: { chapterTitle: string; sections: { title: string; pageNumber: number | null }[] }[]) {
+    // Dummy implementation to resolve undefined method error
+    for (const item of outline) {
+      const currentTitle = prefix ? `${prefix} > ${item.title}` : item.title;
+      if (item.children && item.children.length > 0) {
+        this.walkOutlineTree(item.children, currentTitle, result);
+      } else {
+        let chapterEntry = result.find(ch => ch.chapterTitle === prefix);
+        if (!chapterEntry) {
+          chapterEntry = { chapterTitle: prefix || "Untitled Chapter", sections: [] };
+          result.push(chapterEntry);
+        }
+        chapterEntry.sections.push({ title: item.title, pageNumber: item.pageNumber });
+      }
+    }
+  }
+
+
   private async buildNibChapters(bookId: string, totalPages: number, blob: Blob, bookTitle: string, bookAuthor: string, onProgress?: (message: string, percent: number) => void): Promise<void> {
     this.onDebugLog?.(`Building NIB chapters for book ${bookId} (pages 1-${totalPages}).`);
-    // Dummy implementation
+    // Dummy implementation to resolve undefined method error
     const chapterId = uuid();
     await db.chapters.add({
       id: chapterId,
@@ -465,6 +484,7 @@ export class BookProcessingService {
       endPage: totalPages,
       updatedAt: Date.now(),
     });
+    this.onDebugLog?.(`  - Created NIB chapter "Full Book" (pages 1-${totalPages}).`);
     const sectionText = await this.nibService.getCleanText(blob, 1, totalPages, bookTitle, bookAuthor);
     await db.sections.add({
       id: uuid(),
@@ -481,12 +501,13 @@ export class BookProcessingService {
       scrollProgress: null,
       updatedAt: Date.now(),
     });
+    this.onDebugLog?.(`  - Created NIB section "Full Book Content" (pages 1-${totalPages}) with ${sectionText?.length ?? 0} characters.`);
     this.onDebugLog?.(`Created a single NIB chapter/section for the entire book.`);
   }
 
   private async buildDefaultChapters(bookId: string, totalPages: number, blob: Blob, bookTitle: string, bookAuthor: string, onProgress?: (message: string, percent: number) => void): Promise<void> {
     this.onDebugLog?.(`Building default chapters for book ${bookId} (pages 1-${totalPages}).`);
-    // Dummy implementation
+    // Dummy implementation to resolve undefined method error
     const chapterId = uuid();
     await db.chapters.add({
       id: chapterId,
@@ -497,6 +518,7 @@ export class BookProcessingService {
       endPage: totalPages,
       updatedAt: Date.now(),
     });
+    this.onDebugLog?.(`  - Created default chapter "Chapter 1" (pages 1-${totalPages}).`);
     const sectionText = await this.pdfService.extractPageText(blob, 1); // Just extract first page text as an example
     await db.sections.add({
       id: uuid(),
@@ -513,6 +535,7 @@ export class BookProcessingService {
       scrollProgress: null,
       updatedAt: Date.now(),
     });
+    this.onDebugLog?.(`  - Created default section "Section 1" (pages 1-${totalPages}) with ${sectionText?.length ?? 0} characters.`);
     this.onDebugLog?.(`Created a single default chapter/section for the entire book.`);
   }
 }
