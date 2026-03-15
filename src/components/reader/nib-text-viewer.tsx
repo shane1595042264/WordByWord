@@ -1007,52 +1007,86 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               // Render markdown tables as HTML tables
               if (blockType === 'table') {
                 const rawMd = para.sentences[0]?.words[0]?.text ?? ''
-                const rows = rawMd.split('\n').filter((r: string) => r.trim() && !/^\|[\s-:]+\|$/.test(r.trim()))
+                const allRows = rawMd.split('\n').filter((r: string) => r.trim())
+                // Separate header, separator, and body rows
+                const isSeparator = (r: string) => /^\|[\s:|-]+\|$/.test(r.trim().replace(/\s/g, ''))
+                const headerRow = allRows[0] ? allRows[0] : ''
+                const bodyRows = allRows.filter((r: string, i: number) => i > 0 && !isSeparator(r))
                 const parseRow = (row: string) => row.split('|').slice(1, -1).map((c: string) => c.trim())
-                const headerCells = rows[0] ? parseRow(rows[0]) : []
-                const bodyRows = rows.slice(1).map((r: string) => parseRow(r))
+                const headerCells = parseRow(headerRow)
+
+                const renderCell = (cell: string) => {
+                  // Render any $...$ LaTeX inline
+                  if (cell.includes('$')) {
+                    const parts = cell.split(/(\$[^$]+\$)/g)
+                    return parts.map((part: string, pi: number) => {
+                      if (part.startsWith('$') && part.endsWith('$')) {
+                        const latex = part.slice(1, -1)
+                        try {
+                          return <span key={pi} dangerouslySetInnerHTML={{ __html: katex.renderToString(latex, { throwOnError: false }) }} />
+                        } catch { return <span key={pi}>{part}</span> }
+                      }
+                      return <span key={pi}>{part}</span>
+                    })
+                  }
+                  return cell
+                }
 
                 return (
                   <div key={`${page.pageNumber}-p${para.index}`} className="my-4 overflow-x-auto">
-                    <table className="border-collapse border border-border text-sm w-full">
-                      {headerCells.length > 0 && (
-                        <thead>
-                          <tr className="bg-muted/50">
-                            {headerCells.map((cell: string, ci: number) => (
-                              <th key={ci} className="border border-border px-3 py-1.5 text-left font-semibold">
-                                {cell.includes('$') ? (
-                                  <span dangerouslySetInnerHTML={{ __html: (() => { try { return katex.renderToString(cell.replace(/^\$|\$$/g, ''), { throwOnError: false }) } catch { return cell } })() }} />
-                                ) : cell}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                      )}
+                    <table className="border-collapse border border-border text-sm">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          {headerCells.map((cell: string, ci: number) => (
+                            <th key={ci} className="border border-border px-3 py-1.5 text-left font-semibold">
+                              {renderCell(cell)}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
                       <tbody>
-                        {bodyRows.map((row: string[], ri: number) => (
-                          <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-muted/20'}>
-                            {row.map((cell: string, ci: number) => (
-                              <td key={ci} className="border border-border px-3 py-1.5">
-                                {cell.includes('$') ? (
-                                  <span dangerouslySetInnerHTML={{ __html: (() => { try { return katex.renderToString(cell.replace(/^\$|\$$/g, '').replace(/\\\$/g, '$'), { throwOnError: false }) } catch { return cell } })() }} />
-                                ) : cell}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
+                        {bodyRows.map((row: string, ri: number) => {
+                          const cells = parseRow(row)
+                          return (
+                            <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-muted/20'}>
+                              {cells.map((cell: string, ci: number) => (
+                                <td key={ci} className="border border-border px-3 py-1.5">
+                                  {renderCell(cell)}
+                                </td>
+                              ))}
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )
               }
 
-              // Render code blocks as styled <pre>
+              // Render code blocks with inline LaTeX rendering
               if (blockType === 'code-block') {
                 const code = para.sentences[0]?.words[0]?.text ?? ''
+                // Split code into lines, render $...$ as KaTeX inline
+                const codeLines = code.split('\n')
                 return (
                   <div key={`${page.pageNumber}-p${para.index}`} className="my-4">
-                    <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre">
-                      <code>{code}</code>
+                    <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre leading-relaxed">
+                      {codeLines.map((line: string, li: number) => (
+                        <span key={li}>
+                          {line.includes('$') ? (
+                            line.split(/(\$[^$]+\$)/g).map((part: string, pi: number) => {
+                              if (part.startsWith('$') && part.endsWith('$')) {
+                                const latex = part.slice(1, -1)
+                                try {
+                                  return <span key={pi} dangerouslySetInnerHTML={{ __html: katex.renderToString(latex, { throwOnError: false }) }} />
+                                } catch { return <span key={pi}>{part}</span> }
+                              }
+                              return <span key={pi}>{part}</span>
+                            })
+                          ) : line}
+                          {li < codeLines.length - 1 ? '\n' : ''}
+                        </span>
+                      ))}
                     </pre>
                   </div>
                 )
