@@ -116,6 +116,21 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                       if (cover) {
                         const { db } = await import('@/lib/db/database')
                         await db.books.update(book.id, { coverImage: cover, updatedAt: Date.now() })
+                        // Sync cover to backend catalog
+                        if (book.remoteId) {
+                          try {
+                            const tr = await fetch('/api/auth/token')
+                            if (tr.ok) {
+                              const { token } = await tr.json()
+                              const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                              await fetch(`${apiUrl}/books/${book.remoteId}/metadata`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                body: JSON.stringify({ coverUrl: cover }),
+                              })
+                            }
+                          } catch { /* non-blocking */ }
+                        }
                         refresh()
                         setGeneratingCover(false)
                         return
