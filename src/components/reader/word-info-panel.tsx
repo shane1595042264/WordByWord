@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, type CSSProperties } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { ShortcutButton } from '@/components/ui/shortcut-button'
 import type { NibWord } from '@/lib/nib'
 import type { TranslationResult } from '@/lib/services/translation-service'
@@ -554,9 +555,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                       <div className="h-3 w-3/5 bg-muted/40 rounded animate-pulse" />
                     </div>
                   ) : explanation ? (
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {explanation}
-                    </p>
+                    <div className="text-xs text-muted-foreground leading-relaxed prose prose-xs prose-neutral dark:prose-invert max-w-none [&_h1]:text-sm [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-1 [&_p]:my-1 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:my-0.5 [&_strong]:text-foreground">
+                      <ReactMarkdown>{explanation}</ReactMarkdown>
+                    </div>
                   ) : null}
                 </div>
               )}
