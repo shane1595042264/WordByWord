@@ -83,6 +83,23 @@ export function UserMenu() {
             >
               Settings
             </Link>
+            <Link
+              href="/vocabulary"
+              onClick={() => setOpen(false)}
+              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+            >
+              Vocabulary
+            </Link>
+            {(session.user as Record<string, unknown>).role === 'admin' && (
+              <Link
+                href="/marketplace"
+                onClick={() => setOpen(false)}
+                className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+              >
+                Marketplace
+              </Link>
+            )}
+            <div className="my-1 border-t" />
             <button
               onClick={() => signOut({ callbackUrl: '/auth/login' })}
               className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive"
