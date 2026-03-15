@@ -313,15 +313,26 @@ class SyncService {
       } else {
         // Auto or cloud wins — apply deletions and download new books
 
-        // 1. Remove locally any books the server soft-deleted (recency: server delete is newer)
+        // 1a. Remove locally any books the server soft-deleted
         for (const sb of cloudDeletedBooks) {
           const localBook = allBooks.find(b => b.remoteId === (sb.id as string))
           if (localBook) {
-            this.log('sync:delete-local', `"${localBook.title}" deleted on cloud`)
+            this.log('sync:delete-local', `"${localBook.title}" soft-deleted on cloud`)
             await db.sections.where('bookId').equals(localBook.id).delete()
             await db.chapters.where('bookId').equals(localBook.id).delete()
+            await db.vocabulary.where('bookId').equals(localBook.id).delete()
             await db.books.delete(localBook.id)
           }
+        }
+
+        // 1b. Remove locally any books that have a remoteId but server doesn't know about
+        // (hard-deleted on server — the row is gone, not returned in serverChanges)
+        for (const localBook of localOnlyBooks) {
+          this.log('sync:delete-local', `"${localBook.title}" no longer on server (hard-deleted)`)
+          await db.sections.where('bookId').equals(localBook.id).delete()
+          await db.chapters.where('bookId').equals(localBook.id).delete()
+          await db.vocabulary.where('bookId').equals(localBook.id).delete()
+          await db.books.delete(localBook.id)
         }
 
         // 2. Download cloud-only books
