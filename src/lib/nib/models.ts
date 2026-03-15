@@ -73,6 +73,8 @@ export type NibBlockType =
   | 'figure-caption'  // Caption for a figure/table
   | 'epigraph'        // Opening quote/attribution at chapter start
   | 'latex-display'   // Display-mode LaTeX equation block
+  | 'table'           // Markdown table
+  | 'code-block'      // Code block
 
 export interface NibParagraphData {
   sentences: NibSentenceData[]

@@ -1004,6 +1004,60 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               const isFigureCaption = blockType === 'figure-caption'
               const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
 
+              // Render markdown tables as HTML tables
+              if (blockType === 'table') {
+                const rawMd = para.sentences[0]?.words[0]?.text ?? ''
+                const rows = rawMd.split('\n').filter((r: string) => r.trim() && !/^\|[\s-:]+\|$/.test(r.trim()))
+                const parseRow = (row: string) => row.split('|').slice(1, -1).map((c: string) => c.trim())
+                const headerCells = rows[0] ? parseRow(rows[0]) : []
+                const bodyRows = rows.slice(1).map((r: string) => parseRow(r))
+
+                return (
+                  <div key={`${page.pageNumber}-p${para.index}`} className="my-4 overflow-x-auto">
+                    <table className="border-collapse border border-border text-sm w-full">
+                      {headerCells.length > 0 && (
+                        <thead>
+                          <tr className="bg-muted/50">
+                            {headerCells.map((cell: string, ci: number) => (
+                              <th key={ci} className="border border-border px-3 py-1.5 text-left font-semibold">
+                                {cell.includes('$') ? (
+                                  <span dangerouslySetInnerHTML={{ __html: (() => { try { return katex.renderToString(cell.replace(/^\$|\$$/g, ''), { throwOnError: false }) } catch { return cell } })() }} />
+                                ) : cell}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                      )}
+                      <tbody>
+                        {bodyRows.map((row: string[], ri: number) => (
+                          <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-muted/20'}>
+                            {row.map((cell: string, ci: number) => (
+                              <td key={ci} className="border border-border px-3 py-1.5">
+                                {cell.includes('$') ? (
+                                  <span dangerouslySetInnerHTML={{ __html: (() => { try { return katex.renderToString(cell.replace(/^\$|\$$/g, '').replace(/\\\$/g, '$'), { throwOnError: false }) } catch { return cell } })() }} />
+                                ) : cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              }
+
+              // Render code blocks as styled <pre>
+              if (blockType === 'code-block') {
+                const code = para.sentences[0]?.words[0]?.text ?? ''
+                return (
+                  <div key={`${page.pageNumber}-p${para.index}`} className="my-4">
+                    <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre">
+                      <code>{code}</code>
+                    </pre>
+                  </div>
+                )
+              }
+
               // Render sub-headings through ParagraphRenderer so words are selectable
               if (isSubheading) {
                 const text = para.sentences.map((s: any) => s.text).join(' ')

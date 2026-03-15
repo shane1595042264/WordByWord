@@ -87,6 +87,17 @@ export class NibMarkdownParser {
       return { blockType: 'latex-display', content: block.slice(2, -2).trim() }
     }
 
+    // Code block: starts and ends with ```
+    if (block.startsWith('```') && block.endsWith('```')) {
+      const content = block.slice(3, -3).replace(/^\w*\n/, '').trim()  // strip language hint + backticks
+      return { blockType: 'code-block' as any, content }
+    }
+
+    // Markdown table: contains | --- | pattern (separator row)
+    if (/\|\s*-{2,}/.test(block) || /\|\s*:{0,1}-{2,}:{0,1}\s*\|/.test(block)) {
+      return { blockType: 'table' as any, content: block }
+    }
+
     // Markdown heading: ## Title → strip hashes, render as subheading (bold heading text)
     if (/^#{1,6}\s/.test(block)) {
       const content = block.replace(/^#{1,6}\s+/, '').trim()
@@ -128,6 +139,10 @@ export class NibMarkdownParser {
 
     if (blockType === 'latex-display') {
       sentences = [this.buildDisplayMathSentence(content, 0)]
+    } else if ((blockType as string) === 'table' || (blockType as string) === 'code-block') {
+      // Store raw content as a single word — viewer handles rendering
+      const word: NibWordData = { text: content, index: 0 }
+      sentences = [{ words: [word], index: 0 }]
     } else if (blockType === 'figure-caption' && content.startsWith('![')) {
       sentences = [this.buildImageSentence(content, 0)]
     } else {
