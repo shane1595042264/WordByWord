@@ -162,7 +162,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
     import('@/lib/services/translation-service').then(({ TranslationService }) => {
       const svc = new TranslationService(apiKey)
-      svc.translateWord(word.text, word.sentence.text, targetLang)
+      // Use latexSource for block content (tables, code, figures) instead of placeholder text
+      const wordText = word.latexSource || word.text
+      const contextText = word.latexSource ? `${wordText}\n\nContext: ${word.sentence.text}` : word.sentence.text
+      svc.translateWord(wordText, contextText, targetLang)
         .then(result => {
           if (!cancelled) {
             setTranslation(result)
@@ -233,9 +236,11 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     try {
       const { TranslationService } = await import('@/lib/services/translation-service')
       const svc = new TranslationService(apiKey)
+      const contentText = word.latexSource || word.text
+      const contextText = word.latexSource ? `${contentText}\n\nContext: ${word.sentence.text}` : word.sentence.text
       const result = await svc.explainTranslation(
-        word.text,
-        word.sentence.text,
+        contentText,
+        contextText,
         translation.translation,
         targetLang,
       )
@@ -415,7 +420,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             <>
               {/* Word + pronunciation row */}
               <div className="flex items-baseline gap-2 mb-0.5">
-                <span className="font-bold text-xl leading-tight">{word.text}</span>
+                <span className="font-bold text-xl leading-tight">
+                  {word.imageUrl ? 'Figure' : word.latexSource && word.text.startsWith('[') ? word.text.replace(/[\[\]]/g, '') : word.text}
+                </span>
                 {translation?.pronunciation && (
                   <span className="text-sm text-muted-foreground/70 font-mono">
                     {translation.pronunciation}
