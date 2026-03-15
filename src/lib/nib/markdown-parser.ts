@@ -67,6 +67,12 @@ export class NibMarkdownParser {
       return { blockType: 'latex-display', content: block.slice(2, -2).trim() }
     }
 
+    // Markdown heading: ## Title → strip hashes, render as subheading (bold heading text)
+    if (/^#{1,6}\s/.test(block)) {
+      const content = block.replace(/^#{1,6}\s+/, '').trim()
+      return { blockType: 'subheading', content }
+    }
+
     // Blockquote: starts with >
     if (block.startsWith('>')) {
       const content = block.replace(/^>\s?/gm, '').trim()
@@ -84,8 +90,8 @@ export class NibMarkdownParser {
       return { blockType: 'list-item', content }
     }
 
-    // Figure caption: starts with "Figure X.X" pattern
-    if (/^Figure\s+\d/i.test(block)) {
+    // Figure caption: starts with "Figure X.X" or "Table X.X" pattern
+    if (/^(?:Figure|Table)\s+\d/i.test(block)) {
       return { blockType: 'figure-caption', content: block }
     }
 

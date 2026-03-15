@@ -1001,6 +1001,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               const isQuote = blockType === 'blockquote'
               const isEpigraph = blockType === 'epigraph'
               const isSubheading = blockType === 'subheading'
+              const isFigureCaption = blockType === 'figure-caption'
               const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
 
               // Render sub-headings through ParagraphRenderer so words are selectable
@@ -1046,6 +1047,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                     isQuote ? 'border-l-2 border-indigo-500/40 pl-4 italic' : ''
                   }${
                     isEpigraph ? 'border-l-2 border-violet-500/40 pl-4 italic text-muted-foreground' : ''
+                  }${
+                    isFigureCaption ? 'text-sm text-muted-foreground italic text-center' : ''
                   }`}
                 >
                   {showIndicators && (
