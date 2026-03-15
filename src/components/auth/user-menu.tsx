@@ -77,6 +77,22 @@ export function UserMenu() {
           </div>
           <div className="p-1">
             <Link
+              href="/vocabulary"
+              onClick={() => setOpen(false)}
+              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+            >
+              Vocabulary
+            </Link>
+            {(session.user as Record<string, unknown>).role === 'admin' && (
+              <Link
+                href="/marketplace"
+                onClick={() => setOpen(false)}
+                className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+              >
+                Marketplace
+              </Link>
+            )}
+            <Link
               href="/settings"
               onClick={() => setOpen(false)}
               className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
