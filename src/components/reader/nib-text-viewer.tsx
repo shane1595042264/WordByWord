@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback, useRef, useMemo, useEffect, useImperativeHandle, forwardRef } from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { NibElementBadge } from '@/components/ui/block-tooltip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
 import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
 import { WordInfoPanel } from '@/components/reader/word-info-panel'
 import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
@@ -72,8 +73,83 @@ interface NibTextViewerProps {
 }
 
 /**
- * Renders a paragraph, detecting LaTeX and falling back to LatexText rendering
- * when math expressions are found. Otherwise uses word-level interactivity.
+ * Renders a contiguous run of LaTeX words as a single KaTeX formula
+ * with invisible per-token overlay spans for cursor/selection targeting.
+ */
+function LatexFormulaRun({
+  words,
+  flatIndices,
+  latexSource,
+  selectedWord,
+  vimCursorIndex,
+  vimSelectedIndices,
+  highlightedIndices,
+  vimMode,
+  onWordClick,
+  registerWordSpan,
+  display,
+}: {
+  words: NibWord[]
+  flatIndices: number[]
+  latexSource: string
+  selectedWord: NibWord | null
+  vimCursorIndex?: number
+  vimSelectedIndices?: Set<number>
+  highlightedIndices?: Set<number>
+  vimMode?: string
+  onWordClick: (word: NibWord, el: HTMLElement) => void
+  registerWordSpan: (idx: number, el: HTMLSpanElement | null) => void
+  display?: boolean
+}) {
+  const html = useMemo(() => {
+    try {
+      return katex.renderToString(latexSource, {
+        throwOnError: false,
+        displayMode: display ?? false,
+      })
+    } catch {
+      return latexSource
+    }
+  }, [latexSource, display])
+
+  return (
+    <span className={`nib-latex-group relative inline-block align-middle ${display ? 'block text-center my-4 text-xl' : ''}`}>
+      {/* KaTeX visual output */}
+      <span dangerouslySetInnerHTML={{ __html: html }} className="pointer-events-none" />
+      {/* Invisible token hit targets overlaid on top */}
+      <span className="absolute inset-0 flex items-stretch" style={{ zIndex: 1 }}>
+        {words.map((word, i) => {
+          const idx = flatIndices[i]
+          const isCursor = vimMode === 'normal' && vimCursorIndex === idx
+          const isVimSelected = vimSelectedIndices?.has(idx)
+          const isHighlighted = highlightedIndices?.has(idx)
+          return (
+            <span
+              key={i}
+              ref={el => registerWordSpan(idx, el)}
+              data-word-index={idx}
+              className={`flex-1 cursor-pointer transition-colors ${
+                isCursor ? 'bg-yellow-400/40 rounded' :
+                isVimSelected ? 'bg-blue-500/25' :
+                isHighlighted ? 'bg-amber-500/20' :
+                'hover:bg-primary/10'
+              }`}
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onWordClick(word, e.currentTarget)
+              }}
+            />
+          )
+        })}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * Renders a paragraph with word-level interactivity.
+ * LaTeX formula tokens are rendered via KaTeX with per-token cursor targeting.
  */
 function ParagraphRenderer({
   para, pageNumber, selectedWord, onWordClick, flatIndexStart, registerWordSpan, vimSelectedIndices, highlightedIndices, showIndicators, vimCursorIndex, vimMode,
@@ -94,7 +170,6 @@ function ParagraphRenderer({
 }) {
   // Build the full paragraph text and check for special content
   const fullText = para.sentences.map((s: any) => s.text).join(' ')
-  const hasLatexContent = containsLatex(fullText)
   const hasTableContent = isTableBlock(fullText)
 
   // Table rendering
@@ -102,67 +177,115 @@ function ParagraphRenderer({
     return <TableRenderer text={fullText} />
   }
 
-  // LaTeX rendering (no word-level interaction for math paragraphs)
-  if (hasLatexContent) {
-    return (
-      <p className="leading-relaxed text-base">
-        <LatexText text={fullText} />
-      </p>
-    )
-  }
+  // Check if this is a display-mode LaTeX paragraph
+  const isDisplayLatex = para.blockType === 'latex-display'
 
-  // Standard word-by-word rendering with hover/click
+  // Standard word-by-word rendering with LaTeX run grouping
   let wordCounter = flatIndexStart
   return (
-    <p className="leading-relaxed text-base">
-      {para.sentences.map((sentence: any, sIdx: number) => (
-        <span key={`s${sIdx}`} className="relative">
-          {sentence.words.map((word: NibWord, wIdx: number) => {
-            const flatIdx = wordCounter++
-            const isVimSelected = vimSelectedIndices?.has(flatIdx)
-            const isHighlighted = highlightedIndices?.has(flatIdx)
-            const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx && selectedWord != null
-            const wordSpan = (
-              <span
-                ref={(el) => registerWordSpan(flatIdx, el)}
-                data-word-index={flatIdx}
-                className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
-                  selectedWord === word && !isBlockCursor ? 'bg-primary/20 underline decoration-primary' : ''
-                }${isVimSelected ? ' bg-blue-500/25 ring-1 ring-blue-400/50' : ''}${isHighlighted ? ' bg-amber-500/20 ring-1 ring-amber-400/40' : ''}${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
-                style={isBlockCursor ? {
-                  backgroundColor: 'rgba(250, 204, 21, 0.7)',
-                  color: '#000',
-                  borderRadius: '2px',
-                  boxShadow: '0 0 0 1px rgba(250, 204, 21, 0.9)',
-                } : undefined}
-                onClick={(e) => onWordClick(word, e.currentTarget)}
-              >
-                {word.text}
-              </span>
-            )
-            return (
-              <span key={`w${wIdx}`}>
-                {showIndicators ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      {wordSpan}
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="top"
-                      className="bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg shadow-lg shadow-black/10 max-w-sm px-3 py-2"
-                    >
-                      <p className="font-medium text-sm">{word.text}</p>
-                      <p className="text-muted-foreground text-xs mt-1">{sentence.text}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                ) : wordSpan}
-                {wIdx < sentence.words.length - 1 ? ' ' : ''}
-              </span>
-            )
-          })}
-          {' '}
-        </span>
-      ))}
+    <p className={`leading-relaxed text-base ${isDisplayLatex ? 'text-center my-4' : ''}`}>
+      {para.sentences.map((sentence: any, sIdx: number) => {
+        // Group sentence words into runs of [regular] and [latex]
+        type Run = { type: 'text' | 'latex'; words: NibWord[]; startFlatIdx: number; latexSource?: string }
+        const runs: Run[] = []
+        let currentRun: Run | null = null
+        const sentenceStartIdx = wordCounter
+
+        sentence.words.forEach((word: NibWord, wIdx: number) => {
+          const flatIdx = sentenceStartIdx + wIdx
+          if (word.isLatex) {
+            if (currentRun?.type === 'latex' && currentRun.latexSource === word.latexSource) {
+              currentRun.words.push(word)
+            } else {
+              if (currentRun) runs.push(currentRun)
+              currentRun = { type: 'latex', words: [word], startFlatIdx: flatIdx, latexSource: word.latexSource }
+            }
+          } else {
+            if (currentRun?.type === 'text') {
+              currentRun.words.push(word)
+            } else {
+              if (currentRun) runs.push(currentRun)
+              currentRun = { type: 'text', words: [word], startFlatIdx: flatIdx }
+            }
+          }
+        })
+        if (currentRun) runs.push(currentRun)
+
+        // Advance wordCounter past this sentence
+        wordCounter += sentence.words.length
+
+        return (
+          <span key={`s${sIdx}`} className="relative">
+            {runs.map((run, rIdx) => {
+              if (run.type === 'latex' && run.latexSource) {
+                const flatIndices = run.words.map((_, i) => run.startFlatIdx + i)
+                return (
+                  <LatexFormulaRun
+                    key={`r${rIdx}`}
+                    words={run.words}
+                    flatIndices={flatIndices}
+                    latexSource={run.latexSource}
+                    selectedWord={selectedWord}
+                    vimCursorIndex={vimCursorIndex}
+                    vimSelectedIndices={vimSelectedIndices}
+                    highlightedIndices={highlightedIndices}
+                    vimMode={vimMode}
+                    onWordClick={onWordClick}
+                    registerWordSpan={registerWordSpan}
+                    display={isDisplayLatex}
+                  />
+                )
+              }
+
+              // Regular text run — render each word individually
+              return run.words.map((word, wIdx) => {
+                const flatIdx = run.startFlatIdx + wIdx
+                const isVimSelected = vimSelectedIndices?.has(flatIdx)
+                const isHighlighted = highlightedIndices?.has(flatIdx)
+                const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx && selectedWord != null
+                const wordSpan = (
+                  <span
+                    ref={(el) => registerWordSpan(flatIdx, el)}
+                    data-word-index={flatIdx}
+                    className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
+                      selectedWord === word && !isBlockCursor ? 'bg-primary/20 underline decoration-primary' : ''
+                    }${isVimSelected ? ' bg-blue-500/25 ring-1 ring-blue-400/50' : ''}${isHighlighted ? ' bg-amber-500/20 ring-1 ring-amber-400/40' : ''}${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
+                    style={isBlockCursor ? {
+                      backgroundColor: 'rgba(250, 204, 21, 0.7)',
+                      color: '#000',
+                      borderRadius: '2px',
+                      boxShadow: '0 0 0 1px rgba(250, 204, 21, 0.9)',
+                    } : undefined}
+                    onClick={(e) => onWordClick(word, e.currentTarget)}
+                  >
+                    {word.text}
+                  </span>
+                )
+                return (
+                  <span key={`w${run.startFlatIdx + wIdx}`}>
+                    {showIndicators ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {wordSpan}
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg shadow-lg shadow-black/10 max-w-sm px-3 py-2"
+                        >
+                          <p className="font-medium text-sm">{word.text}</p>
+                          <p className="text-muted-foreground text-xs mt-1">{sentence.text}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : wordSpan}
+                    {wIdx < run.words.length - 1 ? ' ' : ''}
+                  </span>
+                )
+              })
+            })}
+            {' '}
+          </span>
+        )
+      })}
     </p>
   )
 }
