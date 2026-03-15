@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useCallback } from 'react'
+import { use, useState, useCallback, useTransition } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const [editTitle, setEditTitle] = useState('')
   const [editAuthor, setEditAuthor] = useState('')
   const [saving, setSaving] = useState(false)
+  const [generatingCover, setGeneratingCover] = useState(false)
 
   const startEditing = useCallback(() => {
     if (!book) return
@@ -92,11 +93,58 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
       </Link>
 
       <div className="flex gap-6 mb-8">
-        <div className="w-32 h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0">
+        <div className="w-32 h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
           {book.coverImage ? (
             <img src={book.coverImage} alt={book.title} className="object-cover w-full h-full rounded-lg" />
           ) : (
-            <span className="text-5xl">📖</span>
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-5xl">📖</span>
+              <Button
+                size="xs"
+                variant="outline"
+                className="text-[10px] px-2 py-1"
+                disabled={generatingCover}
+                onClick={async () => {
+                  if (!book) return
+                  setGeneratingCover(true)
+                  try {
+                    // Try 1: render page 1 from PDF blob
+                    if (book.pdfBlob) {
+                      const { PDFService } = await import('@/lib/services/pdf-service')
+                      const pdfSvc = new PDFService()
+                      const cover = await pdfSvc.renderPageToImage(book.pdfBlob, 1, 1.5)
+                      if (cover) {
+                        const { db } = await import('@/lib/db/database')
+                        await db.books.update(book.id, { coverImage: cover, updatedAt: Date.now() })
+                        refresh()
+                        setGeneratingCover(false)
+                        return
+                      }
+                    }
+                    // Try 2: Google Books cover via backend
+                    const tokenRes = await fetch('/api/auth/token')
+                    if (tokenRes.ok) {
+                      const { token } = await tokenRes.json()
+                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                      const res = await fetch(`${apiUrl}/books/${book.remoteId}/summary`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                      })
+                      if (res.ok) {
+                        const data = await res.json()
+                        if (data.catalog?.coverUrl) {
+                          const { db } = await import('@/lib/db/database')
+                          await db.books.update(book.id, { coverImage: data.catalog.coverUrl, updatedAt: Date.now() })
+                          refresh()
+                        }
+                      }
+                    }
+                  } catch { /* ignore */ }
+                  setGeneratingCover(false)
+                }}
+              >
+                {generatingCover ? 'Generating...' : 'Generate Cover'}
+              </Button>
+            </div>
           )}
         </div>
         <div className="flex flex-col gap-2 flex-1">
