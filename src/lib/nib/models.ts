@@ -226,7 +226,7 @@ export class NibWord {
       pageNumber: this.page.pageNumber,
     }
 
-    if (this.isLatex && this.latexSource) {
+    if (this.latexSource) {
       ctx.latexSource = this.latexSource
     }
 

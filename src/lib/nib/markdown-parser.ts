@@ -171,9 +171,10 @@ export class NibMarkdownParser {
     const alt = match[1] || 'Figure'
     const url = match[2]
     const word: NibWordData = {
-      text: alt || 'Figure',
+      text: alt || '[Figure]',
       index: 0,
       imageUrl: url,
+      latexSource: markdown, // Full markdown for AI context
     }
     return { words: [word], index: sentenceIndex }
   }

@@ -237,19 +237,29 @@ function ParagraphRenderer({
                 )
               }
 
-              // Image word — render as inline image
+              // Image word — render as inline image with vim cursor support
               if (run.words.length === 1 && run.words[0].imageUrl) {
                 const word = run.words[0]
                 const flatIdx = run.startFlatIdx
+                const isImgCursor = vimMode === 'normal' && vimCursorIndex === flatIdx
+                const isImgSelected = vimSelectedIndices?.has(flatIdx)
+                const isImgHighlighted = highlightedIndices?.has(flatIdx)
                 return (
-                  <span key={`r${rIdx}`} className="block my-4">
+                  <span
+                    key={`r${rIdx}`}
+                    ref={el => registerWordSpan(flatIdx, el as any)}
+                    data-word-index={flatIdx}
+                    className={`block my-4 rounded-md cursor-pointer transition-all ${
+                      isImgCursor ? 'ring-2 ring-yellow-400 bg-yellow-400/10' :
+                      isImgSelected || isImgHighlighted ? 'ring-2 ring-blue-400 bg-blue-500/10' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={(e) => onWordClick(word, e.currentTarget as any)}
+                  >
                     <img
-                      ref={el => registerWordSpan(flatIdx, el as any)}
-                      data-word-index={flatIdx}
                       src={word.imageUrl}
                       alt={word.text}
-                      className="max-w-full rounded-md border border-border/30 cursor-pointer hover:border-primary/50 transition-colors"
-                      onClick={(e) => onWordClick(word, e.currentTarget as any)}
+                      className="max-w-full rounded-md"
                     />
                   </span>
                 )
