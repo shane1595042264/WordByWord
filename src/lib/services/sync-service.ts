@@ -450,6 +450,14 @@ class SyncService {
       }
     } catch { /* use defaults */ }
 
+    // Generate cover from PDF page 1
+    let coverImage: string | null = null
+    try {
+      const { PDFService } = await import('./pdf-service')
+      const pdfSvc = new PDFService()
+      coverImage = await pdfSvc.renderPageToImage(pdfBlob, 1, 1.5)
+    } catch { /* no cover, that's fine */ }
+
     const localId = uuid()
     const now = Date.now()
     await db.books.add({
@@ -458,7 +466,7 @@ class SyncService {
       author,
       totalPages: (sb.totalPages as number) ?? 0,
       pdfBlob,
-      coverImage: null,
+      coverImage,
       structureSource: (sb.structureSource as Book['structureSource']) || 'native',
       processingStatus: (sb.processingStatus as Book['processingStatus']) || 'complete',
       createdAt: sb.createdAt ? new Date(sb.createdAt as string).getTime() : now,
