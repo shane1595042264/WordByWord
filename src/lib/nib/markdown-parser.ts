@@ -73,10 +73,20 @@ export class NibMarkdownParser {
       return { blockType: 'blockquote', content }
     }
 
+    // Image/figure: ![alt](url) or ![](url)
+    if (/^!\[/.test(block)) {
+      return { blockType: 'figure-caption', content: block }
+    }
+
     // List item: starts with - or * followed by space
     if (/^[-*]\s/.test(block)) {
       const content = block.replace(/^[-*]\s/, '').trim()
       return { blockType: 'list-item', content }
+    }
+
+    // Figure caption: starts with "Figure X.X" pattern
+    if (/^Figure\s+\d/i.test(block)) {
+      return { blockType: 'figure-caption', content: block }
     }
 
     return { blockType: 'body', content: block }
@@ -92,12 +102,31 @@ export class NibMarkdownParser {
 
     if (blockType === 'latex-display') {
       sentences = [this.buildDisplayMathSentence(content, 0)]
+    } else if (blockType === 'figure-caption' && content.startsWith('![')) {
+      sentences = [this.buildImageSentence(content, 0)]
     } else {
       const sentenceTexts = this.splitSentences(content)
       sentences = sentenceTexts.map((text, i) => this.buildSentence(text, i))
     }
 
     return { sentences, index, blockType }
+  }
+
+  /** Build an image sentence from ![alt](url) markdown */
+  private buildImageSentence(markdown: string, sentenceIndex: number): NibSentenceData {
+    const match = markdown.match(/!\[(.*?)\]\((.*?)\)/)
+    if (!match) {
+      // Fallback: treat as regular text
+      return this.buildSentence(markdown, sentenceIndex)
+    }
+    const alt = match[1] || 'Figure'
+    const url = match[2]
+    const word: NibWordData = {
+      text: alt || 'Figure',
+      index: 0,
+      imageUrl: url,
+    }
+    return { words: [word], index: sentenceIndex }
   }
 
   /** Build a single display-math sentence: all tokens from tokenizeLatex, all isLatex */
@@ -169,13 +198,36 @@ export class NibMarkdownParser {
           })
         }
       } else {
-        // Plain text: split on whitespace
+        // Plain text: split on whitespace, detect **bold** and *italic*
         const plainWords = segment.text.split(/\s+/).filter(w => w.length > 0)
-        for (const w of plainWords) {
-          words.push({
-            text: w,
-            index: words.length,
-          })
+        for (let w of plainWords) {
+          let bold = false
+          let italic = false
+          // **bold** or __bold__
+          if ((w.startsWith('**') && w.endsWith('**')) || (w.startsWith('__') && w.endsWith('__'))) {
+            bold = true
+            w = w.slice(2, -2)
+          }
+          // *italic* or _italic_ (but not ** or __)
+          else if ((w.startsWith('*') && w.endsWith('*') && !w.startsWith('**')) ||
+                   (w.startsWith('_') && w.endsWith('_') && !w.startsWith('__'))) {
+            italic = true
+            w = w.slice(1, -1)
+          }
+          // ***bold italic***
+          else if (w.startsWith('***') && w.endsWith('***')) {
+            bold = true
+            italic = true
+            w = w.slice(3, -3)
+          }
+          if (w.length > 0) {
+            words.push({
+              text: w,
+              index: words.length,
+              bold: bold || undefined,
+              italic: italic || undefined,
+            })
+          }
         }
       }
     }

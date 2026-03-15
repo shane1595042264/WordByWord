@@ -51,6 +51,8 @@ export interface NibWordData {
   latexSource?: string
   /** Whether this token is decorative (operators, braces, sub/superscripts) */
   isDecorative?: boolean
+  /** Image URL for figure words (from Mathpix CDN) */
+  imageUrl?: string
 }
 
 export interface NibSentenceData {
@@ -155,6 +157,8 @@ export class NibWord {
   readonly latexSource: string | undefined
   /** Whether this token is decorative (operators, braces, sub/superscripts) */
   readonly isDecorative: boolean
+  /** Image URL for figure words */
+  readonly imageUrl: string | undefined
   /** @internal set by NibSentence constructor */
   _sentence!: NibSentence
 
@@ -168,6 +172,7 @@ export class NibWord {
     this.isLatex = data.isLatex ?? false
     this.latexSource = data.latexSource
     this.isDecorative = data.isDecorative ?? false
+    this.imageUrl = data.imageUrl
   }
 
   /** The sentence this word belongs to */
@@ -237,6 +242,7 @@ export class NibWord {
       isLatex: this.isLatex || undefined,
       latexSource: this.latexSource || undefined,
       isDecorative: this.isDecorative || undefined,
+      imageUrl: this.imageUrl,
     }
   }
 }

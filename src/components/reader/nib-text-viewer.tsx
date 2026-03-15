@@ -237,6 +237,24 @@ function ParagraphRenderer({
                 )
               }
 
+              // Image word — render as inline image
+              if (run.words.length === 1 && run.words[0].imageUrl) {
+                const word = run.words[0]
+                const flatIdx = run.startFlatIdx
+                return (
+                  <span key={`r${rIdx}`} className="block my-4">
+                    <img
+                      ref={el => registerWordSpan(flatIdx, el as any)}
+                      data-word-index={flatIdx}
+                      src={word.imageUrl}
+                      alt={word.text}
+                      className="max-w-full rounded-md border border-border/30 cursor-pointer hover:border-primary/50 transition-colors"
+                      onClick={(e) => onWordClick(word, e.currentTarget as any)}
+                    />
+                  </span>
+                )
+              }
+
               // Regular text run — render each word individually
               return run.words.map((word, wIdx) => {
                 const flatIdx = run.startFlatIdx + wIdx
