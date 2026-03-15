@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,9 @@ const EMOJI_OPTIONS = [
   '🌈', '⭐', '🔥', '💎', '🎯', '🎨', '🎵', '🚀', '🌊', '🍄',
   '🎪', '🎭', '🧊', '🪐', '🌙', '☀️', '🍉', '🥑', '🧁', '🍩',
 ]
+
+const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2 MB
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 
 /** Check if a string is an emoji (not a URL) */
 function isEmoji(str: string): boolean {
@@ -35,6 +38,8 @@ export function ProfileSettings() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetchProfile()
@@ -75,6 +80,59 @@ export function ProfileSettings() {
       setError('Failed to load profile')
       setLoading(false)
     }
+  }
+
+  async function handleAvatarUpload(file: File) {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setError('Please upload a JPEG, PNG, or WebP image.')
+      return
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setError('Image must be under 2 MB.')
+      return
+    }
+
+    setUploading(true)
+    setError(null)
+
+    try {
+      const token = await getToken()
+      if (!token) throw new Error('Not authenticated')
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch(`${apiUrl}/users/me/avatar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      })
+
+      if (!res.ok) throw new Error('Failed to upload avatar')
+
+      const { avatarUrl } = await res.json()
+      setSelectedAvatar(avatarUrl)
+
+      // Also update profile state so "current" reflects the upload
+      if (profile) {
+        setProfile({ ...profile, avatarUrl })
+      }
+
+      // Update session immediately so the header avatar refreshes
+      await updateSession({ image: avatarUrl })
+    } catch (err) {
+      setError('Failed to upload image. Please try again.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) handleAvatarUpload(file)
+    // Reset input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function handleSave() {
@@ -135,7 +193,8 @@ export function ProfileSettings() {
     return <div className="text-sm text-destructive py-4">{error}</div>
   }
 
-  const hasGoogleImage = profile?.avatarUrl && !isEmoji(profile.avatarUrl)
+  const hasExistingImage = profile?.avatarUrl && !isEmoji(profile.avatarUrl)
+  const showingUploadedImage = selectedAvatar && !isEmoji(selectedAvatar)
 
   return (
     <div className="space-y-6 mt-4">
@@ -153,18 +212,38 @@ export function ProfileSettings() {
             )}
           </div>
           <div className="text-sm text-muted-foreground">
-            {hasGoogleImage ? (
-              <p>You&apos;re using your Google profile picture. Pick an emoji below to replace it.</p>
-            ) : (
-              <p>Pick an emoji to use as your avatar.</p>
-            )}
+            <p>Upload a photo or pick an emoji below.</p>
           </div>
+        </div>
+      </div>
+
+      {/* Upload photo */}
+      <div className="space-y-2">
+        <Label>Upload a photo</Label>
+        <div className="flex items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploading ? 'Uploading...' : 'Choose Image'}
+          </Button>
+          <span className="text-xs text-muted-foreground">JPEG, PNG, or WebP. Max 2 MB.</span>
         </div>
       </div>
 
       {/* Emoji picker grid */}
       <div className="space-y-2">
-        <Label>Choose an emoji</Label>
+        <Label>Or choose an emoji</Label>
         <div className="grid grid-cols-10 gap-1">
           {EMOJI_OPTIONS.map((emoji) => (
             <button
@@ -181,13 +260,13 @@ export function ProfileSettings() {
             </button>
           ))}
         </div>
-        {hasGoogleImage && (
+        {showingUploadedImage && (
           <button
             type="button"
             onClick={() => setSelectedAvatar(profile!.avatarUrl!)}
             className="text-xs text-muted-foreground hover:underline mt-1"
           >
-            Use my Google profile picture instead
+            Use my uploaded picture instead
           </button>
         )}
       </div>
