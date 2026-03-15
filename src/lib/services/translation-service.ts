@@ -150,14 +150,7 @@ Give a clear explanation in English. If it's a table, explain what the data repr
     imageUrl: string,
     surroundingContext: string,
   ): Promise<string> {
-    // Fetch image and convert to base64
-    const imgRes = await fetch(imageUrl)
-    if (!imgRes.ok) throw new Error('Failed to fetch image')
-    const blob = await imgRes.blob()
-    const arrayBuffer = await blob.arrayBuffer()
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-    const mediaType = blob.type || 'image/jpeg'
-
+    // Use Claude's URL-based image source — no need to fetch/base64 ourselves
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -174,7 +167,7 @@ Give a clear explanation in English. If it's a table, explain what the data repr
           content: [
             {
               type: 'image',
-              source: { type: 'base64', media_type: mediaType, data: base64 },
+              source: { type: 'url', url: imageUrl },
             },
             {
               type: 'text',
