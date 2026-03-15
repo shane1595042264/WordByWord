@@ -1012,6 +1012,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               const isEpigraph = blockType === 'epigraph'
               const isSubheading = blockType === 'subheading'
               const isFigureCaption = blockType === 'figure-caption'
+              const isFootnote = (blockType as string) === 'footnote'
               const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
 
               // Render markdown tables as HTML tables
@@ -1178,6 +1179,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                     isEpigraph ? 'border-l-2 border-violet-500/40 pl-4 italic text-muted-foreground' : ''
                   }${
                     isFigureCaption ? 'text-sm text-muted-foreground italic text-center' : ''
+                  }${
+                    isFootnote ? 'text-xs text-muted-foreground border-t border-border/30 pt-2 mt-4' : ''
                   }`}
                 >
                   {showIndicators && (

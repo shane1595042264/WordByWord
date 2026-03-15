@@ -126,6 +126,15 @@ export class NibMarkdownParser {
       return { blockType: 'figure-caption', content: block }
     }
 
+    // Footnote content: starts with ${ }^{N}$ or similar superscript pattern
+    if (/^\$\{\s*\}\s*\^\{?\d+\}?\$/.test(block.trim())) {
+      // Strip the superscript number prefix and clean up
+      const content = block.replace(/^\$\{\s*\}\s*\^\{?\d+\}?\$\s*/, '').trim()
+      const numMatch = block.match(/\^\{?(\d+)\}?/)
+      const num = numMatch ? numMatch[1] : ''
+      return { blockType: 'footnote' as any, content: `[${num}] ${content}` }
+    }
+
     return { blockType: 'body', content: block }
   }
 

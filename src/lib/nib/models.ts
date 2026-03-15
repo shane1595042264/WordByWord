@@ -75,6 +75,7 @@ export type NibBlockType =
   | 'latex-display'   // Display-mode LaTeX equation block
   | 'table'           // Markdown table
   | 'code-block'      // Code block
+  | 'footnote'        // Footnote content
 
 export interface NibParagraphData {
   sentences: NibSentenceData[]
