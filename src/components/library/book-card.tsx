@@ -83,7 +83,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
   const cardBody = (
     <Card
-      className={`transition-all h-full ${
+      className={`transition-all h-full overflow-hidden ${
         editMode
           ? selected
             ? 'ring-2 ring-primary shadow-lg scale-[0.97] cursor-pointer'
@@ -97,7 +97,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         onToggleSelect?.(book.id, e)
       } : undefined}
     >
-      <CardContent className="p-4 flex flex-col gap-3 relative">
+      <CardContent className="p-4 flex flex-col gap-3 relative min-w-0">
         {editMode && (
           <div className={`absolute top-2 left-2 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
             selected
@@ -130,11 +130,11 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         )}
 
         {(isProcessing || isFailed) && book.jobId && (
-          <div className="flex gap-1">
+          <div className="flex flex-col gap-1 w-full">
             <Button
               variant="outline"
               size="sm"
-              className="flex-1 text-xs"
+              className="w-full text-xs"
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLog(true) }}
             >
               Check Progress
@@ -143,7 +143,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
               <Button
                 variant="destructive"
                 size="sm"
-                className="text-xs"
+                className="w-full text-xs"
                 onClick={async (e) => {
                   e.preventDefault()
                   e.stopPropagation()
