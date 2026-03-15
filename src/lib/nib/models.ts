@@ -45,12 +45,20 @@ export interface NibWordData {
   italic?: boolean
   /** Bounding box in PDF user-space, for precise highlight positioning */
   pdfRect?: NibPdfRect
+  /** Whether this word is a LaTeX token */
+  isLatex?: boolean
+  /** Original LaTeX source string for this token */
+  latexSource?: string
+  /** Whether this token is decorative (operators, braces, sub/superscripts) */
+  isDecorative?: boolean
 }
 
 export interface NibSentenceData {
   words: NibWordData[]
   /** 0-based index within the parent paragraph */
   index: number
+  /** Whether this sentence contains LaTeX tokens */
+  hasLatex?: boolean
 }
 
 /** Discriminator for different block-level element types */
@@ -62,6 +70,7 @@ export type NibBlockType =
   | 'list-item'       // An item in a list
   | 'figure-caption'  // Caption for a figure/table
   | 'epigraph'        // Opening quote/attribution at chapter start
+  | 'latex-display'   // Display-mode LaTeX equation block
 
 export interface NibParagraphData {
   sentences: NibSentenceData[]
@@ -140,6 +149,12 @@ export class NibWord {
   readonly italic: boolean
   /** Bounding box in PDF user-space for precise highlight positioning */
   readonly pdfRect: NibPdfRect | null
+  /** Whether this word is a LaTeX token */
+  readonly isLatex: boolean
+  /** Original LaTeX source string for this token */
+  readonly latexSource: string | undefined
+  /** Whether this token is decorative (operators, braces, sub/superscripts) */
+  readonly isDecorative: boolean
   /** @internal set by NibSentence constructor */
   _sentence!: NibSentence
 
@@ -150,6 +165,9 @@ export class NibWord {
     this.bold = data.bold ?? false
     this.italic = data.italic ?? false
     this.pdfRect = data.pdfRect ?? null
+    this.isLatex = data.isLatex ?? false
+    this.latexSource = data.latexSource
+    this.isDecorative = data.isDecorative ?? false
   }
 
   /** The sentence this word belongs to */
@@ -185,7 +203,7 @@ export class NibWord {
    * Build a context payload suitable for passing to an AI service.
    * Includes the word, its sentence, paragraph excerpt, and page number.
    */
-  getAIContext(): { word: string; sentence: string; paragraphExcerpt: string; pageNumber: number } {
+  getAIContext(): { word: string; sentence: string; paragraphExcerpt: string; pageNumber: number; latexSource?: string } {
     const para = this.paragraph
     // Include up to 2 surrounding sentences for broader context
     const sentIdx = this._sentence.index
@@ -194,27 +212,46 @@ export class NibWord {
     const end = Math.min(sentences.length, sentIdx + 2)
     const excerpt = sentences.slice(start, end).map(s => s.text).join(' ')
 
-    return {
+    const ctx: { word: string; sentence: string; paragraphExcerpt: string; pageNumber: number; latexSource?: string } = {
       word: this.text,
       sentence: this._sentence.text,
       paragraphExcerpt: excerpt,
       pageNumber: this.page.pageNumber,
     }
+
+    if (this.isLatex && this.latexSource) {
+      ctx.latexSource = this.latexSource
+    }
+
+    return ctx
   }
 
   toData(): NibWordData {
-    return { text: this.text, index: this.index, wasHyphenated: this.wasHyphenated || undefined, bold: this.bold || undefined, italic: this.italic || undefined, pdfRect: this.pdfRect ?? undefined }
+    return {
+      text: this.text,
+      index: this.index,
+      wasHyphenated: this.wasHyphenated || undefined,
+      bold: this.bold || undefined,
+      italic: this.italic || undefined,
+      pdfRect: this.pdfRect ?? undefined,
+      isLatex: this.isLatex || undefined,
+      latexSource: this.latexSource || undefined,
+      isDecorative: this.isDecorative || undefined,
+    }
   }
 }
 
 export class NibSentence {
   readonly words: NibWord[]
   readonly index: number
+  /** Whether this sentence contains LaTeX tokens */
+  readonly hasLatex: boolean
   /** @internal set by NibParagraph constructor */
   _paragraph!: NibParagraph
 
   constructor(data: NibSentenceData) {
     this.index = data.index
+    this.hasLatex = data.hasLatex ?? false
     this.words = data.words.map(w => {
       const word = new NibWord(w)
       word._sentence = this
@@ -246,7 +283,7 @@ export class NibSentence {
   }
 
   toData(): NibSentenceData {
-    return { words: this.words.map(w => w.toData()), index: this.index }
+    return { words: this.words.map(w => w.toData()), index: this.index, hasLatex: this.hasLatex || undefined }
   }
 }
 
