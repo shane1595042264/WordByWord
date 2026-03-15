@@ -99,9 +99,6 @@ export default function HomePage() {
               <Link href="/vocabulary">
                 <Button variant="outline">Vocabulary</Button>
               </Link>
-              <Link href="/settings">
-                <Button variant="outline">Settings</Button>
-              </Link>
               {isAdmin && (
                 <Link href="/marketplace">
                   <Button variant="outline">Marketplace</Button>

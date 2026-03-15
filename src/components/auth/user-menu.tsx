@@ -2,6 +2,7 @@
 
 import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect } from 'react'
+import Link from 'next/link'
 
 export function UserMenu() {
   const { data: session } = useSession()
@@ -75,6 +76,13 @@ export function UserMenu() {
             )}
           </div>
           <div className="p-1">
+            <Link
+              href="/settings"
+              onClick={() => setOpen(false)}
+              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+            >
+              Settings
+            </Link>
             <button
               onClick={() => signOut({ callbackUrl: '/auth/login' })}
               className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive"
