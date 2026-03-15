@@ -140,8 +140,16 @@ export class NibMarkdownParser {
     if (blockType === 'latex-display') {
       sentences = [this.buildDisplayMathSentence(content, 0)]
     } else if ((blockType as string) === 'table' || (blockType as string) === 'code-block') {
-      // Store raw content as a single word — viewer handles rendering
-      const word: NibWordData = { text: content, index: 0 }
+      // Store raw content as a single NibWord — vim treats it as one selectable block
+      // The viewer renders the actual HTML, but the NibWord exists for cursor targeting
+      const blockLabel = (blockType as string) === 'table' ? '[Table]' : '[Code]'
+      const word: NibWordData = {
+        text: blockLabel,
+        index: 0,
+        // Store raw content in latexSource for AI context (AI can read raw markdown)
+        latexSource: content,
+        isDecorative: false,
+      }
       sentences = [{ words: [word], index: 0 }]
     } else if (blockType === 'figure-caption' && content.startsWith('![')) {
       sentences = [this.buildImageSentence(content, 0)]

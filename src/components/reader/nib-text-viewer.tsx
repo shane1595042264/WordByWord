@@ -1006,7 +1006,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
 
               // Render markdown tables as HTML tables
               if (blockType === 'table') {
-                const rawMd = para.sentences[0]?.words[0]?.text ?? ''
+                const rawMd = para.sentences[0]?.words[0]?.latexSource ?? para.sentences[0]?.words[0]?.text ?? ''
+                const flatIdx = flatOffset
                 const allRows = rawMd.split('\n').filter((r: string) => r.trim())
                 // Separate header, separator, and body rows
                 const isSeparator = (r: string) => /^\|[\s:|-]+\|$/.test(r.trim().replace(/\s/g, ''))
@@ -1032,8 +1033,23 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                   return cell
                 }
 
+                const isTableCursor = vimMode === 'normal' && vimCursorIndex === flatIdx
+                const isTableHighlighted = highlightedIndices.has(flatIdx) || vimSelectedIndices?.has(flatIdx)
                 return (
-                  <div key={`${page.pageNumber}-p${para.index}`} className="my-4 overflow-x-auto">
+                  <div
+                    key={`${page.pageNumber}-p${para.index}`}
+                    ref={el => { if (el) wordSpanRefs.current.set(flatIdx, el as any) }}
+                    data-word-index={flatIdx}
+                    className={`my-4 overflow-x-auto rounded-md cursor-pointer transition-all ${
+                      isTableCursor ? 'ring-2 ring-yellow-400 bg-yellow-400/10' :
+                      isTableHighlighted ? 'ring-2 ring-blue-400 bg-blue-500/10' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={() => {
+                      const word = para.sentences[0]?.words[0]
+                      if (word) handleWordClick(word, null as any)
+                    }}
+                  >
                     <table className="border-collapse border border-border text-sm">
                       <thead>
                         <tr className="bg-muted/50">
@@ -1065,11 +1081,26 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
 
               // Render code blocks with inline LaTeX rendering
               if (blockType === 'code-block') {
-                const code = para.sentences[0]?.words[0]?.text ?? ''
-                // Split code into lines, render $...$ as KaTeX inline
+                const code = para.sentences[0]?.words[0]?.latexSource ?? para.sentences[0]?.words[0]?.text ?? ''
+                const codeFlatIdx = flatOffset
+                const isCodeCursor = vimMode === 'normal' && vimCursorIndex === codeFlatIdx
+                const isCodeHighlighted = highlightedIndices.has(codeFlatIdx) || vimSelectedIndices?.has(codeFlatIdx)
                 const codeLines = code.split('\n')
                 return (
-                  <div key={`${page.pageNumber}-p${para.index}`} className="my-4">
+                  <div
+                    key={`${page.pageNumber}-p${para.index}`}
+                    ref={el => { if (el) wordSpanRefs.current.set(codeFlatIdx, el as any) }}
+                    data-word-index={codeFlatIdx}
+                    className={`my-4 cursor-pointer transition-all rounded-md ${
+                      isCodeCursor ? 'ring-2 ring-yellow-400' :
+                      isCodeHighlighted ? 'ring-2 ring-blue-400' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={() => {
+                      const word = para.sentences[0]?.words[0]
+                      if (word) handleWordClick(word, null as any)
+                    }}
+                  >
                     <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre leading-relaxed">
                       {codeLines.map((line: string, li: number) => (
                         <span key={li}>
