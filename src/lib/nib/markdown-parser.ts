@@ -28,6 +28,26 @@ export class NibMarkdownParser {
     const paragraphs: NibParagraphData[] = []
 
     for (const block of blocks) {
+      // Special case: block contains image + caption on separate lines
+      // e.g. "![](url)\nFigure 0.1. Caption text..."
+      if (block.startsWith('![') && block.includes('\n')) {
+        const lines = block.split('\n')
+        const imgLine = lines[0]
+        const captionLines = lines.slice(1).join('\n').trim()
+
+        // Image paragraph
+        const imgPara = this.buildParagraph(imgLine, 'figure-caption', paragraphs.length)
+        paragraphs.push(imgPara)
+
+        // Caption paragraph (if any)
+        if (captionLines) {
+          const { blockType: capType, content: capContent } = this.classifyBlock(captionLines)
+          const capPara = this.buildParagraph(capContent, capType, paragraphs.length)
+          paragraphs.push(capPara)
+        }
+        continue
+      }
+
       const { blockType, content } = this.classifyBlock(block)
       const paragraph = this.buildParagraph(content, blockType, paragraphs.length)
       paragraphs.push(paragraph)
