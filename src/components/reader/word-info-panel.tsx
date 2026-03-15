@@ -145,7 +145,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     })
   }, [word])
 
+  // Detect if this is a block element (table, code, figure) that should use explanation mode
+  const isBlockContent = !!(word.latexSource && (word.text.startsWith('[') || word.imageUrl))
+  const isImageContent = !!word.imageUrl
+
   // Auto-translate when word changes (and we have an API key)
+  // For block content, skip translation and auto-explain instead
   useEffect(() => {
     if (!apiKey) {
       setTranslation(null)
@@ -154,41 +159,62 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     }
 
     let cancelled = false
-    setTranslating(true)
     setTranslation(null)
     setTranslationError(null)
     setExplanation(null)
     setShowExplanation(false)
 
-    import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
-      // Use latexSource for block content (tables, code, figures) instead of placeholder text
-      const wordText = word.latexSource || word.text
-      const contextText = word.latexSource ? `${wordText}\n\nContext: ${word.sentence.text}` : word.sentence.text
-      svc.translateWord(wordText, contextText, targetLang)
-        .then(result => {
-          if (!cancelled) {
-            setTranslation(result)
-            setTranslating(false)
-          }
-        })
-        .catch(err => {
-          if (!cancelled) {
-            setTranslationError(err.message || 'Translation failed')
-            setTranslating(false)
-          }
-        })
-    })
+    if (isBlockContent) {
+      // Block content (table/code/figure) → skip translation, auto-explain
+      setTranslating(false)
+      setShowExplanation(true)
+      setExplaining(true)
 
-    // Also lazy-load the explanation in the background
-    import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
-      // We need to wait for translation to complete before explaining
-      // This is handled separately when user clicks "See explanation"
-    })
+      import('@/lib/services/translation-service').then(async ({ TranslationService }) => {
+        const svc = new TranslationService(apiKey)
+        try {
+          let result: string
+          if (isImageContent && word.imageUrl) {
+            // Send image to Claude Vision
+            result = await svc.explainImage(word.imageUrl, word.sentence.text)
+          } else {
+            // Send raw content (markdown table, code)
+            result = await svc.explainContent(word.latexSource!, word.sentence.text)
+          }
+          if (!cancelled) {
+            setExplanation(result)
+            setExplaining(false)
+          }
+        } catch (err: any) {
+          if (!cancelled) {
+            setExplanation(`Explanation failed: ${err.message}`)
+            setExplaining(false)
+          }
+        }
+      })
+    } else {
+      // Regular word → translate as usual
+      setTranslating(true)
+      import('@/lib/services/translation-service').then(({ TranslationService }) => {
+        const svc = new TranslationService(apiKey)
+        svc.translateWord(word.text, word.sentence.text, targetLang)
+          .then(result => {
+            if (!cancelled) {
+              setTranslation(result)
+              setTranslating(false)
+            }
+          })
+          .catch(err => {
+            if (!cancelled) {
+              setTranslationError(err.message || 'Translation failed')
+              setTranslating(false)
+            }
+          })
+      })
+    }
 
     return () => { cancelled = true }
-  }, [word, apiKey, targetLang])
+  }, [word, apiKey, targetLang, isBlockContent, isImageContent])
 
   // Auto-translate sentence when in sentence mode
   useEffect(() => {

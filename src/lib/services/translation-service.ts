@@ -121,6 +121,79 @@ Paragraph context: "${paragraphText}"`
     return { explanation }
   }
 
+  /**
+   * Explain content (table, code block, formula, or any text) in context.
+   * Used for explanation mode instead of translation.
+   */
+  async explainContent(
+    content: string,
+    surroundingContext: string,
+  ): Promise<string> {
+    const prompt = `Explain the following content clearly and concisely. What does it mean, what is it showing, and how does it relate to the surrounding context?
+
+Content:
+${content}
+
+Surrounding context:
+${surroundingContext}
+
+Give a clear explanation in English. If it's a table, explain what the data represents. If it's code, explain the algorithm. If it's a formula, explain what each variable means. Be thorough but concise.`
+
+    return this.callClaude(prompt, 500)
+  }
+
+  /**
+   * Explain a figure/image using Claude Vision.
+   * Sends the image URL directly to Claude for visual analysis.
+   */
+  async explainImage(
+    imageUrl: string,
+    surroundingContext: string,
+  ): Promise<string> {
+    // Fetch image and convert to base64
+    const imgRes = await fetch(imageUrl)
+    if (!imgRes.ok) throw new Error('Failed to fetch image')
+    const blob = await imgRes.blob()
+    const arrayBuffer = await blob.arrayBuffer()
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+    const mediaType = blob.type || 'image/jpeg'
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 },
+            },
+            {
+              type: 'text',
+              text: `Explain this figure/diagram clearly. What does it show? How does it relate to the surrounding text?\n\nSurrounding context: ${surroundingContext}`,
+            },
+          ],
+        }],
+      }),
+    })
+
+    if (!res.ok) {
+      const errorText = await res.text()
+      throw new Error(`Vision API error (${res.status}): ${errorText}`)
+    }
+
+    const data = await res.json()
+    return data.content?.[0]?.text ?? ''
+  }
+
   private async callClaude(prompt: string, maxTokens: number): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
