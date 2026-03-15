@@ -70,6 +70,7 @@ export interface Section {
   startPage: number
   endPage: number
   extractedText: string | null
+  richContent?: string | null  // Mathpix Markdown (tables, formulas, formatted text)
   isRead: boolean
   readAt: number | null
   lastPageViewed: number | null  // last page user was on within this section

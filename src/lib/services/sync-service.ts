@@ -509,6 +509,7 @@ class SyncService {
         startPage: (ss.startPage as number) ?? 0,
         endPage: (ss.endPage as number) ?? 0,
         extractedText: (ss.extractedText as string) ?? null,
+        richContent: (ss.richContent as string) ?? null,
         isRead: (ss.isRead as boolean) ?? false,
         readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
         lastPageViewed: (ss.lastPageViewed as number) ?? null,
@@ -691,6 +692,7 @@ class SyncService {
           startPage: (ss.startPage as number) ?? 0,
           endPage: (ss.endPage as number) ?? 0,
           extractedText: (ss.extractedText as string) ?? null,
+          richContent: (ss.richContent as string) ?? null,
           isRead: (ss.isRead as boolean) ?? false,
           readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
           lastPageViewed: (ss.lastPageViewed as number) ?? null,
@@ -710,6 +712,7 @@ class SyncService {
             ),
             lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
             extractedText: (ss.extractedText as string) ?? local.extractedText,
+            richContent: (ss.richContent as string) ?? local.richContent,
             updatedAt: serverUpdated,
           })
         }

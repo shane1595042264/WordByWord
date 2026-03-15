@@ -285,8 +285,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   }, [endPage, startPage, nibDocument, nextSection?.startPage])
   const totalSectionPages = effectiveEndPage - startPage + 1
 
+  // Use richContent (Mathpix Markdown) as fallback when extractedText is null
+  const sectionText = section?.extractedText || section?.richContent || null
+
   useEffect(() => {
-    if (!section?.extractedText || !book) { setNibDocument(null); return }
+    if (!sectionText || !book || !section) { setNibDocument(null); return }
 
     let cancelled = false
     const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
@@ -312,14 +315,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             const fallbackService = new NibService()
             if (isIntroSection) {
               setNibDocument(fallbackService.parseExtractedTextIntroOnly(
-                section.extractedText!,
+                sectionText!,
                 book.title,
                 book.author,
                 section.startPage,
               ))
             } else {
               setNibDocument(fallbackService.parseExtractedTextBodyOnly(
-                section.extractedText!,
+                sectionText!,
                 book.title,
                 book.author,
                 section.startPage,
@@ -335,14 +338,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         const nibService = new NibService()
         if (isIntroSection) {
           setNibDocument(nibService.parseExtractedTextIntroOnly(
-            section.extractedText,
+            sectionText,
             book.title,
             book.author,
             section.startPage,
           ))
         } else {
           setNibDocument(nibService.parseExtractedTextBodyOnly(
-            section.extractedText,
+            sectionText,
             book.title,
             book.author,
             section.startPage,
@@ -353,7 +356,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }
 
     return () => { cancelled = true }
-  }, [section?.extractedText, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sectionText, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
 
@@ -500,10 +503,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   linePositions={linePositions}
                 />
               <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
-                {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
+                {/^(table of )?contents$/i.test(section.title) && sectionText ? (
                   <TocViewer
                     bookId={bookId}
-                    extractedText={section.extractedText}
+                    extractedText={sectionText}
                     sectionTitle={section.title}
                   />
                 ) : nibDocument ? (
@@ -518,7 +521,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     vimMode={vim.mode}
                   />
                 ) : (
-                  <TextViewer text={section.extractedText} sectionTitle={section.title} />
+                  <TextViewer text={sectionText} sectionTitle={section.title} />
                 )}
               </div>
               </div>
@@ -532,7 +535,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   pdfBlob={book.pdfBlob}
                   startPage={section.startPage}
                   endPage={effectiveEndPage}
-                  text={section.extractedText}
+                  text={sectionText}
                   nibDocument={nibDocument}
                   sectionTitle={section.title}
                   readingMode={readingMode}
