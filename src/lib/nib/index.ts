@@ -45,3 +45,6 @@ export type { NibTextParserConfig } from './text-parser'
 
 // LaTeX tokenizer
 export { tokenizeLatex } from './latex-tokenizer'
+
+// Markdown parser (Mathpix Markdown → NibDocument with LaTeX tokenization)
+export { NibMarkdownParser } from './markdown-parser'

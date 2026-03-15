@@ -1,0 +1,228 @@
+/**
+ * NibMarkdownParser — Converts Mathpix-style Markdown (with LaTeX) to NibDocumentData.
+ *
+ * Handles:
+ *   - Block classification: body, blockquote, list-item, latex-display
+ *   - Sentence splitting with abbreviation awareness
+ *   - Inline LaTeX ($...$) tokenization via tokenizeLatex()
+ *   - Display math ($$...$$) as dedicated latex-display paragraphs
+ */
+
+import type {
+  NibDocumentData,
+  NibPageData,
+  NibParagraphData,
+  NibSentenceData,
+  NibWordData,
+  NibBlockType,
+} from './models'
+import { tokenizeLatex } from './latex-tokenizer'
+
+/** Abbreviation patterns that should NOT trigger sentence breaks */
+const ABBREVIATION_RE =
+  /(?:^|\s)(?:e\.g|i\.e|Dr|Mr|Mrs|Ms|vs|etc|Prof|Jr|Sr|St|Vol|[A-Z])\.$/
+
+export class NibMarkdownParser {
+  parse(markdown: string, title: string, author: string): NibDocumentData {
+    const blocks = this.splitBlocks(markdown)
+    const paragraphs: NibParagraphData[] = []
+
+    for (const block of blocks) {
+      const { blockType, content } = this.classifyBlock(block)
+      const paragraph = this.buildParagraph(content, blockType, paragraphs.length)
+      paragraphs.push(paragraph)
+    }
+
+    const page: NibPageData = {
+      pageNumber: 1,
+      header: null,
+      footer: null,
+      footnotes: [],
+      paragraphs,
+      figures: [],
+      listItems: [],
+    }
+
+    return {
+      version: 1,
+      sourceTitle: title,
+      sourceAuthor: author,
+      pages: [page],
+      createdAt: Date.now(),
+    }
+  }
+
+  /** Split markdown on double newlines into blocks, filtering empties */
+  private splitBlocks(markdown: string): string[] {
+    return markdown
+      .split(/\n\n+/)
+      .map(b => b.trim())
+      .filter(b => b.length > 0)
+  }
+
+  /** Classify a block by its leading characters */
+  private classifyBlock(block: string): { blockType: NibBlockType; content: string } {
+    // Display math: starts and ends with $$
+    if (block.startsWith('$$') && block.endsWith('$$')) {
+      return { blockType: 'latex-display', content: block.slice(2, -2).trim() }
+    }
+
+    // Blockquote: starts with >
+    if (block.startsWith('>')) {
+      const content = block.replace(/^>\s?/gm, '').trim()
+      return { blockType: 'blockquote', content }
+    }
+
+    // List item: starts with - or * followed by space
+    if (/^[-*]\s/.test(block)) {
+      const content = block.replace(/^[-*]\s/, '').trim()
+      return { blockType: 'list-item', content }
+    }
+
+    return { blockType: 'body', content: block }
+  }
+
+  /** Build a NibParagraphData from classified content */
+  private buildParagraph(
+    content: string,
+    blockType: NibBlockType,
+    index: number,
+  ): NibParagraphData {
+    let sentences: NibSentenceData[]
+
+    if (blockType === 'latex-display') {
+      sentences = [this.buildDisplayMathSentence(content, 0)]
+    } else {
+      const sentenceTexts = this.splitSentences(content)
+      sentences = sentenceTexts.map((text, i) => this.buildSentence(text, i))
+    }
+
+    return { sentences, index, blockType }
+  }
+
+  /** Build a single display-math sentence: all tokens from tokenizeLatex, all isLatex */
+  private buildDisplayMathSentence(latex: string, sentenceIndex: number): NibSentenceData {
+    const tokens = tokenizeLatex(latex)
+    const words: NibWordData[] = tokens.map((token, i) => ({
+      text: token.text,
+      index: i,
+      isLatex: true,
+      latexSource: latex,
+      isDecorative: token.isDecorative,
+    }))
+
+    return { words, index: sentenceIndex, hasLatex: true }
+  }
+
+  /**
+   * Split text into sentences.
+   * Splits on `. `, `? `, `! ` but NOT after common abbreviations
+   * or single uppercase letters (e.g. "A.").
+   */
+  private splitSentences(text: string): string[] {
+    const sentences: string[] = []
+    let current = ''
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]
+      current += ch
+
+      // Check for sentence-ending punctuation followed by a space
+      if ((ch === '.' || ch === '?' || ch === '!') && i + 1 < text.length && text[i + 1] === ' ') {
+        // Check if this is an abbreviation
+        if (ch === '.' && ABBREVIATION_RE.test(current)) {
+          continue
+        }
+        sentences.push(current.trim())
+        current = ''
+        // Skip the space after the punctuation
+        i++
+      }
+    }
+
+    if (current.trim().length > 0) {
+      sentences.push(current.trim())
+    }
+
+    return sentences
+  }
+
+  /** Build a NibSentenceData from text that may contain inline LaTeX ($...$) */
+  private buildSentence(text: string, sentenceIndex: number): NibSentenceData {
+    const words: NibWordData[] = []
+    let hasLatex = false
+
+    // Split text into segments of plain text and inline LaTeX
+    const segments = this.splitInlineLatex(text)
+
+    for (const segment of segments) {
+      if (segment.isLatex) {
+        hasLatex = true
+        const tokens = tokenizeLatex(segment.text)
+        for (const token of tokens) {
+          words.push({
+            text: token.text,
+            index: words.length,
+            isLatex: true,
+            latexSource: segment.text,
+            isDecorative: token.isDecorative,
+          })
+        }
+      } else {
+        // Plain text: split on whitespace
+        const plainWords = segment.text.split(/\s+/).filter(w => w.length > 0)
+        for (const w of plainWords) {
+          words.push({
+            text: w,
+            index: words.length,
+          })
+        }
+      }
+    }
+
+    return { words, index: sentenceIndex, hasLatex: hasLatex || undefined }
+  }
+
+  /**
+   * Split text into alternating plain-text and inline-LaTeX segments.
+   * Inline LaTeX is delimited by single $ (but NOT $$).
+   */
+  private splitInlineLatex(text: string): Array<{ text: string; isLatex: boolean }> {
+    const segments: Array<{ text: string; isLatex: boolean }> = []
+    let i = 0
+    let plainStart = 0
+
+    while (i < text.length) {
+      // Check for single $ that's not $$
+      if (text[i] === '$' && (i + 1 >= text.length || text[i + 1] !== '$')) {
+        // Flush preceding plain text
+        if (i > plainStart) {
+          segments.push({ text: text.slice(plainStart, i), isLatex: false })
+        }
+
+        // Find closing $
+        const close = text.indexOf('$', i + 1)
+        if (close === -1) {
+          // No closing $ — treat as plain text
+          plainStart = i
+          i++
+          continue
+        }
+
+        // Extract LaTeX content (without delimiters)
+        segments.push({ text: text.slice(i + 1, close), isLatex: true })
+        i = close + 1
+        plainStart = i
+      } else {
+        i++
+      }
+    }
+
+    // Flush remaining plain text
+    if (plainStart < text.length) {
+      segments.push({ text: text.slice(plainStart), isLatex: false })
+    }
+
+    return segments
+  }
+}
