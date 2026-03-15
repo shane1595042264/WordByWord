@@ -550,6 +550,7 @@ class SyncService {
     return {
       id: book.remoteId,
       customTitle: book.title,
+      coverUrl: book.coverImage ?? null,
       structureSource: book.structureSource,
       processingStatus: book.processingStatus,
       lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
@@ -641,6 +642,7 @@ class SyncService {
       if (serverUpdated > local.updatedAt) {
         await db.books.update(localId, {
           title: (sb.customTitle as string) || local.title,
+          coverImage: (sb.coverUrl as string) || local.coverImage,
           structureSource: (sb.structureSource as Book['structureSource']) || local.structureSource,
           processingStatus: (sb.processingStatus as Book['processingStatus']) || local.processingStatus,
           lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : local.lastReadAt,
