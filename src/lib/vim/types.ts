@@ -35,6 +35,8 @@ export type VimActionType =
   | 'yank'                // copy (yank) current selection to clipboard
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit to normal mode / clear selection
+  | 'select-word-big'      // W — skip latex runs, jump to next non-latex word
+  | 'select-paragraph'     // S — next paragraph in sentence mode
   | 'custom'              // arbitrary callback (for future extensibility)
 
 export interface VimAction {

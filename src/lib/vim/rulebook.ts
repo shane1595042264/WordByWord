@@ -158,6 +158,17 @@ export const RULEBOOK: VimRule[] = [
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   {
+    id: 'normal:W',
+    label: 'Next big word (skip formula)',
+    modes: ['normal'],
+    key: 'W',
+    shift: true,
+    action: { type: 'select-word-big', direction: 1 },
+    acceptsCount: true,
+    description: 'Jump to next word, skipping over LaTeX formula tokens',
+  },
+
+  {
     id: 'normal:s',
     label: 'Enter Sentence mode',
     modes: ['normal'],
@@ -256,6 +267,16 @@ export const RULEBOOK: VimRule[] = [
     action: { type: 'select-sentence', direction: 1 },
     acceptsCount: true,
     description: 'Select next [count] sentence(s) (same as l)',
+  },
+  {
+    id: 'sentence:S',
+    label: 'Next paragraph',
+    modes: ['sentence'],
+    key: 'S',
+    shift: true,
+    action: { type: 'select-paragraph', direction: 1 },
+    acceptsCount: true,
+    description: 'Jump to next paragraph or display equation',
   },
   {
     id: 'sentence:enter',

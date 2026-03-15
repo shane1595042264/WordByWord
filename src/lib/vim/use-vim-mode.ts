@@ -181,6 +181,25 @@ export function useVimMode({
         }
         break
 
+      case 'select-word-big':
+        if (onSelectWord) {
+          // Move forward skipping latex words until we land on a non-latex word
+          // For now, just move word by word — the latex-aware skipping will be
+          // implemented when we have access to the word list's isLatex flags
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) onSelectWord(dir)
+        }
+        break
+
+      case 'select-paragraph':
+        // Jump to first sentence of next paragraph
+        // For now, move by multiple sentences as approximation
+        if (onSelectSentence) {
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count * 3; i++) onSelectSentence(dir)
+        }
+        break
+
       case 'select-line':
         // Enter visual mode from any non-visual mode, then select line
         if (mode !== 'visual') setMode('visual')
