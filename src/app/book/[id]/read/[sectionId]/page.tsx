@@ -289,12 +289,26 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const sectionText = section?.extractedText || section?.richContent || null
 
   useEffect(() => {
-    if (!sectionText || !book || !section) { setNibDocument(null); return }
+    if (!book || !section) { setNibDocument(null); return }
+    if (!sectionText && !section.richContent) { setNibDocument(null); return }
 
     let cancelled = false
     const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
 
-    // Try rich PDF parsing first (preserves bold/italic font info)
+    // Priority 1: richContent (Mathpix Markdown) — synchronous, no flash
+    if (section.richContent) {
+      ;(async () => {
+        const { NibMarkdownParser } = await import('@/lib/nib/markdown-parser')
+        const mdParser = new NibMarkdownParser()
+        const docData = mdParser.parse(section.richContent!, book.title, book.author)
+        const { NibDocument: NibDoc } = await import('@/lib/nib')
+        const doc = NibDoc.fromData(docData)
+        if (!cancelled) setNibDocument(doc)
+      })()
+      return () => { cancelled = true }
+    }
+
+    // Priority 2: rich PDF parsing (preserves bold/italic font info)
     if (book.pdfBlob) {
       const nibService = new NibService()
       nibService.parsePages(
@@ -332,8 +346,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           } catch { setNibDocument(null) }
         }
       })
-    } else {
-      // Text-based parsing (when no PDF blob)
+    } else if (sectionText) {
+      // Priority 3: Text-based parsing (when no PDF blob)
       try {
         const nibService = new NibService()
         if (isIntroSection) {
@@ -353,10 +367,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           ))
         }
       } catch { setNibDocument(null) }
+    } else {
+      setNibDocument(null)
     }
 
     return () => { cancelled = true }
-  }, [sectionText, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sectionText, section?.richContent, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
 
