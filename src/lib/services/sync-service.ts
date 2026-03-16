@@ -283,7 +283,11 @@ class SyncService {
       const activeServerBooks = serverBooks.filter(sb => !sb.deletedAt)
       const deletedServerBooks = serverBooks.filter(sb => sb.deletedAt)
       const cloudOnlyBooks = activeServerBooks.filter(sb => !existingRemoteIds.has(sb.id as string))
-      const localOnlyBooks = allBooks.filter(b => b.remoteId && !serverBooks.some(sb => sb.id === b.remoteId))
+      // Only detect hard-deleted books on INIT sync (from epoch) where server returns ALL books.
+      // On incremental syncs, missing books just means they weren't modified — NOT deleted.
+      const localOnlyBooks = isInitSync
+        ? allBooks.filter(b => b.remoteId && !serverBooks.some(sb => sb.id === b.remoteId))
+        : []
       // Books that exist locally but server says deleted
       const cloudDeletedBooks = deletedServerBooks.filter(sb => existingRemoteIds.has(sb.id as string))
 
