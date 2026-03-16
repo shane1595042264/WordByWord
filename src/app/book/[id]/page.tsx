@@ -4,9 +4,11 @@ import { use, useState, useCallback, useTransition } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useBookDetail } from '@/hooks/use-book-detail'
 import { ProgressDrilldown } from '@/components/dashboard/progress-drilldown'
 import { ProcessButton } from '@/components/dashboard/process-button'
+import type { Divider } from '@/components/editor/page-strip-editor'
 
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -16,6 +18,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const [editAuthor, setEditAuthor] = useState('')
   const [saving, setSaving] = useState(false)
   const [generatingCover, setGeneratingCover] = useState(false)
+  const [showChapterEditor, setShowChapterEditor] = useState(false)
 
   const startEditing = useCallback(() => {
     if (!book) return
@@ -210,7 +213,75 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
 
-      <ProgressDrilldown book={book} />
+      <ProgressDrilldown book={book} onReorganize={() => setShowChapterEditor(true)} />
+
+      {/* Chapter reorganize dialog */}
+      <Dialog open={showChapterEditor} onOpenChange={setShowChapterEditor}>
+        <DialogContent className="max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Reorganize Chapters</DialogTitle>
+          </DialogHeader>
+          {showChapterEditor && book.pdfBlob && book.remoteId && (() => {
+            // Lazy import to avoid SSR issues with pdf.js
+            const PageStripEditor = require('@/components/editor/page-strip-editor').PageStripEditor
+            const existingDividers: Divider[] = book.chapters
+              .filter(ch => ch.startPage > 1)
+              .map(ch => ({ page: ch.startPage, title: ch.title }))
+
+            return (
+              <PageStripEditor
+                pdfBlob={book.pdfBlob}
+                startPage={1}
+                endPage={book.totalPages}
+                totalBookPages={book.totalPages}
+                bookRemoteId={book.remoteId!}
+                existingDividers={existingDividers}
+                level="chapter"
+                onSave={async (dividers: Divider[]) => {
+                  const { StructureService } = await import('@/lib/services/structure-service')
+                  const svc = new StructureService()
+                  const sorted = [...dividers].sort((a, b) => a.page - b.page)
+                  const chapters: Array<{ title: string; startPage: number; endPage: number }> = []
+                  let currentStart = 1
+                  for (const div of sorted) {
+                    chapters.push({
+                      title: chapters.length === 0 ? (book.chapters[0]?.title || 'Chapter 1') : chapters[chapters.length - 1]?.title || 'Chapter',
+                      startPage: currentStart,
+                      endPage: div.page - 1,
+                    })
+                    currentStart = div.page
+                  }
+                  // Fix titles: each divider names the chapter that STARTS at that page
+                  const finalChapters: Array<{ title: string; startPage: number; endPage: number }> = []
+                  let cs = 1
+                  for (let i = 0; i < sorted.length; i++) {
+                    finalChapters.push({
+                      title: i === 0 ? (book.chapters[0]?.title || 'Chapter 1') : sorted[i - 1].title,
+                      startPage: cs,
+                      endPage: sorted[i].page - 1,
+                    })
+                    cs = sorted[i].page
+                  }
+                  finalChapters.push({
+                    title: sorted.length > 0 ? sorted[sorted.length - 1].title : 'Chapter 1',
+                    startPage: cs,
+                    endPage: book.totalPages,
+                  })
+
+                  await svc.saveStructure(book.remoteId!, finalChapters)
+                  // Force sync and refresh
+                  const { syncService } = await import('@/lib/services/sync-service')
+                  syncService.markDirty()
+                  await syncService.sync()
+                  setShowChapterEditor(false)
+                  refresh()
+                }}
+                onClose={() => setShowChapterEditor(false)}
+              />
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
