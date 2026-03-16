@@ -142,6 +142,7 @@ class SyncService {
     title: string,
     author?: string,
     totalPages?: number,
+    mode?: string,
   ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string; jobId?: string } | null> {
     const token = await this.getToken()
     if (!token) return null
@@ -151,6 +152,7 @@ class SyncService {
     formData.append('title', title)
     if (author) formData.append('author', author)
     if (totalPages) formData.append('totalPages', String(totalPages))
+    if (mode) formData.append('mode', mode)
 
     try {
       const res = await fetch(`${this.getApiUrl()}/books/upload`, {
