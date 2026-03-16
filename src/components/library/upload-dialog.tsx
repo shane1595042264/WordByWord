@@ -70,7 +70,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         pdfBlob: file,
         coverImage: uploadResult?.coverUrl || coverImage,
         structureSource: 'native',
-        processingStatus: uploadResult ? 'processing' : 'pending',
+        processingStatus: uploadResult?.jobId ? 'processing' : 'complete',
         createdAt: now,
         updatedAt: now,
         lastReadAt: null,
