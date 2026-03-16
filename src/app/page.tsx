@@ -106,8 +106,11 @@ export default function HomePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onProcessingComplete={async () => {
-            // Sync from cloud to get processed chapters/sections
+            // Force full sync from epoch to pull new chapters/sections from processing
+            localStorage.removeItem('nibble_lastSyncedAt')
             const { syncService } = await import('@/lib/services/sync-service')
+            // @ts-ignore — reset init flag to force full sync
+            syncService['hasInitSynced'] = false
             await syncService.sync()
             refresh()
           }}
