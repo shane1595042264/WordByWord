@@ -62,7 +62,7 @@ export default function HomePage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">Bit by Bit</h1>
+          <h1 className="text-3xl font-bold">Nibbler</h1>
           <p className="text-muted-foreground">Your reading progress, section by section</p>
         </div>
         <div className="flex gap-2 items-center">
