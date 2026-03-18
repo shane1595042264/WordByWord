@@ -501,7 +501,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setHighlightedIndices(new Set()) // clear sentence highlight
         const span = wordSpanRefs.current.get(vimCursorRef.current)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         // Sync cursor line with selected word
         reportCursorLineForWord(vimCursorRef.current)
@@ -546,7 +546,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         // Sync cursor line with first word of sentence
         reportCursorLineForWord(flatIdx)
@@ -708,7 +708,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             setSelectedWord(word)
             const span = wordSpanRefs.current.get(bestIndex)
             if (span) {
-              span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+              span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
             }
             reportCursorLineForWord(bestIndex)
             // Notify parent (for side-by-side PDF sync)
@@ -735,7 +735,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
           onWordSelect?.(word)
         }
         const span = wordSpanRefs.current.get(idx)
-        if (span) span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        if (span) span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       } else {
         // Blank line — clear word selection, just move the cursor line indicator
         setSelectedWord(null)
@@ -829,7 +829,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         reportCursorLineForWord(flatIdx)
         // Notify parent (for side-by-side PDF sync)
@@ -859,7 +859,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             const spanRect = firstSpan.getBoundingClientRect()
             const containerRect = container.getBoundingClientRect()
             if (spanRect.top < containerRect.top || spanRect.bottom > containerRect.bottom) {
-              firstSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+              firstSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
             }
           }
         }
