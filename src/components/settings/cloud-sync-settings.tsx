@@ -10,17 +10,28 @@ export function CloudSyncSettings() {
   const [syncing, setSyncing] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<'download' | 'upload' | null>(null)
-  const lastSynced = syncService.getLastSyncedAt()
+  const [lastSynced, setLastSynced] = useState<string | null>(syncService.getLastSyncedAt())
 
   const refreshStatus = useCallback(async () => {
     setLoading(true)
     const s = await syncService.getCloudStatus()
     setStatus(s)
+    setLastSynced(syncService.getLastSyncedAt())
     setLoading(false)
   }, [])
 
   useEffect(() => {
     refreshStatus()
+  }, [refreshStatus])
+
+  // Listen for background sync completion and refresh displayed data
+  useEffect(() => {
+    const onSyncComplete = () => {
+      setLastSynced(syncService.getLastSyncedAt())
+      refreshStatus()
+    }
+    window.addEventListener('nibble:sync-complete', onSyncComplete)
+    return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
   }, [refreshStatus])
 
   const handleDownload = async () => {

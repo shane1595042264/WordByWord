@@ -52,13 +52,37 @@ class SyncService {
 
     // Full sync on init — always sync from epoch on first load to catch all changes
     this.hasInitSynced = false
-    this.sync()
+    this.syncWithRetry()
+  }
+
+  /**
+   * Attempt sync with retry — handles the race condition where
+   * the session cookie may not be fully propagated yet after login.
+   */
+  private async syncWithRetry(retries = 3, delayMs = 1500): Promise<void> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      const tokenBefore = await this.getToken()
+      if (tokenBefore) {
+        // Token available — sync will proceed normally
+        await this.sync()
+        return
+      }
+      this.log('init:retry', `token not available, attempt ${attempt}/${retries}`)
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs))
+      }
+    }
+    // Final attempt even without token pre-check — sync() handles null gracefully
+    this.log('init:retry', 'all retries exhausted, attempting final sync')
+    await this.sync()
   }
 
   destroy() {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.cleanupFns.forEach(fn => fn())
     this.cleanupFns = []
+    // Reset syncing flag so the next init() can sync successfully
+    this.isSyncing = false
   }
 
   // ── Logging ───────────────────────────────────────────────────
@@ -196,9 +220,15 @@ class SyncService {
   // ── Core sync (bidirectional) ────────────────────────────────
 
   async sync(): Promise<void> {
-    if (this.isSyncing) return
+    if (this.isSyncing) {
+      this.log('sync:skip', 'already syncing')
+      return
+    }
     const token = await this.getToken()
-    if (!token) return
+    if (!token) {
+      this.log('sync:skip', 'no token available (not authenticated?)')
+      return
+    }
 
     this.isSyncing = true
     try {
