@@ -89,8 +89,9 @@ export function useVimMode({
 
     // Allow Ctrl+E and Ctrl+Y to pass through for Vim scrolling, but block other Ctrl/Meta/Alt combinations
     // The actual scrolling action will be handled by the rulebook lookup.
+    // preventDefault immediately to stop browser defaults (e.g. Chrome address bar focus on Ctrl+E).
     if (e.ctrlKey && (e.key === 'e' || e.key === 'y')) {
-      // Do nothing here, let the rulebook handle it.
+      e.preventDefault()
     } else if (e.ctrlKey || e.metaKey || e.altKey) {
       return
     }

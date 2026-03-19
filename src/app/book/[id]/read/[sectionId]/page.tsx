@@ -43,6 +43,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   const contentRef = useRef<HTMLDivElement>(null)
   const textScrollRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>
+  const pdfScrollRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
@@ -133,6 +134,72 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }, []),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
+
+  // ── PDF mode: Vim-style scroll keybindings (Ctrl+E, Ctrl+Y, d, u, gg, G) ──
+  const lastPdfGTime = useRef(0)
+  useEffect(() => {
+    if (viewMode !== 'pdf') return
+    const LINE_HEIGHT = 24
+    const GG_TIMEOUT = 500
+
+    const handlePdfKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+
+      const el = pdfScrollRef.current
+      if (!el) return
+
+      // Ctrl+E — scroll down one line
+      if (e.ctrlKey && e.key === 'e') {
+        e.preventDefault()
+        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+      // Ctrl+Y — scroll up one line
+      if (e.ctrlKey && e.key === 'y') {
+        e.preventDefault()
+        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+
+      // Block other Ctrl/Meta/Alt combos
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      // d — half-page down
+      if (e.key === 'd') {
+        e.preventDefault()
+        el.scrollBy({ top: el.clientHeight * 0.5, behavior: 'smooth' })
+        return
+      }
+      // u — half-page up
+      if (e.key === 'u') {
+        e.preventDefault()
+        el.scrollBy({ top: -el.clientHeight * 0.5, behavior: 'smooth' })
+        return
+      }
+      // G — scroll to bottom
+      if (e.key === 'G' && e.shiftKey) {
+        e.preventDefault()
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+        return
+      }
+      // gg — scroll to top (double-tap g)
+      if (e.key === 'g' && !e.shiftKey) {
+        const now = Date.now()
+        if (now - lastPdfGTime.current < GG_TIMEOUT) {
+          e.preventDefault()
+          el.scrollTo({ top: 0, behavior: 'smooth' })
+          lastPdfGTime.current = 0
+          return
+        }
+        lastPdfGTime.current = now
+        e.preventDefault()
+        return
+      }
+    }
+    window.addEventListener('keydown', handlePdfKey)
+    return () => window.removeEventListener('keydown', handlePdfKey)
+  }, [viewMode])
 
   // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
   // On first load, restore to saved word index if available from Continue Reading params
@@ -506,6 +573,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               onPageChange={handlePageChange}
               onPageProgress={handlePageProgress}
               sectionEndPage={section.endPage}
+              scrollRef={pdfScrollRef}
             />
           )}
           {viewMode === 'text' && (
