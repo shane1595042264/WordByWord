@@ -20,10 +20,17 @@ function emojiFromString(str: string): string {
   return EMOJI_AVATARS[Math.abs(hash) % EMOJI_AVATARS.length]
 }
 
+/** Check if a string is an emoji (not a URL or R2 key). */
+function isEmojiAvatar(str: string | null | undefined): boolean {
+  if (!str) return false
+  return !str.startsWith('http') && !str.startsWith('/') && !str.startsWith('r2:')
+}
+
 export function UserMenu() {
   const { data: session } = useSession()
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -35,6 +42,40 @@ export function UserMenu() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  // Resolve R2 avatar keys by fetching the user profile from the backend
+  const sessionImage = session?.user?.image
+  useEffect(() => {
+    if (!sessionImage || !sessionImage.startsWith('r2:')) {
+      setResolvedAvatarUrl(null)
+      return
+    }
+
+    // Image is an R2 key — resolve it via backend API
+    let cancelled = false
+    async function resolve() {
+      try {
+        const tokenRes = await fetch('/api/auth/token')
+        if (!tokenRes.ok) return
+        const { token } = await tokenRes.json()
+
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
+        const res = await fetch(`${apiUrl}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return
+
+        const data = await res.json()
+        if (!cancelled && data.avatarUrl && data.avatarUrl.startsWith('http')) {
+          setResolvedAvatarUrl(data.avatarUrl)
+        }
+      } catch {
+        // Silently fail — we'll show the emoji fallback
+      }
+    }
+    resolve()
+    return () => { cancelled = true }
+  }, [sessionImage])
+
   if (!session?.user) return null
 
   const initials = (session.user.name ?? session.user.email ?? '?')
@@ -44,10 +85,28 @@ export function UserMenu() {
     .toUpperCase()
     .slice(0, 2)
 
-  const rawImage = session.user.image
-  // If no image set, use a deterministic emoji based on user email
-  const image = rawImage || emojiFromString(session.user.email ?? session.user.name ?? 'user')
-  const isEmoji = image && !image.startsWith('http') && !image.startsWith('/')
+  // Determine what to display:
+  // 1. If we resolved an R2 URL → show the image
+  // 2. If session image is an emoji → show it
+  // 3. If session image is an http URL → show it
+  // 4. Otherwise → show a deterministic emoji fallback
+  let displayImage: string
+  let displayIsEmoji: boolean
+
+  if (resolvedAvatarUrl) {
+    displayImage = resolvedAvatarUrl
+    displayIsEmoji = false
+  } else if (sessionImage && isEmojiAvatar(sessionImage)) {
+    displayImage = sessionImage
+    displayIsEmoji = true
+  } else if (sessionImage && (sessionImage.startsWith('http') || sessionImage.startsWith('/'))) {
+    displayImage = sessionImage
+    displayIsEmoji = false
+  } else {
+    // Fallback: deterministic emoji
+    displayImage = emojiFromString(session.user.email ?? session.user.name ?? 'user')
+    displayIsEmoji = true
+  }
 
   return (
     <div className="relative" ref={menuRef}>
@@ -55,20 +114,16 @@ export function UserMenu() {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
       >
-        {isEmoji ? (
+        {displayIsEmoji ? (
           <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-sm">
-            {image}
+            {displayImage}
           </div>
-        ) : image ? (
-          <img
-            src={image}
-            alt=""
-            className="w-6 h-6 rounded-full"
-          />
         ) : (
-          <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
-            {initials}
-          </div>
+          <img
+            src={displayImage}
+            alt=""
+            className="w-6 h-6 rounded-full object-cover"
+          />
         )}
         <span className="text-sm font-medium max-w-[120px] truncate">
           {session.user.name ?? session.user.email}
@@ -79,11 +134,11 @@ export function UserMenu() {
         <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50">
           <div className="p-3 border-b">
             <div className="flex items-center gap-2 mb-1">
-              {isEmoji ? (
-                <span className="text-lg">{image}</span>
-              ) : image ? (
-                <img src={image} alt="" className="w-8 h-8 rounded-full" />
-              ) : null}
+              {displayIsEmoji ? (
+                <span className="text-lg">{displayImage}</span>
+              ) : (
+                <img src={displayImage} alt="" className="w-8 h-8 rounded-full object-cover" />
+              )}
               <p className="text-sm font-medium truncate">{session.user.name}</p>
             </div>
             <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
