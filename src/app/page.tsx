@@ -2,7 +2,8 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
 import { useBooks } from '@/hooks/use-books'
 import { LibraryGrid } from '@/components/library/library-grid'
 import { UploadDialog } from '@/components/library/upload-dialog'
@@ -10,12 +11,48 @@ import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
 import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 import { BookCardSkeleton } from '@/components/library/book-card-skeleton'
+import { RefreshCwIcon } from 'lucide-react'
 
 export default function HomePage() {
   const { books, loading, refresh } = useBooks()
+  const { status } = useSession()
   const [editMode, setEditMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [lastSynced, setLastSynced] = useState<string | null>(null)
+
+  // Load last synced timestamp and listen for sync completions
+  useEffect(() => {
+    if (status !== 'authenticated') return
+
+    const loadLastSynced = async () => {
+      const { syncService } = await import('@/lib/services/sync-service')
+      setLastSynced(syncService.getLastSyncedAt())
+    }
+    loadLastSynced()
+
+    const onSyncComplete = async () => {
+      const { syncService } = await import('@/lib/services/sync-service')
+      setLastSynced(syncService.getLastSyncedAt())
+    }
+    window.addEventListener('nibble:sync-complete', onSyncComplete)
+    return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
+  }, [status])
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncing(true)
+    try {
+      const { syncService } = await import('@/lib/services/sync-service')
+      await syncService.sync()
+      setLastSynced(syncService.getLastSyncedAt())
+      refresh()
+    } catch (err) {
+      console.error('Sync failed:', err)
+    } finally {
+      setSyncing(false)
+    }
+  }, [refresh])
 
   const toggleSelect = useCallback((id: string, event?: React.MouseEvent) => {
     setSelectedIds(prev => {
@@ -87,6 +124,25 @@ export default function HomePage() {
             </>
           ) : (
             <>
+              {status === 'authenticated' && (
+                <div className="flex flex-col items-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={syncing}
+                    onClick={handleSyncNow}
+                    className="gap-1.5"
+                  >
+                    <RefreshCwIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                    {syncing ? 'Syncing...' : 'Sync Now'}
+                  </Button>
+                  <span className="text-xs text-muted-foreground mt-1">
+                    {lastSynced
+                      ? `Last sync: ${new Date(lastSynced).toLocaleString()}`
+                      : 'Not synced yet'}
+                  </span>
+                </div>
+              )}
               <UploadDialog onBookImported={refresh} />
               {books.length > 0 && (
                 <Button variant="outline" onClick={() => setEditMode(true)}>
