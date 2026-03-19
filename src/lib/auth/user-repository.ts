@@ -6,7 +6,7 @@
 import { getDb, generateId } from './db'
 import bcrypt from 'bcryptjs'
 
-const EMOJI_AVATARS = [
+export const EMOJI_AVATARS = [
   '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
   '🐢', '🦈', '🐬', '🦜', '🐝', '🦄', '🐲', '🌸', '🌻', '🍀',
   '🌈', '⭐', '🔥', '💎', '🎯', '🎨', '🎵', '🚀', '🌊', '🍄',

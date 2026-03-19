@@ -8,9 +8,14 @@
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import Google from 'next-auth/providers/google'
-import { UserRepository } from './user-repository'
+import { UserRepository, EMOJI_AVATARS } from './user-repository'
 
 const userRepo = new UserRepository()
+
+/** Pick a random emoji from the shared list. */
+function randomEmoji(): string {
+  return EMOJI_AVATARS[Math.floor(Math.random() * EMOJI_AVATARS.length)]
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -32,11 +37,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const valid = await userRepo.verifyPassword(user, password)
         if (!valid) return null
 
+        // Backfill: assign a random emoji if user has no avatar
+        let image = user.image
+        if (!image) {
+          image = randomEmoji()
+          await userRepo.updateProfile(user.id, { image }).catch(() => {})
+        }
+
         return {
           id: user.id,
           name: user.name,
           email: user.email,
-          image: user.image,
+          image,
           role: user.role,
         }
       },
@@ -88,7 +100,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // Use the existing user's ID
           user.id = existingUser.id
           user.name = existingUser.name ?? user.name
-          user.image = existingUser.image
+          // Backfill: assign a random emoji if existing user has no avatar
+          if (existingUser.image) {
+            user.image = existingUser.image
+          } else {
+            const emoji = randomEmoji()
+            await userRepo.updateProfile(existingUser.id, { image: emoji }).catch(() => {})
+            user.image = emoji
+          }
           ;(user as Record<string, unknown>).role = existingUser.role
         } else {
           // New user — create account from OAuth

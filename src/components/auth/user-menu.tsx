@@ -4,6 +4,22 @@ import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 
+const EMOJI_AVATARS = [
+  '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
+  '🐢', '🦈', '🐬', '🦜', '🐝', '🦄', '🐲', '🌸', '🌻', '🍀',
+  '🌈', '⭐', '🔥', '💎', '🎯', '🎨', '🎵', '🚀', '🌊', '🍄',
+  '🎪', '🎭', '🧊', '🪐', '🌙', '☀️', '🍉', '🥑', '🧁', '🍩',
+]
+
+/** Deterministic emoji based on a string (email/name), so the same user always gets the same fallback. */
+function emojiFromString(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
+  }
+  return EMOJI_AVATARS[Math.abs(hash) % EMOJI_AVATARS.length]
+}
+
 export function UserMenu() {
   const { data: session } = useSession()
   const [open, setOpen] = useState(false)
@@ -28,7 +44,9 @@ export function UserMenu() {
     .toUpperCase()
     .slice(0, 2)
 
-  const image = session.user.image
+  const rawImage = session.user.image
+  // If no image set, use a deterministic emoji based on user email
+  const image = rawImage || emojiFromString(session.user.email ?? session.user.name ?? 'user')
   const isEmoji = image && !image.startsWith('http') && !image.startsWith('/')
 
   return (
