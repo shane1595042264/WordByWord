@@ -15,6 +15,7 @@ interface ChapterAccordionProps {
   pdfBlob?: Blob
   bookRemoteId?: string
   totalBookPages?: number
+  searchQuery?: string
 }
 
 interface ChapterGroup {
@@ -23,11 +24,13 @@ interface ChapterGroup {
   progress: { read: number; total: number; percentage: number }
 }
 
-export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages }: ChapterAccordionProps) {
+export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null)
   const [dividingChapter, setDividingChapter] = useState<ChapterWithSections | null>(null)
 
+  const query = (searchQuery || '').trim().toLowerCase()
+  const isSearching = query.length > 0
   // Group chapters by their prefix (Part > Chapter structure)
   // "Part 1 > Chapter 2" → group "Part 1", child "Chapter 2"
   // "Preface" (no >) → standalone group
@@ -66,7 +69,6 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
 
   // If no nesting needed (no > in any title), render flat like before
   const hasNesting = groups.some(g => g.chapters.length > 1 || g.chapters[0]?.title !== g.title)
-
   const handleSaveSections = useCallback(async (chapter: ChapterWithSections, dividers: Divider[]) => {
     if (!bookRemoteId || !totalBookPages) return
     const { StructureService } = await import('@/lib/services/structure-service')
@@ -114,7 +116,6 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     // Trigger a page refresh
     window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
   }, [bookRemoteId, totalBookPages, chapters])
-
   const divideDialog = dividingChapter && pdfBlob && bookRemoteId && totalBookPages ? (() => {
     const PageStripEditor = require('@/components/editor/page-strip-editor').PageStripEditor
     const existingDividers: Divider[] = dividingChapter.sections
@@ -145,39 +146,74 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     )
   })() : null
 
+  // Filter chapters based on search query
+  const filteredChapters = useMemo(() => {
+    if (!isSearching) return chapters
+    return chapters.filter(ch => {
+      const chapterMatches = ch.title.toLowerCase().includes(query)
+      const sectionMatches = ch.sections.some(s => s.title.toLowerCase().includes(query))
+      return chapterMatches || sectionMatches
+    })
+  }, [chapters, query, isSearching])
+
   if (!hasNesting) {
     // Flat rendering (no groups)
     return (
       <div className="space-y-2">
-        {chapters.map(chapter => (
+        {filteredChapters.map(chapter => (
           <FlatChapter key={chapter.id} bookId={bookId} chapter={chapter}
-            expanded={expandedChapter === chapter.id}
+            expanded={isSearching || expandedChapter === chapter.id}
             onToggle={() => setExpandedChapter(expandedChapter === chapter.id ? null : chapter.id)}
             canDivide={!!pdfBlob && !!bookRemoteId}
             onDivide={() => setDividingChapter(chapter)}
+            searchQuery={query}
           />
         ))}
+        {filteredChapters.length === 0 && isSearching && (
+          <p className="text-sm text-muted-foreground py-4 text-center">No chapters or sections match your search.</p>
+        )}
         {divideDialog}
       </div>
     )
   }
-
+  // Filter groups for search
+  const filteredGroups = useMemo(() => {
+    if (!isSearching) return groups
+    return groups
+      .map(group => {
+        const filteredChs = group.chapters.filter(ch => {
+          const chapterMatches = ch.title.toLowerCase().includes(query)
+          const sectionMatches = ch.sections.some(s => s.title.toLowerCase().includes(query))
+          return chapterMatches || sectionMatches
+        })
+        if (filteredChs.length === 0 && !group.title.toLowerCase().includes(query)) return null
+        const read = filteredChs.reduce((sum, c) => sum + c.progress.read, 0)
+        const total = filteredChs.reduce((sum, c) => sum + c.progress.total, 0)
+        return {
+          ...group,
+          chapters: filteredChs.length > 0 ? filteredChs : group.chapters,
+          progress: filteredChs.length > 0 ? { read, total, percentage: total > 0 ? Math.round((read / total) * 100) : 0 } : group.progress,
+        }
+      })
+      .filter((g): g is ChapterGroup => g !== null)
+  }, [groups, query, isSearching])
   // Nested rendering (groups > chapters > sections)
   return (
     <div className="space-y-2">
       {divideDialog}
-      {groups.map(group => {
-        const isGroupExpanded = expandedGroup === group.title
+      {filteredGroups.map(group => {
+        const isGroupExpanded = isSearching || expandedGroup === group.title
         const isSingleChapter = group.chapters.length === 1 && group.chapters[0].title === group.title
 
         if (isSingleChapter) {
           // Standalone chapter — render flat
           return (
             <FlatChapter key={group.title} bookId={bookId} chapter={group.chapters[0]}
-              expanded={expandedChapter === group.chapters[0].id}
+              expanded={isSearching || expandedChapter === group.chapters[0].id}
               onToggle={() => setExpandedChapter(expandedChapter === group.chapters[0].id ? null : group.chapters[0].id)}
               canDivide={!!pdfBlob && !!bookRemoteId}
               onDivide={() => setDividingChapter(group.chapters[0])}
+              searchQuery={query}
             />
           )
         }
@@ -207,10 +243,11 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
               <div className="px-3 pb-3 space-y-1">
                 {group.chapters.map(chapter => (
                   <FlatChapter key={chapter.id} bookId={bookId} chapter={chapter} nested
-                    expanded={expandedChapter === chapter.id}
+                    expanded={isSearching || expandedChapter === chapter.id}
                     onToggle={() => setExpandedChapter(expandedChapter === chapter.id ? null : chapter.id)}
                     canDivide={!!pdfBlob && !!bookRemoteId}
                     onDivide={() => setDividingChapter(chapter)}
+                    searchQuery={query}
                   />
                 ))}
               </div>
@@ -218,11 +255,27 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
           </div>
         )
       })}
+      {filteredGroups.length === 0 && isSearching && (
+        <p className="text-sm text-muted-foreground py-4 text-center">No chapters or sections match your search.</p>
+      )}
     </div>
   )
 }
 
-function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, onDivide }: {
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>
+  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  if (idx === -1) return <>{text}</>
+  return (
+    <>
+      {text.substring(0, idx)}
+      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm px-0.5">{text.substring(idx, idx + query.length)}</mark>
+      {text.substring(idx + query.length)}
+    </>
+  )
+}
+
+function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, onDivide, searchQuery }: {
   bookId: string
   chapter: ChapterWithSections
   expanded: boolean
@@ -230,7 +283,17 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
   nested?: boolean
   canDivide?: boolean
   onDivide?: () => void
+  searchQuery?: string
 }) {
+  const isSearching = !!searchQuery
+  // When searching, only show matching sections (or all sections if the chapter title itself matches)
+  const visibleSections = useMemo(() => {
+    if (!searchQuery) return chapter.sections
+    const chapterTitleMatches = chapter.title.toLowerCase().includes(searchQuery)
+    if (chapterTitleMatches) return chapter.sections
+    return chapter.sections.filter(s => s.title.toLowerCase().includes(searchQuery))
+  }, [chapter, searchQuery])
+
   return (
     <div className={`border rounded-lg ${nested ? 'border-border/50' : ''}`}>
       <div className="flex items-center">
@@ -240,7 +303,9 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
         >
           <div className="flex items-center gap-3">
             <span className={`text-xs transition-transform ${expanded ? 'rotate-90' : ''}`}>&#9654;</span>
-            <span className={`text-sm ${nested ? '' : 'font-medium'}`}>{chapter.title}</span>
+            <span className={`text-sm ${nested ? '' : 'font-medium'}`}>
+              {isSearching ? <HighlightText text={chapter.title} query={searchQuery} /> : chapter.title}
+            </span>
             <Badge variant="outline" className="text-xs">
               {chapter.progress.read}/{chapter.progress.total}
             </Badge>
@@ -264,10 +329,10 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
       </div>
       {expanded && (
         <div className="px-4 pb-3 space-y-1">
-          {chapter.sections.length === 0 ? (
+          {visibleSections.length === 0 ? (
             <p className="text-sm text-muted-foreground py-2">No sections yet.</p>
           ) : (
-            chapter.sections.map(section => (
+            visibleSections.map(section => (
               <Link
                 key={section.id}
                 href={`/book/${bookId}/read/${section.id}`}
@@ -275,7 +340,9 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
               >
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
-                  <span className="text-sm">{section.title}</span>
+                  <span className="text-sm">
+                    {isSearching ? <HighlightText text={section.title} query={searchQuery} /> : section.title}
+                  </span>
                 </div>
                 <span className="text-xs text-muted-foreground">p.{section.startPage}-{section.endPage}</span>
               </Link>
