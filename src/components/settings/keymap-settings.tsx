@@ -8,6 +8,25 @@ import { RULEBOOK } from '@/lib/vim/rulebook'
 import type { VimRule } from '@/lib/vim/types'
 import type { KeymapOverrides } from '@/lib/services/settings-service'
 
+// ─── Global Shortcuts (non-Vim, combo-key shortcuts) ────────────────────────
+
+export interface GlobalShortcutDef {
+  id: string
+  label: string
+  defaultKeys: string
+  description: string
+}
+
+export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
+  { id: 'prev-page', label: 'Previous Page', defaultKeys: 'Ctrl+ArrowLeft', description: 'Go to previous page or section' },
+  { id: 'next-page', label: 'Next Page', defaultKeys: 'Ctrl+ArrowRight', description: 'Go to next page or section' },
+  { id: 'view-pdf', label: 'PDF View', defaultKeys: 'Ctrl+1', description: 'Switch to PDF view mode' },
+  { id: 'view-text', label: 'Text View', defaultKeys: 'Ctrl+2', description: 'Switch to text view mode' },
+  { id: 'view-side-by-side', label: 'Side-by-Side View', defaultKeys: 'Ctrl+3', description: 'Switch to side-by-side view mode' },
+  { id: 'toggle-indicators', label: 'Toggle Element Labels', defaultKeys: 'Ctrl+i', description: 'Show/hide paragraph badges' },
+  { id: 'toggle-line-numbers', label: 'Toggle Line Numbers', defaultKeys: 'Ctrl+Shift+l', description: 'Show/hide relative line numbers' },
+]
+
 interface KeymapSettingsProps {
   overrides: KeymapOverrides
   onChange: (overrides: KeymapOverrides) => void
@@ -22,7 +41,10 @@ function KeyBadge({ keyStr, variant = 'outline' }: { keyStr: string; variant?: '
     .replace('ArrowRight', '→')
     .replace('Escape', 'Esc')
     .replace('Enter', '↵')
+    .replace('Ctrl+', '⌃')
     .replace('Shift+', '⇧')
+    .replace('Alt+', '⌥')
+    .replace('Meta+', '⌘')
   return (
     <Badge variant={variant} className="font-mono text-xs px-2 py-0.5">
       {display}
@@ -143,6 +165,105 @@ function KeymapRow({
   )
 }
 
+/** Single row for a global (combo-key) shortcut with inline remap */
+function GlobalShortcutRow({
+  shortcut,
+  customKeys,
+  onRemap,
+  onReset,
+}: {
+  shortcut: GlobalShortcutDef
+  customKeys?: string
+  onRemap: (id: string, newKeys: string) => void
+  onReset: (id: string) => void
+}) {
+  const [recording, setRecording] = useState(false)
+  const recordRef = useRef<HTMLButtonElement>(null)
+
+  const currentKeys = customKeys || shortcut.defaultKeys
+  const isCustom = !!customKeys && customKeys !== shortcut.defaultKeys
+
+  useEffect(() => {
+    if (!recording) return
+
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      // Ignore lone modifier keys
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return
+
+      const parts: string[] = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.altKey) parts.push('Alt')
+      if (e.metaKey) parts.push('Meta')
+      parts.push(e.key)
+
+      onRemap(shortcut.id, parts.join('+'))
+      setRecording(false)
+    }
+
+    window.addEventListener('keydown', handler, { capture: true })
+    return () => window.removeEventListener('keydown', handler, { capture: true })
+  }, [recording, shortcut.id, onRemap])
+
+  // Cancel recording on blur
+  useEffect(() => {
+    if (!recording) return
+    const handler = () => setRecording(false)
+    const btn = recordRef.current
+    btn?.addEventListener('blur', handler)
+    return () => btn?.removeEventListener('blur', handler)
+  }, [recording])
+
+  return (
+    <div className="flex items-center gap-3 py-2 px-3 rounded-md hover:bg-muted/50 transition-colors group">
+      {/* Label: "global" */}
+      <div className="w-24 shrink-0 flex gap-1">
+        <span className="text-[10px] font-mono uppercase text-emerald-400">global</span>
+      </div>
+
+      {/* Description */}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium truncate">{shortcut.label}</div>
+        <div className="text-xs text-muted-foreground truncate">{shortcut.description}</div>
+      </div>
+
+      {/* Current key */}
+      <div className="shrink-0 flex items-center gap-2">
+        {recording ? (
+          <button
+            ref={recordRef}
+            autoFocus
+            className="px-3 py-1 text-xs border-2 border-amber-500 rounded-md bg-amber-500/10 text-amber-400 animate-pulse font-mono"
+          >
+            Press a key combo...
+          </button>
+        ) : (
+          <button
+            onClick={() => setRecording(true)}
+            className="cursor-pointer hover:ring-2 hover:ring-primary/30 rounded transition-all"
+            title="Click to remap"
+          >
+            <KeyBadge keyStr={currentKeys} variant={isCustom ? 'default' : 'outline'} />
+          </button>
+        )}
+
+        {isCustom && (
+          <button
+            onClick={() => onReset(shortcut.id)}
+            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+            title={`Reset to default (${shortcut.defaultKeys})`}
+          >
+            ↺
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
   const [search, setSearch] = useState('')
 
@@ -173,6 +294,19 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
     )
   })
 
+  // Filter global shortcuts by search
+  const filteredGlobal = GLOBAL_SHORTCUTS.filter(s => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      s.label.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.defaultKeys.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      'global'.includes(q)
+    )
+  })
+
   // Group by mode for display
   const normalRules = filteredRules.filter(r => r.modes.includes('normal') && r.modes.length === 1)
   const sentenceRules = filteredRules.filter(r => r.modes.includes('sentence') && !r.modes.includes('normal'))
@@ -200,6 +334,25 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
       <p className="text-xs text-muted-foreground">
         Click any key badge to remap it. Press the new key to confirm. Changes apply immediately.
       </p>
+
+      {filteredGlobal.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-3">
+            Navigation & Views
+          </h3>
+          <div className="border rounded-lg divide-y divide-border/50">
+            {filteredGlobal.map(s => (
+              <GlobalShortcutRow
+                key={s.id}
+                shortcut={s}
+                customKeys={overrides[s.id]}
+                onRemap={handleRemap}
+                onReset={handleReset}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {normalRules.length > 0 && (
         <div>
@@ -277,9 +430,9 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
         </div>
       )}
 
-      {filteredRules.length === 0 && (
+      {filteredRules.length === 0 && filteredGlobal.length === 0 && (
         <div className="text-center text-muted-foreground py-8 text-sm">
-          No keybindings match "{search}"
+          No keybindings match &quot;{search}&quot;
         </div>
       )}
     </div>

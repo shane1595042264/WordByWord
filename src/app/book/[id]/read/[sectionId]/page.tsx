@@ -70,12 +70,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (idx !== undefined) setSelectedWordIndex(idx)
   }, [])
 
+  const [globalKeyOverrides, setGlobalKeyOverrides] = useState<Record<string, string>>({})
+
   // Load user keymap overrides on mount
   useEffect(() => {
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
       const svc = new SettingsService()
       const overrides = svc.getSettings().keymapOverrides ?? {}
       setEffectiveRulebook(getEffectiveRulebook(overrides))
+      setGlobalKeyOverrides(overrides)
     })
   }, [])
 
@@ -494,28 +497,28 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   }, [viewMode, textScrollReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keyboard shortcuts ──
-  useShortcut('toggle-indicators', 'Toggle Element Labels', 'Ctrl+i', useCallback(() => {
+  useShortcut('toggle-indicators', 'Toggle Element Labels', globalKeyOverrides['toggle-indicators'] || 'Ctrl+i', useCallback(() => {
     setShowIndicators(prev => !prev)
   }, []))
 
-  useShortcut('view-pdf', 'PDF View', 'Ctrl+1', useCallback(() => {
+  useShortcut('view-pdf', 'PDF View', globalKeyOverrides['view-pdf'] || 'Ctrl+1', useCallback(() => {
     setViewMode('pdf')
   }, [setViewMode]))
 
-  useShortcut('view-text', 'Text View', 'Ctrl+2', useCallback(() => {
+  useShortcut('view-text', 'Text View', globalKeyOverrides['view-text'] || 'Ctrl+2', useCallback(() => {
     setViewMode('text')
   }, [setViewMode]))
 
-  useShortcut('view-side-by-side', 'Side-by-Side View', 'Ctrl+3', useCallback(() => {
+  useShortcut('view-side-by-side', 'Side-by-Side View', globalKeyOverrides['view-side-by-side'] || 'Ctrl+3', useCallback(() => {
     setViewMode('side-by-side')
   }, [setViewMode]))
 
-  useShortcut('toggle-line-numbers', 'Toggle Line Numbers', 'Ctrl+Shift+l', useCallback(() => {
+  useShortcut('toggle-line-numbers', 'Toggle Line Numbers', globalKeyOverrides['toggle-line-numbers'] || 'Ctrl+Shift+l', useCallback(() => {
     setShowLineNumbers(prev => !prev)
   }, []))
 
-  useShortcut('prev-page', 'Previous Page', 'Ctrl+ArrowLeft', goToPrevPage)
-  useShortcut('next-page', 'Next Page', 'Ctrl+ArrowRight', goToNextPage)
+  useShortcut('prev-page', 'Previous Page', globalKeyOverrides['prev-page'] || 'Ctrl+ArrowLeft', goToPrevPage)
+  useShortcut('next-page', 'Next Page', globalKeyOverrides['next-page'] || 'Ctrl+ArrowRight', goToNextPage)
 
   // Persist currentPage to DB
   useEffect(() => {
