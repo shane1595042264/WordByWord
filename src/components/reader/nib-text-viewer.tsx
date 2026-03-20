@@ -612,7 +612,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (lastWord) setSelectedWord(lastWord)
       // Scroll to bottom
       const lastSpan = wordSpanRefs.current.get(allWords.length - 1)
-      if (lastSpan) lastSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      if (lastSpan) lastSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       // Update cursor line to last line
       const lines = computeVisualLines()
       if (lines.length > 0) {
@@ -637,7 +637,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (firstWord) setSelectedWord(firstWord)
       // Scroll to top
       const firstSpan = wordSpanRefs.current.get(0)
-      if (firstSpan) firstSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      if (firstSpan) firstSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       // Update cursor line to first line
       const lines = computeVisualLines()
       if (lines.length > 0) {
@@ -746,7 +746,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
           const st = container.scrollTop
           const vh = container.clientHeight
           if (lineY < st || lineY > st + vh - LINE_HEIGHT) {
-            container.scrollTo({ top: Math.max(0, lineY - vh / 2), behavior: 'smooth' })
+            container.scrollTo({ top: Math.max(0, lineY - vh / 2), behavior: 'instant' })
           }
         }
       }
