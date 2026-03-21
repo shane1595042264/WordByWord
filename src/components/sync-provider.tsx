@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { syncService, type SyncConflict } from '@/lib/services/sync-service'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { SyncStatusBar } from '@/components/sync-status-bar'
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { status } = useSession()
@@ -33,6 +34,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
+      {status === 'authenticated' && <SyncStatusBar />}
       <Dialog open={conflict !== null} onOpenChange={(open) => {
         if (!open && resolver) resolver('auto')
       }}>

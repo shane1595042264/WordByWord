@@ -32,6 +32,14 @@ class SyncService {
   private conflictResolver: ConflictResolver | null = null
   private hasInitSynced = false
 
+  // ── Status events ──────────────────────────────────────────
+
+  private emitStatus(status: 'syncing' | 'complete' | 'error', message: string) {
+    window.dispatchEvent(new CustomEvent('nibble:sync-status', {
+      detail: { status, message },
+    }))
+  }
+
   // ── Lifecycle ────────────────────────────────────────────────
 
   /** Register a callback for when sync finds conflicts (used by UI) */
@@ -241,6 +249,7 @@ class SyncService {
       this.hasInitSynced = true
 
       this.log('sync:start', isInitSync ? 'full sync (init)' : 'incremental')
+      this.emitStatus('syncing', isInitSync ? ':sync --full' : ':sync')
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(sinceMs).toArray(),
@@ -274,6 +283,12 @@ class SyncService {
         .map(v => this.vocabToSync(v, bookRemoteIdMap))
 
       this.log('sync:push', `${syncBooks.length} books, ${syncChapters.length} chapters, ${syncSections.length} sections, ${syncVocab.length} vocab`)
+      const totalDirty = syncBooks.length + syncChapters.length + syncSections.length + syncVocab.length
+      if (totalDirty > 0) {
+        this.emitStatus('syncing', `:push ${totalDirty} change${totalDirty === 1 ? '' : 's'}`)
+      } else {
+        this.emitStatus('syncing', ':pull server changes')
+      }
 
       const res = await fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
@@ -375,6 +390,7 @@ class SyncService {
         for (const sb of cloudOnlyBooks) {
           const remoteId = sb.id as string
           this.log('sync:download', `"${sb.customTitle || remoteId}"`)
+          this.emitStatus('syncing', `:pull "${sb.customTitle || 'book'}"`)
           try {
             await this.createLocalBookFromServer(sb, result.serverChanges, token)
           } catch (err) {
@@ -385,11 +401,13 @@ class SyncService {
 
       localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
       this.log('sync:complete', `synced at ${result.syncedAt}`)
+      this.emitStatus('complete', ':sync complete')
 
       // Notify listeners (e.g. useBooks) that sync finished so they can refresh
       window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
     } catch (err) {
       console.error('[sync] error:', err)
+      this.emitStatus('error', ':sync failed')
     } finally {
       this.isSyncing = false
     }
