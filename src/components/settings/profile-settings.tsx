@@ -111,7 +111,7 @@ export function ProfileSettings() {
 
       if (!res.ok) throw new Error('Failed to upload avatar')
 
-      const { avatarUrl } = await res.json()
+      const { avatarUrl, r2Key } = await res.json()
       setSelectedAvatar(avatarUrl)
 
       // Also update profile state so "current" reflects the upload
@@ -119,8 +119,9 @@ export function ProfileSettings() {
         setProfile({ ...profile, avatarUrl })
       }
 
-      // Update session immediately so the header avatar refreshes
-      await updateSession({ image: avatarUrl })
+      // Store the R2 key in the session (matches DB) so avatar resolution
+      // works consistently across page navigations and re-logins
+      await updateSession({ image: r2Key ?? avatarUrl })
     } catch (err) {
       setError('Failed to upload image. Please try again.')
     } finally {
@@ -154,6 +155,8 @@ export function ProfileSettings() {
         return
       }
 
+      const avatarChanged = body.avatarUrl !== undefined
+
       const res = await fetch(`${apiUrl}/users/me`, {
         method: 'PUT',
         headers: {
@@ -170,11 +173,14 @@ export function ProfileSettings() {
       setName(updated.name ?? '')
       setSelectedAvatar(updated.avatarUrl ?? '')
 
-      // Update the NextAuth session so the UI reflects changes immediately
-      await updateSession({
-        name: updated.name,
-        image: updated.avatarUrl,
-      })
+      // Only update session image when avatar was actually changed.
+      // When unchanged, keep the existing R2 key in the session to avoid
+      // overwriting it with a presigned URL that will expire.
+      const sessionUpdate: Record<string, unknown> = { name: updated.name }
+      if (avatarChanged) {
+        sessionUpdate.image = updated.avatarUrl
+      }
+      await updateSession(sessionUpdate)
 
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)

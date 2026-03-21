@@ -31,6 +31,8 @@ export function UserMenu() {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null)
+  const [resolving, setResolving] = useState(false)
+  const [imgError, setImgError] = useState(false)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -47,29 +49,34 @@ export function UserMenu() {
   useEffect(() => {
     if (!sessionImage || !sessionImage.startsWith('r2:')) {
       setResolvedAvatarUrl(null)
+      setResolving(false)
       return
     }
 
     // Image is an R2 key — resolve it via backend API
     let cancelled = false
+    setResolving(true)
+    setImgError(false)
     async function resolve() {
       try {
         const tokenRes = await fetch('/api/auth/token')
-        if (!tokenRes.ok) return
+        if (!tokenRes.ok) throw new Error('token fetch failed')
         const { token } = await tokenRes.json()
 
         const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
         const res = await fetch(`${apiUrl}/users/me`, {
           headers: { Authorization: `Bearer ${token}` },
         })
-        if (!res.ok) return
+        if (!res.ok) throw new Error('profile fetch failed')
 
         const data = await res.json()
         if (!cancelled && data.avatarUrl && data.avatarUrl.startsWith('http')) {
           setResolvedAvatarUrl(data.avatarUrl)
         }
       } catch {
-        // Silently fail — we'll show the emoji fallback
+        // Resolution failed — will show fallback emoji
+      } finally {
+        if (!cancelled) setResolving(false)
       }
     }
     resolve()
@@ -85,21 +92,30 @@ export function UserMenu() {
     .toUpperCase()
     .slice(0, 2)
 
+  // Reset image error when the URL changes
+  useEffect(() => { setImgError(false) }, [resolvedAvatarUrl, sessionImage])
+
   // Determine what to display:
-  // 1. If we resolved an R2 URL → show the image
-  // 2. If session image is an emoji → show it
-  // 3. If session image is an http URL → show it
-  // 4. Otherwise → show a deterministic emoji fallback
+  // 1. If actively resolving an R2 URL → show loading skeleton
+  // 2. If we resolved an R2 URL → show the image
+  // 3. If session image is an emoji → show it
+  // 4. If session image is an http URL → show it
+  // 5. Otherwise → show a deterministic emoji fallback
   let displayImage: string
   let displayIsEmoji: boolean
+  let displayIsLoading = false
 
-  if (resolvedAvatarUrl) {
+  if (resolving) {
+    displayImage = ''
+    displayIsEmoji = false
+    displayIsLoading = true
+  } else if (resolvedAvatarUrl && !imgError) {
     displayImage = resolvedAvatarUrl
     displayIsEmoji = false
   } else if (sessionImage && isEmojiAvatar(sessionImage)) {
     displayImage = sessionImage
     displayIsEmoji = true
-  } else if (sessionImage && (sessionImage.startsWith('http') || sessionImage.startsWith('/'))) {
+  } else if (sessionImage && !imgError && (sessionImage.startsWith('http') || sessionImage.startsWith('/'))) {
     displayImage = sessionImage
     displayIsEmoji = false
   } else {
@@ -114,7 +130,9 @@ export function UserMenu() {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
       >
-        {displayIsEmoji ? (
+        {displayIsLoading ? (
+          <div className="w-6 h-6 rounded-full bg-muted animate-pulse" />
+        ) : displayIsEmoji ? (
           <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-sm">
             {displayImage}
           </div>
@@ -123,6 +141,7 @@ export function UserMenu() {
             src={displayImage}
             alt=""
             className="w-6 h-6 rounded-full object-cover"
+            onError={() => setImgError(true)}
           />
         )}
         <span className="text-sm font-medium max-w-[120px] truncate">
@@ -134,10 +153,12 @@ export function UserMenu() {
         <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50">
           <div className="p-3 border-b">
             <div className="flex items-center gap-2 mb-1">
-              {displayIsEmoji ? (
+              {displayIsLoading ? (
+                <div className="w-8 h-8 rounded-full bg-muted animate-pulse" />
+              ) : displayIsEmoji ? (
                 <span className="text-lg">{displayImage}</span>
               ) : (
-                <img src={displayImage} alt="" className="w-8 h-8 rounded-full object-cover" />
+                <img src={displayImage} alt="" className="w-8 h-8 rounded-full object-cover" onError={() => setImgError(true)} />
               )}
               <p className="text-sm font-medium truncate">{session.user.name}</p>
             </div>
