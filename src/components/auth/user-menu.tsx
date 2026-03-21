@@ -83,6 +83,10 @@ export function UserMenu() {
     return () => { cancelled = true }
   }, [sessionImage])
 
+  // Reset image error when the URL changes
+  // NOTE: This must be before any early returns to satisfy Rules of Hooks
+  useEffect(() => { setImgError(false) }, [resolvedAvatarUrl, sessionImage])
+
   if (!session?.user) return null
 
   const initials = (session.user.name ?? session.user.email ?? '?')
@@ -91,9 +95,6 @@ export function UserMenu() {
     .join('')
     .toUpperCase()
     .slice(0, 2)
-
-  // Reset image error when the URL changes
-  useEffect(() => { setImgError(false) }, [resolvedAvatarUrl, sessionImage])
 
   // Determine what to display:
   // 1. If actively resolving an R2 URL → show loading skeleton
