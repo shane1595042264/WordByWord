@@ -354,6 +354,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return ep
   }, [endPage, startPage, nibDocument, nextSection?.startPage])
   const totalSectionPages = effectiveEndPage - startPage + 1
+  // In PDF-only mode, don't count overlap pages — each section shows unique pages only
+  const pdfOnlyTotalPages = endPage - startPage + 1
 
   // Use richContent (Mathpix Markdown) as fallback when extractedText is null
   const sectionText = section?.extractedText || section?.richContent || null
@@ -550,7 +552,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         syncScroll={syncScroll}
         onSyncScrollChange={setSyncScroll}
         currentPage={currentPage}
-        totalSectionPages={totalSectionPages}
+        totalSectionPages={viewMode === 'pdf' ? pdfOnlyTotalPages : totalSectionPages}
         startPage={startPage}
         onPrevPage={goToPrevPage}
         onNextPage={goToNextPage}
@@ -570,12 +572,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             <PDFViewer
               pdfBlob={book.pdfBlob}
               startPage={section.startPage}
-              endPage={effectiveEndPage}
+              endPage={endPage}
               readingMode={readingMode}
               currentPage={currentPage}
               onPageChange={handlePageChange}
               onPageProgress={handlePageProgress}
-              sectionEndPage={section.endPage}
               scrollRef={pdfScrollRef}
             />
           )}
