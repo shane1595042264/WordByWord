@@ -16,9 +16,9 @@ const EMOJI_OPTIONS = [
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2 MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 
-/** Check if a string is an emoji (not a URL) */
+/** Check if a string is an emoji (not a URL or R2 key). */
 function isEmoji(str: string): boolean {
-  return !str.startsWith('http') && !str.startsWith('/')
+  return !str.startsWith('http') && !str.startsWith('/') && !str.startsWith('r2:')
 }
 
 interface UserProfile {
@@ -39,6 +39,7 @@ export function ProfileSettings() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [imgError, setImgError] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -94,6 +95,7 @@ export function ProfileSettings() {
 
     setUploading(true)
     setError(null)
+    setImgError(false)
 
     try {
       const token = await getToken()
@@ -200,7 +202,7 @@ export function ProfileSettings() {
   }
 
   const hasExistingImage = profile?.avatarUrl && !isEmoji(profile.avatarUrl)
-  const showingUploadedImage = selectedAvatar && !isEmoji(selectedAvatar)
+  const showingEmoji = !selectedAvatar || isEmoji(selectedAvatar)
 
   return (
     <div className="space-y-6 mt-4">
@@ -211,8 +213,8 @@ export function ProfileSettings() {
           <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center text-3xl overflow-hidden border-2 border-border">
             {selectedAvatar && isEmoji(selectedAvatar) ? (
               <span>{selectedAvatar}</span>
-            ) : selectedAvatar ? (
-              <img src={selectedAvatar} alt="" className="w-full h-full object-cover" />
+            ) : selectedAvatar && !imgError ? (
+              <img src={selectedAvatar} alt="" className="w-full h-full object-cover" onError={() => setImgError(true)} />
             ) : (
               <span className="text-muted-foreground text-lg font-bold">?</span>
             )}
@@ -266,10 +268,10 @@ export function ProfileSettings() {
             </button>
           ))}
         </div>
-        {showingUploadedImage && (
+        {hasExistingImage && showingEmoji && (
           <button
             type="button"
-            onClick={() => setSelectedAvatar(profile!.avatarUrl!)}
+            onClick={() => { setSelectedAvatar(profile!.avatarUrl!); setImgError(false) }}
             className="text-xs text-muted-foreground hover:underline mt-1"
           >
             Use my uploaded picture instead
