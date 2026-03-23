@@ -75,7 +75,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
       {isFailed && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
           <span className="text-2xl">&#x26A0;</span>
-          <span className="text-xs mt-1">Processing failed</span>
+          <span className="text-xs mt-1 text-center">Processing failed</span>
         </div>
       )}
     </div>
@@ -161,6 +161,30 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                 }}
               >
                 Cancel
+              </Button>
+            )}
+            {isFailed && (
+              <Button
+                variant="default"
+                size="sm"
+                className="w-full text-xs"
+                onClick={async (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  try {
+                    const tokenRes = await fetch('/api/auth/token')
+                    if (!tokenRes.ok) return
+                    const { token } = await tokenRes.json()
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                    const res = await fetch(`${apiUrl}/processing/${book.jobId}/retry`, {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}` },
+                    })
+                    if (res.ok) onProcessingComplete?.() // refresh to show new processing state
+                  } catch { /* ignore */ }
+                }}
+              >
+                Retry
               </Button>
             )}
           </div>
