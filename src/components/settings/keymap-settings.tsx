@@ -32,21 +32,28 @@ interface KeymapSettingsProps {
   onChange: (overrides: KeymapOverrides) => void
 }
 
+/** Map a single key-combo part to its display symbol */
+const KEY_SYMBOLS: Record<string, string> = {
+  Ctrl: '⌃',
+  Shift: '⇧',
+  Alt: '⌥',
+  Meta: '⌘',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  Escape: 'Esc',
+  Enter: '↵',
+}
+
 /** Display a key nicely */
 function KeyBadge({ keyStr, variant = 'outline' }: { keyStr: string; variant?: 'outline' | 'default' }) {
   const display = keyStr
-    .replace('ArrowUp', '↑')
-    .replace('ArrowDown', '↓')
-    .replace('ArrowLeft', '←')
-    .replace('ArrowRight', '→')
-    .replace('Escape', 'Esc')
-    .replace('Enter', '↵')
-    .replace('Ctrl+', '⌃')
-    .replace('Shift+', '⇧')
-    .replace('Alt+', '⌥')
-    .replace('Meta+', '⌘')
+    .split('+')
+    .map(part => KEY_SYMBOLS[part] ?? part)
+    .join('')
   return (
-    <Badge variant={variant} className="font-mono text-xs px-2 py-0.5">
+    <Badge variant={variant} className="font-mono text-xs px-2 py-0.5 rounded-md overflow-visible">
       {display}
     </Badge>
   )
