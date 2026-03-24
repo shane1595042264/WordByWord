@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
 import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 import { BookCardSkeleton } from '@/components/library/book-card-skeleton'
-import { RefreshCwIcon } from 'lucide-react'
+import { RefreshCwIcon, LoaderIcon } from 'lucide-react'
+import { useSyncStatus } from '@/hooks/use-sync-status'
 
 export default function HomePage() {
   const { books, loading, refresh } = useBooks()
@@ -21,6 +22,7 @@ export default function HomePage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
+  const { isSyncing: backgroundSyncing } = useSyncStatus()
 
   // Load last synced timestamp and listen for sync completions
   useEffect(() => {
@@ -99,7 +101,12 @@ export default function HomePage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">Nibbler</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold">Nibbler</h1>
+            {status === 'authenticated' && backgroundSyncing && (
+              <LoaderIcon className="h-4 w-4 animate-spin text-muted-foreground" />
+            )}
+          </div>
           <p className="text-muted-foreground">Your reading progress, section by section</p>
         </div>
         <div className="flex gap-2 items-center">
