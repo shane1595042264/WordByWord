@@ -17,7 +17,8 @@ export function useSyncStatus({ showToasts = false } = {}) {
 
   useEffect(() => {
     const onStatus = (e: Event) => {
-      const { status, message } = (e as CustomEvent<SyncStatusEvent>).detail
+      const { status, message: rawMessage } = (e as CustomEvent<SyncStatusEvent>).detail
+      const message = rawMessage.replace(/^:/, '').trim()
 
       if (status === 'syncing') {
         setIsSyncing(true)
