@@ -25,6 +25,7 @@ export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
   { id: 'view-side-by-side', label: 'Side-by-Side View', defaultKeys: 'Ctrl+3', description: 'Switch to side-by-side view mode' },
   { id: 'toggle-indicators', label: 'Toggle Element Labels', defaultKeys: 'Ctrl+i', description: 'Show/hide paragraph badges' },
   { id: 'toggle-line-numbers', label: 'Toggle Line Numbers', defaultKeys: 'Ctrl+Shift+l', description: 'Show/hide relative line numbers' },
+  { id: 'toggle-user-menu', label: 'User Menu', defaultKeys: 'Ctrl+m', description: 'Open/close the profile dropdown menu' },
 ]
 
 interface KeymapSettingsProps {

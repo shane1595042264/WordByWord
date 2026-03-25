@@ -1,9 +1,10 @@
 'use client'
 
 import { useSession, signOut } from 'next-auth/react'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
+import { useShortcut } from '@/hooks/use-shortcuts'
 
 const EMOJI_AVATARS = [
   '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
@@ -123,6 +124,21 @@ export function UserMenu() {
   // Reset image error when the URL changes
   // NOTE: This must be before any early returns to satisfy Rules of Hooks
   useEffect(() => { setImgError(false) }, [resolvedAvatarUrl, sessionImage])
+
+  // Keyboard shortcut to toggle the dropdown menu
+  const toggleMenu = useCallback(() => {
+    setOpen(prev => !prev)
+    if (!open) {
+      // When opening via shortcut, focus the first menu item after render
+      setTimeout(() => {
+        const firstItem = menuRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')
+        firstItem?.focus()
+      }, 0)
+    } else {
+      buttonRef.current?.focus()
+    }
+  }, [open])
+  useShortcut('toggle-user-menu', 'User Menu', 'Ctrl+m', toggleMenu)
 
   if (!session?.user) return null
 
