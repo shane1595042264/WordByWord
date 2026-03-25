@@ -3,6 +3,7 @@
 import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
+import { ChevronDown } from 'lucide-react'
 
 const EMOJI_AVATARS = [
   '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
@@ -185,6 +186,9 @@ export function UserMenu() {
         <span className="text-sm font-medium max-w-[120px] truncate">
           {session.user.name ?? session.user.email}
         </span>
+        <ChevronDown
+          className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
