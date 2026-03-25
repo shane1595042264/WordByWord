@@ -34,6 +34,8 @@ export function UserMenu() {
   const [resolving, setResolving] = useState(false)
   const [imgError, setImgError] = useState(false)
 
+  const buttonRef = useRef<HTMLButtonElement>(null)
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -43,6 +45,40 @@ export function UserMenu() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  // Close on Escape key and trap focus within the dropdown
+  useEffect(() => {
+    if (!open) return
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        buttonRef.current?.focus()
+        return
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = menuRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled])'
+        )
+        if (!focusable || focusable.length === 0) return
+
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [open])
 
   // Resolve R2 avatar keys by fetching the user profile from the backend
   const sessionImage = session?.user?.image
@@ -128,6 +164,7 @@ export function UserMenu() {
   return (
     <div className="relative" ref={menuRef}>
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
       >
