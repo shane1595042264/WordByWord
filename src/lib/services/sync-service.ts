@@ -48,12 +48,6 @@ class SyncService {
   }
 
   init() {
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') this.sync()
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    this.cleanupFns.push(() => document.removeEventListener('visibilitychange', onVisibility))
-
     const onBeforeUnload = () => this.flushSync()
     window.addEventListener('beforeunload', onBeforeUnload)
     this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
