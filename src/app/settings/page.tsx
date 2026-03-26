@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,8 +16,13 @@ import { ProfileSettings } from '@/components/settings/profile-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
-export default function SettingsPage() {
+function SettingsContent() {
   const { data: session } = useSession()
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const initialTab = tabParam && ['profile', 'general', 'keymap', 'cloud', 'admin'].includes(tabParam)
+    ? tabParam
+    : 'profile'
   const isAdmin = (session?.user as any)?.role === 'admin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [saved, setSaved] = useState(false)
@@ -49,7 +55,7 @@ export default function SettingsPage() {
       </Link>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      <Tabs defaultValue="profile">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
@@ -237,5 +243,13 @@ export default function SettingsPage() {
         )}
       </Tabs>
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-20 text-muted-foreground">Loading...</div>}>
+      <SettingsContent />
+    </Suspense>
   )
 }
