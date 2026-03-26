@@ -228,6 +228,7 @@ function SettingsContent() {
                 import('@/lib/services/settings-service').then(({ SettingsService }) => {
                   const svc = new SettingsService()
                   svc.updateSettings(updated)
+                  window.dispatchEvent(new Event('keymap-changed'))
                 })
               }}
             />
