@@ -48,6 +48,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
   const [showLineNumbers, setShowLineNumbers] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
@@ -519,6 +520,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     setShowLineNumbers(prev => !prev)
   }, []))
 
+  useShortcut('toggle-sidebar', 'Toggle Sidebar', globalKeyOverrides['toggle-sidebar'] || 'Ctrl+[', useCallback(() => {
+    setSidebarCollapsed(prev => !prev)
+  }, []))
+
   useShortcut('prev-page', 'Previous Page', globalKeyOverrides['prev-page'] || 'Ctrl+ArrowLeft', goToPrevPage)
   useShortcut('next-page', 'Next Page', globalKeyOverrides['next-page'] || 'Ctrl+ArrowRight', goToNextPage)
 
@@ -560,12 +565,16 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         canGoNext={canGoNext}
         showLineNumbers={showLineNumbers}
         onLineNumbersToggle={() => setShowLineNumbers(prev => !prev)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
       />
       <div className="flex flex-1 overflow-hidden">
         <SectionSidebar
           bookId={bookId}
           sections={chapterSections}
           currentSectionId={sectionId}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
         />
         <div className="flex-1 overflow-hidden flex flex-col" ref={contentRef}>
           {viewMode === 'pdf' && (

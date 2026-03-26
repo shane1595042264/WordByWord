@@ -33,6 +33,9 @@ interface ReaderToolbarProps {
   /** Line numbers toggle */
   showLineNumbers?: boolean
   onLineNumbersToggle?: () => void
+  /** Sidebar collapse toggle */
+  sidebarCollapsed?: boolean
+  onToggleSidebar?: () => void
 }
 
 export function ReaderToolbar({
@@ -46,6 +49,7 @@ export function ReaderToolbar({
   currentPage, totalSectionPages, startPage,
   onPrevPage, onNextPage, canGoPrev, canGoNext,
   showLineNumbers, onLineNumbersToggle,
+  sidebarCollapsed, onToggleSidebar,
 }: ReaderToolbarProps) {
   const handleToggleRead = async () => {
     const { SectionRepository } = await import('@/lib/repositories')
@@ -62,6 +66,18 @@ export function ReaderToolbar({
     <div className="border-b bg-background">
       <div className="flex items-center justify-between px-4 py-2">
         <div className="flex items-center gap-3">
+          <BlockTooltip label={sidebarCollapsed ? 'Show Sections' : 'Hide Sections'} shortcut="⌃ [">
+            <button
+              onClick={onToggleSidebar}
+              className="p-1.5 rounded hover:bg-muted text-muted-foreground transition-colors"
+              aria-label={sidebarCollapsed ? 'Show sections sidebar' : 'Hide sections sidebar'}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="12" height="12" rx="1" />
+                <line x1="6" y1="2" x2="6" y2="14" />
+              </svg>
+            </button>
+          </BlockTooltip>
           <BlockTooltip label="Back to Dashboard" shortcut="⌃ B">
             <Link href={`/book/${bookId}`}>
               <Button variant="ghost" size="sm">&larr; Dashboard</Button>
