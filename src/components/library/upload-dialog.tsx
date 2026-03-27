@@ -123,8 +123,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
               <p className="text-sm font-medium">{file.name}</p>
               <p className="text-xs text-muted-foreground">Choose processing mode:</p>
 
-              <Button className="w-full justify-start text-left h-auto py-3" variant="outline" onClick={() => handleUpload('full')}>
-                <div>
+              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" onClick={() => handleUpload('full')}>
+                <div className="min-w-0">
                   <div className="font-semibold">Full Processing</div>
                   <div className="text-xs text-muted-foreground font-normal">
                     Mathpix extracts tables, formulas, figures as rich content. Best quality, uses API credits.
@@ -132,8 +132,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
                 </div>
               </Button>
 
-              <Button className="w-full justify-start text-left h-auto py-3" variant="outline" onClick={() => handleUpload('toc-only')}>
-                <div>
+              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" onClick={() => handleUpload('toc-only')}>
+                <div className="min-w-0">
                   <div className="font-semibold">TOC Only</div>
                   <div className="text-xs text-muted-foreground font-normal">
                     Uses PDF table of contents for structure. Read via PDF viewer. Fast, free, no API needed.
