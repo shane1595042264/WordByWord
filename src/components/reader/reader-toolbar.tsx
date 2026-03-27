@@ -8,6 +8,7 @@ import type { ViewMode } from '@/hooks/use-reader'
 
 interface ReaderToolbarProps {
   bookId: string
+  bookTitle?: string
   sectionTitle: string
   isRead: boolean
   sectionId: string
@@ -39,7 +40,7 @@ interface ReaderToolbarProps {
 }
 
 export function ReaderToolbar({
-  bookId, sectionTitle, isRead, sectionId,
+  bookId, bookTitle, sectionTitle, isRead, sectionId,
   viewMode, onViewModeChange,
   readingMode, onReadingModeChange,
   onReadToggle,
@@ -83,6 +84,12 @@ export function ReaderToolbar({
               <Button variant="ghost" size="sm">&larr; Dashboard</Button>
             </Link>
           </BlockTooltip>
+          {bookTitle && (
+            <>
+              <span className="text-sm text-muted-foreground truncate max-w-[180px]">{bookTitle}</span>
+              <span className="text-muted-foreground/50">/</span>
+            </>
+          )}
           <span className="text-sm font-medium truncate max-w-[200px]">{sectionTitle}</span>
           <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut="⌃ R">
             <Badge

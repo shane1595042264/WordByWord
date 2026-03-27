@@ -543,6 +543,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     <div className="flex flex-col h-screen">
       <ReaderToolbar
         bookId={bookId}
+        bookTitle={book?.title}
         sectionTitle={section.title}
         isRead={section.isRead}
         sectionId={sectionId}
