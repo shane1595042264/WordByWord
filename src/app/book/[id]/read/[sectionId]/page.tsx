@@ -206,17 +206,18 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   }, [viewMode])
 
   // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
-  // On first load, restore to saved word index if available from Continue Reading params
+  // On first load, restore to saved word index if available from Continue Reading params,
+  // or fall back to section-level saved scroll progress (for direct section navigation)
   useEffect(() => {
     if (viewMode === 'text' || viewMode === 'side-by-side') {
       const t = setTimeout(() => {
         const restore = restoreRef.current
         if (restore && !restore.applied && restore.wordIndex != null) {
-          // Restore to exact word position
+          // Restore to exact word position (Continue Reading)
           nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
           restore.applied = true
         } else if (restore && !restore.applied && restore.scrollProgress != null) {
-          // Restore scroll position (no word selected)
+          // Restore scroll position from Continue Reading params
           const el = textScrollRef.current
           if (el) {
             const maxScroll = el.scrollHeight - el.clientHeight
@@ -224,13 +225,23 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           }
           nibTextViewerRef.current?.selectWordByDelta(0)
           restore.applied = true
+        } else if (section?.scrollProgress != null && section.scrollProgress > 0) {
+          // Restore from section-level saved position (returning to section directly)
+          const el = textScrollRef.current
+          if (el) {
+            const maxScroll = el.scrollHeight - el.clientHeight
+            if (maxScroll > 0) {
+              el.scrollTop = (section.scrollProgress / 100) * maxScroll
+            }
+          }
+          nibTextViewerRef.current?.selectWordByDelta(0)
         } else {
           nibTextViewerRef.current?.selectWordByDelta(0)
         }
       }, 300) // Slightly longer delay for content to render
       return () => clearTimeout(t)
     }
-  }, [viewMode])
+  }, [viewMode, section?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute effective progress: cursor line / last text line for text modes,
   // text-side scroll for side-by-side, PDF scroll for PDF mode
@@ -298,6 +309,30 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       setSectionProgress(section.scrollProgress ?? 0)
     }
   }, [section?.id])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restore PDF scroll position when returning to a section directly
+  // (not via Continue Reading which uses URL params handled in text mode)
+  useEffect(() => {
+    if (viewMode !== 'pdf' || !section) return
+
+    const restore = restoreRef.current
+    // Skip if Continue Reading scroll param exists (handled via currentPage already)
+    if (restore && !restore.applied && restore.scrollProgress != null) return
+
+    const savedProgress = section.scrollProgress
+    if (savedProgress == null || savedProgress <= 0) return
+
+    // Wait for PDF pages to render before scrolling
+    const timer = setTimeout(() => {
+      const el = pdfScrollRef.current
+      if (el && el.scrollHeight > el.clientHeight) {
+        const maxScroll = el.scrollHeight - el.clientHeight
+        el.scrollTop = (savedProgress / 100) * maxScroll
+      }
+    }, 800)
+
+    return () => clearTimeout(timer)
+  }, [section?.id, viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // In text mode, all section text is shown at once — no page-level navigation.
   // Prev/Next should jump directly to prev/next section.
