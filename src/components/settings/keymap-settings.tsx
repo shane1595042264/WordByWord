@@ -26,6 +26,7 @@ export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
   { id: 'toggle-indicators', label: 'Toggle Element Labels', defaultKeys: 'Ctrl+i', description: 'Show/hide paragraph badges' },
   { id: 'toggle-line-numbers', label: 'Toggle Line Numbers', defaultKeys: 'Ctrl+Shift+l', description: 'Show/hide relative line numbers' },
   { id: 'toggle-user-menu', label: 'User Menu', defaultKeys: 'Ctrl+m', description: 'Open/close the profile dropdown menu' },
+  { id: 'toggle-sidebar', label: 'Toggle Sections Panel', defaultKeys: 'Ctrl+[', description: 'Collapse or expand the sections sidebar in the reader' },
   { id: 'open-settings', label: 'Open Settings', defaultKeys: 'Ctrl+,', description: 'Open the settings page' },
   { id: 'open-keymap', label: 'Keyboard Shortcuts', defaultKeys: 'Ctrl+]', description: 'Open the keyboard customization settings' },
 ]
