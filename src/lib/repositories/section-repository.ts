@@ -36,13 +36,19 @@ export class SectionRepository {
     const all = await db.sections.where('bookId').equals(bookId).toArray()
     const read = all.filter(s => s.isRead).length
     const total = all.length
-    return { read, total, percentage: total === 0 ? 0 : Math.round((read / total) * 100) }
+    const percentage = total === 0 ? 0 : Math.round(
+      all.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
+    )
+    return { read, total, percentage }
   }
 
   async getChapterProgress(chapterId: string): Promise<{ read: number; total: number; percentage: number }> {
     const all = await db.sections.where('chapterId').equals(chapterId).toArray()
     const read = all.filter(s => s.isRead).length
     const total = all.length
-    return { read, total, percentage: total === 0 ? 0 : Math.round((read / total) * 100) }
+    const percentage = total === 0 ? 0 : Math.round(
+      all.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
+    )
+    return { read, total, percentage }
   }
 }

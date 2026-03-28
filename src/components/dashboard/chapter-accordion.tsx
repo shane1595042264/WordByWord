@@ -58,10 +58,12 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     for (const [title, chs] of groupMap) {
       const read = chs.reduce((sum, c) => sum + c.progress.read, 0)
       const total = chs.reduce((sum, c) => sum + c.progress.total, 0)
+      // Weight each chapter's percentage by its section count for accurate partial progress
+      const weightedSum = chs.reduce((sum, c) => sum + c.progress.percentage * c.progress.total, 0)
       result.push({
         title,
         chapters: chs,
-        progress: { read, total, percentage: total > 0 ? Math.round((read / total) * 100) : 0 },
+        progress: { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 },
       })
     }
     return result
@@ -189,10 +191,11 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
         if (filteredChs.length === 0 && !group.title.toLowerCase().includes(query)) return null
         const read = filteredChs.reduce((sum, c) => sum + c.progress.read, 0)
         const total = filteredChs.reduce((sum, c) => sum + c.progress.total, 0)
+        const weightedSum = filteredChs.reduce((sum, c) => sum + c.progress.percentage * c.progress.total, 0)
         return {
           ...group,
           chapters: filteredChs.length > 0 ? filteredChs : group.chapters,
-          progress: filteredChs.length > 0 ? { read, total, percentage: total > 0 ? Math.round((read / total) * 100) : 0 } : group.progress,
+          progress: filteredChs.length > 0 ? { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 } : group.progress,
         }
       })
       .filter((g): g is ChapterGroup => g !== null)
