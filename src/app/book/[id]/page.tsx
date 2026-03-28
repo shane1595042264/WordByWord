@@ -202,11 +202,27 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             <Badge variant="outline">{book.chapters.length} chapters</Badge>
             <Badge variant="outline">{book.allSections.length} sections</Badge>
           </div>
-          {continueSection && continueSectionUrl && (
-            <Link href={continueSectionUrl} className="mt-2">
-              <Button>Continue Reading</Button>
-            </Link>
-          )}
+          {continueSection && continueSectionUrl && (() => {
+            // Use last-accessed scroll progress if this is the last-accessed section,
+            // otherwise fall back to section's own scrollProgress
+            const sectionProgress = (lastAccessedSection && continueSection.id === lastAccessedSection.id)
+              ? (book.lastAccessedScrollProgress ?? continueSection.scrollProgress ?? 0)
+              : (continueSection.isRead ? 100 : (continueSection.scrollProgress ?? 0))
+            return (
+              <Link href={continueSectionUrl} className="mt-3 block max-w-xs">
+                <Button className="w-full flex flex-col items-start gap-1 h-auto py-2.5 px-4">
+                  <span className="text-sm font-medium">Continue Reading</span>
+                  <span className="text-xs opacity-80 truncate w-full text-left">{continueSection.title}</span>
+                  <div className="w-full bg-primary-foreground/30 rounded-full h-1.5 mt-0.5">
+                    <div
+                      className="bg-primary-foreground rounded-full h-1.5 transition-all"
+                      style={{ width: `${Math.min(100, Math.max(0, sectionProgress))}%` }}
+                    />
+                  </div>
+                </Button>
+              </Link>
+            )
+          })()}
           {book.processingStatus !== 'complete' && (
             <ProcessButton bookId={book.id} totalChapters={book.chapters.length} onComplete={refresh} />
           )}
