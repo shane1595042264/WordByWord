@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import { FileTextIcon } from 'lucide-react'
 import type { BookWithProgress } from '@/hooks/use-books'
 import { useProcessingStatus } from '@/hooks/use-processing-status'
 import { ProcessingLogDialog } from './processing-log-dialog'
@@ -34,7 +35,9 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
   const isFailed = book.processingStatus === 'error'
   const processing = useProcessingStatus(isProcessing ? book.jobId : undefined)
   const [showLog, setShowLog] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const completedRef = useRef(false)
+  const hasLog = !!book.jobId
 
   // Trigger refresh when processing completes
   useEffect(() => {
@@ -78,6 +81,21 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
           <span className="text-xs mt-1 text-center">Processing failed</span>
         </div>
       )}
+
+      {editMode && hovered && !isProcessing && (
+        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+          <Button
+            variant="secondary"
+            size="sm"
+            className={`w-full text-xs gap-1.5 ${!hasLog ? 'opacity-50 cursor-not-allowed' : ''}`}
+            disabled={!hasLog}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowLog(true) }}
+          >
+            <FileTextIcon className="h-3 w-3" />
+            View Log
+          </Button>
+        </div>
+      )}
     </div>
   )
 
@@ -92,6 +110,8 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
             ? 'opacity-90'
             : 'hover:shadow-lg cursor-pointer'
       }`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={editMode ? (e: React.MouseEvent) => {
         e.preventDefault()
         onToggleSelect?.(book.id, e)
@@ -204,6 +224,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
           bookTitle={book.title}
           open={showLog}
           onClose={() => setShowLog(false)}
+          isLive={isProcessing}
         />
       )}
     </>

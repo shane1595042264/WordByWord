@@ -153,7 +153,7 @@ export default function HomePage() {
               <UploadDialog onBookImported={refresh} />
               {books.length > 0 && (
                 <Button variant="outline" onClick={() => setEditMode(true)}>
-                  Edit
+                  Manage
                 </Button>
               )}
               <UserMenu />

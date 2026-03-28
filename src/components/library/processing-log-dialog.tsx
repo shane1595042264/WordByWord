@@ -16,9 +16,11 @@ interface ProcessingLogDialogProps {
   bookTitle: string
   open: boolean
   onClose: () => void
+  /** When true, polls for new logs every 2s. When false, fetches once. Default: true */
+  isLive?: boolean
 }
 
-export function ProcessingLogDialog({ jobId, bookTitle, open, onClose }: ProcessingLogDialogProps) {
+export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = true }: ProcessingLogDialogProps) {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -42,9 +44,11 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose }: Process
     }
 
     fetchLogs()
-    interval = setInterval(fetchLogs, 2000)
-    return () => clearInterval(interval)
-  }, [open, jobId])
+    if (isLive) {
+      interval = setInterval(fetchLogs, 2000)
+    }
+    return () => { if (interval) clearInterval(interval) }
+  }, [open, jobId, isLive])
 
   useEffect(() => {
     if (scrollRef.current) {
