@@ -169,6 +169,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       // Block other Ctrl/Meta/Alt combos
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
+      // j — scroll down one line
+      if (e.key === 'j') {
+        e.preventDefault()
+        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+      // k — scroll up one line
+      if (e.key === 'k') {
+        e.preventDefault()
+        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+
       // d — half-page down
       if (e.key === 'd') {
         e.preventDefault()
