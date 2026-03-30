@@ -187,8 +187,9 @@ class SyncService {
         body: formData,
       })
       if (!res.ok) {
-        console.error('[sync] upload failed:', res.status)
-        return null
+        const errorData = await res.json().catch(() => null)
+        const errorMsg = errorData?.error || `Upload failed (${res.status})`
+        throw new Error(errorMsg)
       }
       const data = await res.json()
       return {

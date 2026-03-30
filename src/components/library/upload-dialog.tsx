@@ -25,6 +25,11 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
+    if (f.type !== 'application/pdf') {
+      setStatus('Only PDF files are allowed')
+      e.target.value = ''
+      return
+    }
     setFile(f)
     setStep('mode')
   }, [])
@@ -115,6 +120,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
             <div className="space-y-2">
               <Label htmlFor="pdf-file">Select PDF file</Label>
               <Input id="pdf-file" type="file" accept=".pdf" onChange={handleFileSelect} />
+              {status && <p className="text-sm text-destructive">{status}</p>}
             </div>
           )}
 
