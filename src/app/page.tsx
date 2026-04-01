@@ -13,6 +13,7 @@ import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 import { BookCardSkeleton } from '@/components/library/book-card-skeleton'
 import { RefreshCwIcon, LoaderIcon } from 'lucide-react'
 import { useSyncStatus } from '@/hooks/use-sync-status'
+import { toast } from 'sonner'
 
 export default function HomePage() {
   const { books, loading, refresh } = useBooks()
@@ -22,7 +23,7 @@ export default function HomePage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
-  const { isSyncing: backgroundSyncing } = useSyncStatus()
+  const { isSyncing: backgroundSyncing } = useSyncStatus({ showToasts: true })
 
   // Load last synced timestamp and listen for sync completions
   useEffect(() => {
@@ -51,6 +52,10 @@ export default function HomePage() {
       refresh()
     } catch (err) {
       console.error('Sync failed:', err)
+      toast.error('Sync failed', {
+        description: err instanceof Error ? err.message : 'An unexpected error occurred',
+        duration: 5000,
+      })
     } finally {
       setSyncing(false)
     }
@@ -174,13 +179,21 @@ export default function HomePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onProcessingComplete={async () => {
-            // Force full sync from epoch to pull new chapters/sections from processing
-            localStorage.removeItem('nibble_lastSyncedAt')
-            const { syncService } = await import('@/lib/services/sync-service')
-            // @ts-ignore — reset init flag to force full sync
-            syncService['hasInitSynced'] = false
-            await syncService.sync()
-            refresh()
+            try {
+              // Force full sync from epoch to pull new chapters/sections from processing
+              localStorage.removeItem('nibble_lastSyncedAt')
+              const { syncService } = await import('@/lib/services/sync-service')
+              // @ts-ignore — reset init flag to force full sync
+              syncService['hasInitSynced'] = false
+              await syncService.sync()
+              refresh()
+            } catch (err) {
+              console.error('Post-processing sync failed:', err)
+              toast.error('Sync failed after processing', {
+                description: err instanceof Error ? err.message : 'An unexpected error occurred',
+                duration: 5000,
+              })
+            }
           }}
         />
       )}
