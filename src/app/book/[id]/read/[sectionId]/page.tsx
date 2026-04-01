@@ -503,10 +503,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const handlePageProgress = useCallback((currentPage: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
     import('@/lib/db/database').then(({ db }) => {
+      const now = Date.now()
       db.sections.update(sectionId, {
         lastPageViewed: currentPage,
         scrollProgress: scrollPercent,
+        updatedAt: now,
       })
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [sectionId])
 
@@ -519,13 +522,20 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (maxScroll <= 0) {
       // Content fits without scrolling — 100% immediately
       setSectionProgress(100)
+      import('@/lib/db/database').then(({ db }) => {
+        const now = Date.now()
+        db.sections.update(sectionId, { scrollProgress: 100, updatedAt: now })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
+      })
       return
     }
     const percent = Math.min(100, Math.round((scrollTop / maxScroll) * 100))
     setSectionProgress(percent)
     // Persist scroll progress
     import('@/lib/db/database').then(({ db }) => {
-      db.sections.update(sectionId, { scrollProgress: percent })
+      const now = Date.now()
+      db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [sectionId])
 
@@ -542,8 +552,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (viewMode !== 'text') return
     if (!textScrollRef.current) return
-    // Delay to let content render fully
-    const timer = setTimeout(() => handleTextScroll(), 300)
+    // Delay longer than scroll restore (300ms) to avoid overwriting restored position
+    const timer = setTimeout(() => handleTextScroll(), 600)
     return () => clearTimeout(timer)
   }, [viewMode, textScrollReady]) // eslint-disable-line react-hooks/exhaustive-deps
 

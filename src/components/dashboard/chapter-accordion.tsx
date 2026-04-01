@@ -342,12 +342,17 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
                 className="flex items-center justify-between py-2 px-3 rounded hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : (section.scrollProgress && section.scrollProgress > 0) ? 'bg-yellow-500' : 'bg-muted-foreground/30'}`} />
                   <span className="text-sm">
                     {isSearching ? <HighlightText text={section.title} query={searchQuery} /> : section.title}
                   </span>
                 </div>
-                <span className="text-xs text-muted-foreground">p.{section.startPage}-{section.endPage}</span>
+                <div className="flex items-center gap-2">
+                  {!section.isRead && section.scrollProgress != null && section.scrollProgress > 0 && (
+                    <span className="text-xs text-muted-foreground">{section.scrollProgress}%</span>
+                  )}
+                  <span className="text-xs text-muted-foreground">p.{section.startPage}-{section.endPage}</span>
+                </div>
               </Link>
             ))
           )}

@@ -46,5 +46,12 @@ export function useBookDetail(bookId: string) {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Refresh when sync completes (e.g. scrollProgress synced from server)
+  useEffect(() => {
+    const onSyncComplete = () => refresh()
+    window.addEventListener('nibble:sync-complete', onSyncComplete)
+    return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
+  }, [refresh])
+
   return { book, loading, refresh }
 }
