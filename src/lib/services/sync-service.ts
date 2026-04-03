@@ -31,6 +31,7 @@ class SyncService {
   private cleanupFns: (() => void)[] = []
   private conflictResolver: ConflictResolver | null = null
   private hasInitSynced = false
+  private abortController: AbortController | null = null
 
   // ── Status events ──────────────────────────────────────────
 
@@ -81,6 +82,11 @@ class SyncService {
 
   destroy() {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    // Abort any in-flight sync fetch to prevent stale responses from overwriting newer data
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
     this.cleanupFns.forEach(fn => fn())
     this.cleanupFns = []
     // Reset syncing flag so the next init() can sync successfully
@@ -234,6 +240,9 @@ class SyncService {
     }
 
     this.isSyncing = true
+    // Create an AbortController so destroy() can cancel this in-flight sync
+    this.abortController = new AbortController()
+    const { signal } = this.abortController
     try {
       // On first sync after init, always sync from epoch to catch everything (deletions, new books)
       const isInitSync = !this.hasInitSynced
@@ -302,6 +311,7 @@ class SyncService {
             exerciseProgress: [],
           },
         }),
+        signal,
       })
 
       if (res.status === 401) {
@@ -394,13 +404,22 @@ class SyncService {
         }
       }
 
-      localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+      // Guard against timestamp regression: only update if the new syncedAt is newer
+      const prevSyncedAt = localStorage.getItem(LAST_SYNCED_KEY)
+      if (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt)) {
+        localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+      }
       this.log('sync:complete', `synced at ${result.syncedAt}`)
       this.emitStatus('complete', ':sync complete')
 
       // Notify listeners (e.g. useBooks) that sync finished so they can refresh
       window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
     } catch (err) {
+      // Silently ignore aborted requests (from destroy() cancelling in-flight syncs)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        this.log('sync:aborted', 'sync cancelled by destroy()')
+        return
+      }
       console.error('[sync] error:', err)
       this.emitStatus('error', ':sync failed')
     } finally {
