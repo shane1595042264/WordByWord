@@ -16,7 +16,7 @@ import { useSyncStatus } from '@/hooks/use-sync-status'
 import { toast } from 'sonner'
 
 export default function HomePage() {
-  const { books, loading, refresh } = useBooks()
+  const { books, loading, error, refresh } = useBooks()
   const { status } = useSession()
   const [editMode, setEditMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -171,6 +171,12 @@ export default function HomePage() {
           {Array.from({ length: 6 }).map((_, i) => (
             <BookCardSkeleton key={i} />
           ))}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-destructive text-lg font-medium mb-2">Something went wrong</p>
+          <p className="text-muted-foreground mb-4">{error}</p>
+          <Button variant="outline" onClick={refresh}>Try Again</Button>
         </div>
       ) : (
         <LibraryGrid
