@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
+import { toast } from 'sonner'
 
 /** Describes a word's position on a PDF page (in CSS pixels relative to the page wrapper) */
 export interface PDFTextPosition {
@@ -262,8 +263,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         return () => {
           observer.disconnect()
         }
-      } catch {
-        if (!cancelled) setError('Failed to render PDF')
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to load PDF', { duration: 5000 })
+          console.error('PDF scroll setup error:', err)
+        }
       }
     }
 
@@ -305,9 +310,11 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           wrapper.style.backgroundColor = ''
           wrapper.appendChild(canvas)
         }
-      } catch {
+      } catch (err) {
         // Mark as not rendered so it can be retried
         renderedPagesRef.current.delete(pageNum)
+        toast.error(`Failed to render page ${pageNum}`, { duration: 5000 })
+        console.error(`PDF page ${pageNum} render error:`, err)
       }
     }
 
@@ -404,8 +411,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           pageWrappersRef.current.set(currentFlipPage, pageWrapper)
         }
         doc.destroy()
-      } catch {
-        if (!cancelled) setError('Failed to render PDF')
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to render PDF page', { duration: 5000 })
+          console.error('PDF flip render error:', err)
+        }
       }
     }
     render()

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { db } from '@/lib/db/database'
 import type { Book } from '@/lib/db/models'
+import { toast } from 'sonner'
 
 interface UploadDialogProps {
   onBookImported: () => void
@@ -95,8 +96,10 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       setFile(null)
       onBookImported()
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       console.error('Upload failed:', err)
-      setStatus(`Upload failed: ${err}`)
+      toast.error(`Upload failed: ${message}`, { duration: 5000 })
+      setStatus('')
       setLoading(false)
     }
   }, [file, onBookImported])

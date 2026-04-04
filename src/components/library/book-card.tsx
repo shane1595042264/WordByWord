@@ -9,6 +9,7 @@ import { FileTextIcon } from 'lucide-react'
 import type { BookWithProgress } from '@/hooks/use-books'
 import { useProcessingStatus } from '@/hooks/use-processing-status'
 import { ProcessingLogDialog } from './processing-log-dialog'
+import { toast } from 'sonner'
 
 interface BookCardProps {
   book: BookWithProgress
@@ -177,7 +178,10 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                       headers: { Authorization: `Bearer ${token}` },
                     })
                     onProcessingComplete?.() // refresh
-                  } catch { /* ignore */ }
+                  } catch (err) {
+                    toast.error('Failed to cancel processing', { duration: 5000 })
+                    console.error('Cancel processing error:', err)
+                  }
                 }}
               >
                 Cancel
@@ -201,7 +205,10 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                       headers: { Authorization: `Bearer ${token}` },
                     })
                     if (res.ok) onProcessingComplete?.() // refresh to show new processing state
-                  } catch { /* ignore */ }
+                  } catch (err) {
+                    toast.error('Failed to retry processing', { duration: 5000 })
+                    console.error('Retry processing error:', err)
+                  }
                 }}
               >
                 Retry

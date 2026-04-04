@@ -6,6 +6,7 @@ import { ShortcutButton } from '@/components/ui/shortcut-button'
 import type { NibWord } from '@/lib/nib'
 import type { TranslationResult } from '@/lib/services/translation-service'
 import type { TargetLanguage } from '@/lib/services/settings-service'
+import { toast } from 'sonner'
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -243,10 +244,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             setSentenceTranslating(false)
           }
         })
-        .catch(() => {
+        .catch((err) => {
           if (!cancelled) {
             setSentenceTranslation('Translation failed.')
             setSentenceTranslating(false)
+            toast.error('Sentence translation failed', { duration: 5000 })
+            console.error('Sentence translation error:', err)
           }
         })
     })

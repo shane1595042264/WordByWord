@@ -495,7 +495,9 @@ class SyncService {
         lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
         createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
         updatedAt: new Date(sv.updatedAt as string).getTime(),
-      } as VocabEntry).catch(() => {}) // ignore dupes
+      } as VocabEntry).catch((err) => {
+        console.warn('Skipped duplicate vocab entry:', sv.word, err)
+      })
     }
 
     localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
