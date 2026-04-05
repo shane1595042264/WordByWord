@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect } from 'react'
+import { toast } from 'sonner'
 import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
 
 interface TextViewerProps {
@@ -8,6 +10,12 @@ interface TextViewerProps {
 }
 
 export function TextViewer({ text, sectionTitle }: TextViewerProps) {
+  useEffect(() => {
+    if (!text) {
+      toast.error('No extractable text layer in this PDF', { duration: 5000 })
+    }
+  }, [text])
+
   if (!text) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground p-8">
