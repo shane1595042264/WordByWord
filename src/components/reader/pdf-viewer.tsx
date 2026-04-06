@@ -173,6 +173,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   useEffect(() => {
     if (readingMode !== 'scroll') return
     let cancelled = false
+    let observerRef: IntersectionObserver | null = null
 
     const setup = async () => {
       try {
@@ -247,6 +248,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           },
           { root: container, rootMargin: '200% 0px 200% 0px', threshold: 0 }
         )
+        observerRef = observer
 
         // Observe all page wrappers
         for (const [, wrapper] of pageWrappersRef.current) {
@@ -258,10 +260,6 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         for (let i = 0; i < eagerPages; i++) {
           if (cancelled) break
           await renderPage(startPage + i)
-        }
-
-        return () => {
-          observer.disconnect()
         }
       } catch (err) {
         if (!cancelled) {
@@ -321,8 +319,14 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     setup()
     return () => {
       cancelled = true
-      // Don't destroy the doc here — the IntersectionObserver callbacks may still fire
-      // The doc will be replaced on next effect run
+      if (observerRef) {
+        observerRef.disconnect()
+        observerRef = null
+      }
+      if (pdfDocRef.current) {
+        pdfDocRef.current.destroy()
+        pdfDocRef.current = null
+      }
     }
   }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions])
 
