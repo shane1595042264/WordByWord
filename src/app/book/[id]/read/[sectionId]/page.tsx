@@ -513,30 +513,24 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     })
   }, [sectionId])
 
-  // ── Text mode scroll tracking ──
+  // ── Text mode scroll tracking (debounced DB writes) ──
+  const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleTextScroll = useCallback(() => {
     const el = textScrollRef.current
     if (!el) return
     const { scrollTop, scrollHeight, clientHeight } = el
     const maxScroll = scrollHeight - clientHeight
-    if (maxScroll <= 0) {
-      // Content fits without scrolling — 100% immediately
-      setSectionProgress(100)
+    const percent = maxScroll <= 0 ? 100 : Math.min(100, Math.round((scrollTop / maxScroll) * 100))
+    setSectionProgress(percent)
+    // Debounce the DB write to avoid hundreds of writes per second
+    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
+    scrollDbTimerRef.current = setTimeout(() => {
       import('@/lib/db/database').then(({ db }) => {
         const now = Date.now()
-        db.sections.update(sectionId, { scrollProgress: 100, updatedAt: now })
+        db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
         import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
       })
-      return
-    }
-    const percent = Math.min(100, Math.round((scrollTop / maxScroll) * 100))
-    setSectionProgress(percent)
-    // Persist scroll progress
-    import('@/lib/db/database').then(({ db }) => {
-      const now = Date.now()
-      db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
-      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
-    })
+    }, 500)
   }, [sectionId])
 
   // Track a flag so the effect can re-trigger once loading completes and the ref mounts
@@ -589,7 +583,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (!section) return
     import('@/lib/db/database').then(({ db }) => {
-      db.sections.update(sectionId, { lastPageViewed: currentPage })
+      const now = Date.now()
+      db.sections.update(sectionId, { lastPageViewed: currentPage, updatedAt: now })
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [currentPage, sectionId, section])
 

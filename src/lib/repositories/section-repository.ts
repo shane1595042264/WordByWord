@@ -29,7 +29,7 @@ export class SectionRepository {
   }
 
   async updateExtractedText(id: string, text: string): Promise<void> {
-    await db.sections.update(id, { extractedText: text })
+    await db.sections.update(id, { extractedText: text, updatedAt: Date.now() })
   }
 
   async getBookProgress(bookId: string): Promise<{ read: number; total: number; percentage: number }> {
