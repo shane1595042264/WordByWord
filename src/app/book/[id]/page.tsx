@@ -144,7 +144,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                         }
                       }
                     }
-                  } catch { /* ignore */ }
+                  } catch (err) { console.error('Failed to generate cover:', err) }
                   setGeneratingCover(false)
                 }}
               >

@@ -40,7 +40,7 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
         if (!res.ok) return
         const data = await res.json()
         setLogs(data.logs || [])
-      } catch { /* ignore */ }
+      } catch (err) { console.error('Failed to fetch processing logs:', err) }
     }
 
     fetchLogs()
@@ -74,7 +74,7 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
       a.download = `processing-${bookTitle.replace(/\s+/g, '-')}.log`
       a.click()
       URL.revokeObjectURL(url)
-    } catch { /* ignore */ }
+    } catch (err) { console.error('Failed to download processing log:', err) }
   }
 
   return (

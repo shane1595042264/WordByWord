@@ -1,7 +1,7 @@
 'use client'
 
 import { use, useCallback, useMemo, useRef, useState, useEffect, type MutableRefObject } from 'react'
-import { useRouter } from 'next/navigation'
+import { notFound, useRouter } from 'next/navigation'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
@@ -464,7 +464,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                 section.title,
               ))
             }
-          } catch { setNibDocument(null) }
+          } catch (err) { console.error('Nib text fallback parsing failed:', err); setNibDocument(null) }
         }
       })
     } else if (sectionText) {
@@ -487,7 +487,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             section.title,
           ))
         }
-      } catch { setNibDocument(null) }
+      } catch (err) { console.error('Nib text parsing failed:', err); setNibDocument(null) }
     } else {
       setNibDocument(null)
     }
@@ -589,8 +589,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     })
   }, [currentPage, sectionId, section])
 
-  if (loading || !book || !section) {
+  if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+  }
+
+  if (!book || !section) {
+    notFound()
   }
 
   return (
