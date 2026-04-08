@@ -347,40 +347,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return () => clearTimeout(timer)
   }, [section?.id, viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // In text mode, all section text is shown at once — no page-level navigation.
-  // Prev/Next should jump directly to prev/next section.
-  const isTextMode = viewMode === 'text'
-  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
-  const canGoNext = isTextMode ? !!nextSection : (currentPage < endPage || !!nextSection)
-
-  const goToPrevPage = useCallback(() => {
-    if (isTextMode) {
-      if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
-      return
-    }
-    if (currentPage > startPage) {
-      setCurrentPage(p => p - 1)
-    } else if (prevSection) {
-      router.push(`/book/${bookId}/read/${prevSection.id}`)
-    }
-  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
-
-  const goToNextPage = useCallback(() => {
-    if (isTextMode) {
-      if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
-      return
-    }
-    if (currentPage < endPage) {
-      setCurrentPage(p => p + 1)
-    } else if (nextSection) {
-      router.push(`/book/${bookId}/read/${nextSection.id}`)
-    }
-  }, [isTextMode, currentPage, endPage, nextSection, bookId, router])
-
-  const handlePageChange = useCallback((page: number) => {
-    setCurrentPage(page)
-  }, [])
-
   // Parse section text through .nib pipeline
   // Prefer rich PDF parsing (with font/bold info) when PDF blob is available.
   // Falls back to flat text parsing for scanned/AI-extracted text.
@@ -405,6 +371,43 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const totalSectionPages = effectiveEndPage - startPage + 1
   // In PDF-only mode, don't count overlap pages — each section shows unique pages only
   const pdfOnlyTotalPages = endPage - startPage + 1
+
+  // In text mode, all section text is shown at once — no page-level navigation.
+  // Prev/Next should jump directly to prev/next section.
+  const isTextMode = viewMode === 'text'
+  // In side-by-side mode the PDF renders up to effectiveEndPage, so navigation
+  // must match — otherwise the toolbar shows more pages than the user can reach.
+  const navEndPage = viewMode === 'side-by-side' ? effectiveEndPage : endPage
+  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
+  const canGoNext = isTextMode ? !!nextSection : (currentPage < navEndPage || !!nextSection)
+
+  const goToPrevPage = useCallback(() => {
+    if (isTextMode) {
+      if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
+      return
+    }
+    if (currentPage > startPage) {
+      setCurrentPage(p => p - 1)
+    } else if (prevSection) {
+      router.push(`/book/${bookId}/read/${prevSection.id}`)
+    }
+  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
+
+  const goToNextPage = useCallback(() => {
+    if (isTextMode) {
+      if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
+      return
+    }
+    if (currentPage < navEndPage) {
+      setCurrentPage(p => p + 1)
+    } else if (nextSection) {
+      router.push(`/book/${bookId}/read/${nextSection.id}`)
+    }
+  }, [isTextMode, currentPage, navEndPage, nextSection, bookId, router])
+
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page)
+  }, [])
 
   // Use richContent (Mathpix Markdown) as fallback when extractedText is null
   const sectionText = section?.extractedText || section?.richContent || null
