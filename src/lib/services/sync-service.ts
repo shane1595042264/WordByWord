@@ -35,9 +35,13 @@ class SyncService {
 
   // ── Status events ──────────────────────────────────────────
 
-  private emitStatus(status: 'syncing' | 'complete' | 'error', message: string) {
+  private emitStatus(
+    status: 'syncing' | 'complete' | 'error',
+    message: string,
+    progress?: { current: number; total: number },
+  ) {
     window.dispatchEvent(new CustomEvent('nibble:sync-status', {
-      detail: { status, message },
+      detail: { status, message, progress: progress ?? null },
     }))
   }
 
@@ -391,17 +395,8 @@ class SyncService {
           await db.books.delete(localBook.id)
         }
 
-        // 2. Download cloud-only books
-        for (const sb of cloudOnlyBooks) {
-          const remoteId = sb.id as string
-          this.log('sync:download', `"${sb.customTitle || remoteId}"`)
-          this.emitStatus('syncing', `:pull "${sb.customTitle || 'book'}"`)
-          try {
-            await this.createLocalBookFromServer(sb, result.serverChanges, token)
-          } catch (err) {
-            this.log('sync:download-error', `${remoteId}: ${err}`)
-          }
-        }
+        // 2. Download cloud-only books (parallel, concurrency of 3)
+        await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
       }
 
       // Guard against timestamp regression: only update if the new syncedAt is newer
@@ -465,17 +460,11 @@ class SyncService {
     const result = await res.json()
     let booksDownloaded = 0
 
-    // Create local books from cloud
-    for (const sb of result.serverChanges.books ?? []) {
-      if (sb.deletedAt) continue
-      try {
-        console.log(`[sync] downloading book: ${sb.customTitle || sb.id}...`)
-        await this.createLocalBookFromServer(sb, result.serverChanges, token)
-        booksDownloaded++
-      } catch (err) {
-        console.error('[sync] failed to download book:', sb.id, err)
-      }
-    }
+    // Create local books from cloud (parallel, concurrency of 3)
+    const activeBooks = (result.serverChanges.books ?? []).filter(
+      (sb: Record<string, unknown>) => !sb.deletedAt,
+    )
+    booksDownloaded = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
 
     // Download vocabulary
     for (const sv of result.serverChanges.vocabulary ?? []) {
@@ -502,6 +491,50 @@ class SyncService {
 
     localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
     return { booksDownloaded }
+  }
+
+  // ── Download books with progress and concurrency ──────────────
+
+  private async downloadBooksWithProgress(
+    books: Record<string, unknown>[],
+    serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
+    token: string,
+  ): Promise<number> {
+    const total = books.length
+    if (total === 0) return 0
+
+    let processed = 0
+    let succeeded = 0
+    const CONCURRENCY = 3
+
+    this.emitStatus('syncing', `:pull 0/${total} books`, { current: 0, total })
+
+    // Process in batches of CONCURRENCY
+    for (let i = 0; i < total; i += CONCURRENCY) {
+      const batch = books.slice(i, i + CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map(async (sb) => {
+          const remoteId = sb.id as string
+          this.log('sync:download', `"${sb.customTitle || remoteId}"`)
+          await this.createLocalBookFromServer(sb, serverChanges, token)
+        }),
+      )
+
+      for (let j = 0; j < results.length; j++) {
+        processed++
+        const sb = batch[j]
+        const result = results[j]
+        if (result.status === 'rejected') {
+          this.log('sync:download-error', `${sb.id}: ${result.reason}`)
+        } else {
+          succeeded++
+        }
+        const title = (sb.customTitle as string) || 'book'
+        this.emitStatus('syncing', `:pull "${title}" (${processed}/${total})`, { current: processed, total })
+      }
+    }
+
+    return succeeded
   }
 
   // ── Create a local book from server data ──────────────────────

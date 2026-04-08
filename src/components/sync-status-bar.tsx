@@ -2,22 +2,30 @@
 
 import { useState, useEffect, useRef } from 'react'
 
+interface SyncProgress {
+  current: number
+  total: number
+}
+
 interface SyncStatus {
   status: 'syncing' | 'complete' | 'error'
   message: string
+  progress: SyncProgress | null
 }
 
 export function SyncStatusBar() {
   const [visible, setVisible] = useState(false)
   const [displayText, setDisplayText] = useState('')
   const [status, setStatus] = useState<'syncing' | 'complete' | 'error' | 'idle'>('idle')
+  const [progress, setProgress] = useState<SyncProgress | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const targetTextRef = useRef('')
 
   useEffect(() => {
     const onStatus = (e: Event) => {
-      const { status: newStatus, message } = (e as CustomEvent<SyncStatus>).detail
+      const { status: newStatus, message, progress: newProgress } = (e as CustomEvent<SyncStatus>).detail
+      setProgress(newProgress)
 
       // Clear any pending hide timer
       if (hideTimerRef.current) {
@@ -45,6 +53,7 @@ export function SyncStatusBar() {
 
       // Auto-hide after completion/error
       if (newStatus === 'complete' || newStatus === 'error') {
+        setProgress(null)
         hideTimerRef.current = setTimeout(() => {
           setVisible(false)
           setStatus('idle')
@@ -69,23 +78,41 @@ export function SyncStatusBar() {
         ? 'bg-sky-400'
         : 'bg-red-400'
 
+  const pct = progress ? Math.round((progress.current / progress.total) * 100) : 0
+
   return (
     <div
       className={`
         fixed bottom-4 right-4 z-50
-        flex items-center gap-2
-        rounded border border-zinc-700 bg-zinc-900/95 px-3 py-1.5
+        flex flex-col gap-1.5
+        rounded border border-zinc-700 bg-zinc-900/95 px-3 py-2
         font-mono text-xs text-zinc-300
         shadow-lg backdrop-blur-sm
         transition-all duration-300
         ${visible ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}
       `}
     >
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusColor} ${status === 'syncing' ? 'animate-pulse' : ''}`} />
-      <span className="select-none">
-        {displayText}
-        {status === 'syncing' && <span className="animate-blink ml-px">_</span>}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusColor} ${status === 'syncing' ? 'animate-pulse' : ''}`} />
+        <span className="select-none">
+          {displayText}
+          {status === 'syncing' && <span className="animate-blink ml-px">_</span>}
+        </span>
+      </div>
+      {progress && progress.total > 0 && (
+        <div className="w-48">
+          <div className="h-1.5 w-full rounded-full bg-zinc-700 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-300 ease-out"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="flex justify-between mt-0.5 text-[10px] text-zinc-500">
+            <span>{progress.current}/{progress.total} books</span>
+            <span>{pct}%</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

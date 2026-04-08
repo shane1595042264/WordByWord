@@ -3,9 +3,15 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 
+interface SyncProgress {
+  current: number
+  total: number
+}
+
 interface SyncStatusEvent {
   status: 'syncing' | 'complete' | 'error'
   message: string
+  progress: SyncProgress | null
 }
 
 /**
@@ -14,16 +20,19 @@ interface SyncStatusEvent {
  */
 export function useSyncStatus({ showToasts = false } = {}) {
   const [isSyncing, setIsSyncing] = useState(false)
+  const [progress, setProgress] = useState<SyncProgress | null>(null)
 
   useEffect(() => {
     const onStatus = (e: Event) => {
-      const { status, message: rawMessage } = (e as CustomEvent<SyncStatusEvent>).detail
+      const { status, message: rawMessage, progress: newProgress } = (e as CustomEvent<SyncStatusEvent>).detail
       const message = rawMessage.replace(/^:/, '').trim()
 
       if (status === 'syncing') {
         setIsSyncing(true)
+        setProgress(newProgress)
       } else if (status === 'complete') {
         setIsSyncing(false)
+        setProgress(null)
         if (showToasts) {
           toast.success('Library synced', {
             description: message,
@@ -32,6 +41,7 @@ export function useSyncStatus({ showToasts = false } = {}) {
         }
       } else if (status === 'error') {
         setIsSyncing(false)
+        setProgress(null)
         if (showToasts) {
           toast.error('Sync failed', {
             description: message,
@@ -45,5 +55,5 @@ export function useSyncStatus({ showToasts = false } = {}) {
     return () => window.removeEventListener('nibble:sync-status', onStatus)
   }, [showToasts])
 
-  return { isSyncing }
+  return { isSyncing, progress }
 }

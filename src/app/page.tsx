@@ -23,7 +23,7 @@ export default function HomePage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
-  const { isSyncing: backgroundSyncing } = useSyncStatus({ showToasts: true })
+  const { isSyncing: backgroundSyncing, progress: syncProgress } = useSyncStatus({ showToasts: true })
 
   // Load last synced timestamp and listen for sync completions
   useEffect(() => {
@@ -137,22 +137,37 @@ export default function HomePage() {
           ) : (
             <>
               {status === 'authenticated' && (
-                <div className="flex flex-col items-center">
+                <div className="flex flex-col items-center min-w-[120px]">
                   <Button
                     variant="outline"
                     size="sm"
                     disabled={syncing}
                     onClick={handleSyncNow}
-                    className="gap-1.5"
+                    className="gap-1.5 w-full"
                   >
                     <RefreshCwIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                    {syncing ? 'Syncing...' : 'Sync Now'}
+                    {syncing
+                      ? syncProgress
+                        ? `${syncProgress.current}/${syncProgress.total} books`
+                        : 'Syncing...'
+                      : 'Sync Now'}
                   </Button>
-                  <span className="text-xs text-muted-foreground mt-1">
-                    {lastSynced
-                      ? `Last sync: ${new Date(lastSynced).toLocaleString()}`
-                      : 'Not synced yet'}
-                  </span>
+                  {syncing && syncProgress && syncProgress.total > 0 ? (
+                    <div className="w-full mt-1.5">
+                      <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+                          style={{ width: `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground mt-1">
+                      {lastSynced
+                        ? `Last sync: ${new Date(lastSynced).toLocaleString()}`
+                        : 'Not synced yet'}
+                    </span>
+                  )}
                 </div>
               )}
               <UploadDialog onBookImported={refresh} />
