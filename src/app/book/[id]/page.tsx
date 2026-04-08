@@ -95,8 +95,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
         ← Back to Library
       </Link>
 
-      <div className="flex gap-6 mb-8">
-        <div className="w-32 h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+      <div className="flex flex-col sm:flex-row gap-6 mb-8 items-center sm:items-start">
+        <div className="w-24 h-32 sm:w-32 sm:h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
           {book.coverImage ? (
             <img src={book.coverImage} alt={book.title} className="object-cover w-full h-full rounded-lg" />
           ) : (
@@ -153,7 +153,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2 flex-1">
+        <div className="flex flex-col gap-2 flex-1 items-center sm:items-start text-center sm:text-left w-full">
           {editing ? (
             <>
               <input
@@ -209,7 +209,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
               ? (book.lastAccessedScrollProgress ?? continueSection.scrollProgress ?? 0)
               : (continueSection.isRead ? 100 : (continueSection.scrollProgress ?? 0))
             return (
-              <Link href={continueSectionUrl} className="mt-3 block max-w-xs">
+              <Link href={continueSectionUrl} className="mt-3 block w-full sm:max-w-xs">
                 <Button className="w-full flex flex-col items-start gap-1 h-auto py-2.5 px-4">
                   <span className="text-sm font-medium">Continue Reading</span>
                   <span className="text-xs opacity-80 truncate w-full text-left">{continueSection.title}</span>
