@@ -2,6 +2,7 @@
 
 import { use, useCallback, useMemo, useRef, useState, useEffect, type MutableRefObject } from 'react'
 import { notFound, useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
@@ -511,6 +512,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         lastPageViewed: currentPage,
         scrollProgress: scrollPercent,
         updatedAt: now,
+      }).catch((err) => {
+        console.error('Failed to save page progress:', err)
+        if (!saveErrorShownRef.current) {
+          saveErrorShownRef.current = true
+          toast.warning('Could not save reading position. Your progress may not be preserved.')
+        }
       })
       import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
@@ -518,6 +525,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   // ── Text mode scroll tracking (debounced DB writes) ──
   const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveErrorShownRef = useRef(false)
   const handleTextScroll = useCallback(() => {
     const el = textScrollRef.current
     if (!el) return
@@ -530,7 +538,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     scrollDbTimerRef.current = setTimeout(() => {
       import('@/lib/db/database').then(({ db }) => {
         const now = Date.now()
-        db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
+        db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now }).catch((err) => {
+          console.error('Failed to save scroll progress:', err)
+          if (!saveErrorShownRef.current) {
+            saveErrorShownRef.current = true
+            toast.warning('Could not save reading position. Your progress may not be preserved.')
+          }
+        })
         import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
       })
     }, 500)
@@ -587,7 +601,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (!section) return
     import('@/lib/db/database').then(({ db }) => {
       const now = Date.now()
-      db.sections.update(sectionId, { lastPageViewed: currentPage, updatedAt: now })
+      db.sections.update(sectionId, { lastPageViewed: currentPage, updatedAt: now }).catch((err) => {
+        console.error('Failed to save current page:', err)
+        if (!saveErrorShownRef.current) {
+          saveErrorShownRef.current = true
+          toast.warning('Could not save reading position. Your progress may not be preserved.')
+        }
+      })
       import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [currentPage, sectionId, section])
