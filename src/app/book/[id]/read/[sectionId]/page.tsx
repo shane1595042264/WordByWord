@@ -319,7 +319,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Reset page/progress when section changes, resume from lastPageViewed if available
   useEffect(() => {
     if (section) {
-      setCurrentPage(section.lastPageViewed ?? section.startPage)
+      // Clamp lastPageViewed to valid bounds to prevent stale/corrupt values
+      // from leaving currentPage beyond navEndPage (which disables the Next button)
+      const saved = section.lastPageViewed
+      const validPage = saved != null
+        ? Math.max(section.startPage, Math.min(saved, section.endPage))
+        : section.startPage
+      setCurrentPage(validPage)
       setSectionProgress(section.scrollProgress ?? 0)
     }
   }, [section?.id])  // eslint-disable-line react-hooks/exhaustive-deps

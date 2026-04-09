@@ -330,6 +330,23 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     }
   }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions])
 
+  // Scroll mode: scroll to controlled page when it changes (Next/Prev button clicks)
+  const prevControlledPageRef = useRef(currentFlipPage)
+  useEffect(() => {
+    if (readingMode !== 'scroll') return
+    if (currentFlipPage === prevControlledPageRef.current) return
+    prevControlledPageRef.current = currentFlipPage
+
+    // Wait briefly for page wrappers to exist after setup
+    const timer = setTimeout(() => {
+      const wrapper = pageWrappersRef.current.get(currentFlipPage)
+      const container = containerRef.current
+      if (!wrapper || !container) return
+      container.scrollTo({ top: wrapper.offsetTop, behavior: 'smooth' })
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [currentFlipPage, readingMode])
+
   // Scroll mode: track scroll progress
   useEffect(() => {
     if (readingMode !== 'scroll') return
