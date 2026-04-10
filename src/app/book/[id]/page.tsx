@@ -229,7 +229,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
 
-      <ProgressDrilldown book={book} onReorganize={() => setShowChapterEditor(true)} />
+      <ProgressDrilldown book={book} onReorganize={book.totalPages > 0 && book.pdfBlob && book.remoteId ? () => setShowChapterEditor(true) : undefined} />
 
       {/* Chapter reorganize dialog */}
       <Dialog open={showChapterEditor} onOpenChange={setShowChapterEditor}>

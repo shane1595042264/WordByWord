@@ -39,6 +39,7 @@ export function PageStripEditor({
   const [processing, setProcessing] = useState(false)
   const [expectedCount, setExpectedCount] = useState<string>('')
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [hoverGap, setHoverGap] = useState<number | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
 
@@ -119,8 +120,11 @@ export function PageStripEditor({
 
   const handleSave = useCallback(async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       await onSave(sortedDividers)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save structure')
     } finally {
       setSaving(false)
     }
@@ -130,6 +134,19 @@ export function PageStripEditor({
   const pages: number[] = []
   for (let p = startPage; p <= endPage; p++) {
     pages.push(p)
+  }
+
+  if (endPage < startPage || pages.length === 0) {
+    return (
+      <div className="flex flex-col gap-4 h-full items-center justify-center py-8">
+        <p className="text-muted-foreground text-sm">
+          This book has no pages. Upload or process the PDF first before reorganizing chapters.
+        </p>
+        <Button size="sm" variant="outline" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -245,6 +262,13 @@ export function PageStripEditor({
           )
         })}
       </div>
+
+      {/* Error display */}
+      {saveError && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {saveError}
+        </div>
+      )}
 
       {/* Info bar */}
       <div className="text-xs text-muted-foreground">
