@@ -163,8 +163,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
   // Track which pages have been rendered to avoid re-rendering
   const renderedPagesRef = useRef<Set<number>>(new Set())
-  // Track the pdf document instance for lazy rendering
+  // Track the pdf document instance for lazy rendering (scroll mode)
   const pdfDocRef = useRef<any>(null)
+  // Track the pdf document instance for flip mode (cached across page turns)
+  const flipDocRef = useRef<any>(null)
   // Track container width for consistent scaling
   const containerWidthRef = useRef(0)
 
@@ -380,16 +382,56 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     }
   }, [readingMode, startPage, totalPages, onPageProgress])
 
-  // Flip mode: render single page, scale to fill
+  // Flip mode: load and cache the PDF document when pdfBlob changes
+  useEffect(() => {
+    if (readingMode !== 'flip') return
+    let cancelled = false
+
+    const loadDoc = async () => {
+      try {
+        const pdfjs = await import('pdfjs-dist')
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+
+        const arrayBuffer = await pdfBlob.arrayBuffer()
+        const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+        if (cancelled) { doc.destroy(); return }
+        flipDocRef.current = doc
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to load PDF', { duration: 5000 })
+          console.error('PDF flip load error:', err)
+        }
+      }
+    }
+    loadDoc()
+    return () => {
+      cancelled = true
+      if (flipDocRef.current) {
+        flipDocRef.current.destroy()
+        flipDocRef.current = null
+      }
+    }
+  }, [pdfBlob, readingMode])
+
+  // Flip mode: render current page from cached document
   useEffect(() => {
     if (readingMode !== 'flip') return
     let cancelled = false
 
     const render = async () => {
-      try {
-        const pdfjs = await import('pdfjs-dist')
-        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+      // Wait for the document to be loaded
+      let doc = flipDocRef.current
+      if (!doc) {
+        // Document may still be loading — retry briefly
+        for (let i = 0; i < 20 && !flipDocRef.current; i++) {
+          await new Promise(r => setTimeout(r, 50))
+        }
+        doc = flipDocRef.current
+        if (!doc || cancelled) return
+      }
 
+      try {
         const container = containerRef.current
         if (!container || cancelled) return
         container.innerHTML = ''
@@ -398,8 +440,6 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
         const containerWidth = container.clientWidth
 
-        const arrayBuffer = await pdfBlob.arrayBuffer()
-        const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
         const page = await doc.getPage(currentFlipPage)
         const unscaledViewport = page.getViewport({ scale: 1 })
         const scale = containerWidth / unscaledViewport.width
@@ -431,7 +471,6 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           container.appendChild(pageWrapper)
           pageWrappersRef.current.set(currentFlipPage, pageWrapper)
         }
-        doc.destroy()
       } catch (err) {
         if (!cancelled) {
           setError('Failed to render PDF')
