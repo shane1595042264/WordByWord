@@ -358,6 +358,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Prefer rich PDF parsing (with font/bold info) when PDF blob is available.
   // Falls back to flat text parsing for scanned/AI-extracted text.
   const [nibDocument, setNibDocument] = useState<NibDocument | null>(null)
+  const [parseError, setParseError] = useState(false)
 
   // Effective end page: always include at least the next section's start page
   // so the PDF shows all content that the nib parser merged (cross-page paragraphs).
@@ -420,8 +421,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const sectionText = section?.extractedText || section?.richContent || null
 
   useEffect(() => {
-    if (!book || !section) { setNibDocument(null); return }
-    if (!sectionText && !section.richContent) { setNibDocument(null); return }
+    if (!book || !section) { setNibDocument(null); setParseError(false); return }
+    if (!sectionText && !section.richContent) { setNibDocument(null); setParseError(false); return }
+    setParseError(false)
 
     let cancelled = false
     const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
@@ -474,7 +476,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                 section.title,
               ))
             }
-          } catch (err) { console.error('Nib text fallback parsing failed:', err); setNibDocument(null) }
+          } catch (err) {
+            console.error('Nib text fallback parsing failed:', err)
+            setNibDocument(null)
+            setParseError(true)
+            toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+          }
         }
       })
     } else if (sectionText) {
@@ -497,7 +504,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             section.title,
           ))
         }
-      } catch (err) { console.error('Nib text parsing failed:', err); setNibDocument(null) }
+      } catch (err) {
+        console.error('Nib text parsing failed:', err)
+        setNibDocument(null)
+        setParseError(true)
+        toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+      }
     } else {
       setNibDocument(null)
     }
@@ -705,6 +717,16 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     onCursorLineChange={handleCursorLineChange}
                     vimMode={vim.mode}
                   />
+                ) : parseError && !sectionText ? (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8 gap-4">
+                    <p className="text-center">Text extraction failed for this section. This may be a scanned or image-based PDF.</p>
+                    <button
+                      onClick={() => setViewMode('pdf')}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                    >
+                      Switch to PDF View
+                    </button>
+                  </div>
                 ) : (
                   <TextViewer text={sectionText} sectionTitle={section.title} />
                 )}
