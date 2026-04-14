@@ -8,7 +8,7 @@ import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
 import { PDFViewer } from '@/components/reader/pdf-viewer'
 import { TextViewer } from '@/components/reader/text-viewer'
-import { NibTextViewer, type NibTextViewerHandle, type CursorLineInfo } from '@/components/reader/nib-text-viewer'
+import { NibTextViewer, NibTextViewerSkeleton, type NibTextViewerHandle, type CursorLineInfo } from '@/components/reader/nib-text-viewer'
 import { SideBySideViewer } from '@/components/reader/side-by-side-viewer'
 import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
@@ -727,6 +727,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                       Switch to PDF View
                     </button>
                   </div>
+                ) : !nibDocument && !parseError && (sectionText || section.richContent) ? (
+                  <NibTextViewerSkeleton />
                 ) : (
                   <TextViewer text={sectionText} sectionTitle={section.title} />
                 )}

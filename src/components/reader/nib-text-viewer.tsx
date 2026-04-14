@@ -7,6 +7,7 @@ import { NibElementBadge } from '@/components/ui/block-tooltip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
 import { WordInfoPanel } from '@/components/reader/word-info-panel'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
 
 /** Handle exposed by NibTextViewer for vim-driven selection */
@@ -324,6 +325,27 @@ function ParagraphRenderer({
  * Headers, footnotes, and body paragraphs are visually separated.
  * Element type indicators can be toggled on/off for testing/debugging.
  */
+
+/** Skeleton placeholder shown while text is being parsed */
+const SKELETON_LINE_WIDTHS = ['w-full', 'w-11/12', 'w-4/5', 'w-full', 'w-3/4', 'w-11/12', 'w-full', 'w-2/3']
+
+export function NibTextViewerSkeleton() {
+  return (
+    <div className="p-6 space-y-6" aria-busy="true" aria-label="Loading text content">
+      {/* Title skeleton */}
+      <Skeleton className="h-7 w-48 mb-4" />
+      {/* Paragraph skeletons — 3 groups with varying line widths */}
+      {[0, 1, 2].map((group) => (
+        <div key={group} className="space-y-3">
+          {SKELETON_LINE_WIDTHS.map((w, i) => (
+            <Skeleton key={i} className={`h-4 ${w}`} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
   { nibDocument, sectionTitle, showIndicators = false, onWordSelect, onDeselect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
   ref
@@ -963,11 +985,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
   }, [onDeselect])
 
   if (!nibDocument) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground p-8">
-        <p>No parsed content available. Process this chapter first.</p>
-      </div>
-    )
+    return <NibTextViewerSkeleton />
   }
 
   // Precompute flat word index offsets for each paragraph

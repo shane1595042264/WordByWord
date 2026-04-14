@@ -3,7 +3,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { PDFViewer, type HighlightWordInfo, type PDFViewerHandle } from './pdf-viewer'
 import { TextViewer } from './text-viewer'
-import { NibTextViewer, type NibTextViewerHandle, type CursorLineInfo } from './nib-text-viewer'
+import { NibTextViewer, NibTextViewerSkeleton, type NibTextViewerHandle, type CursorLineInfo } from './nib-text-viewer'
 import { RelativeLineNumbers } from './relative-line-numbers'
 import type { NibDocument, NibWord } from '@/lib/nib'
 
@@ -209,6 +209,8 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
                 vimMode={vimMode}
                 onCursorLineChange={handleCursorLineChange}
               />
+            ) : !text ? (
+              <NibTextViewerSkeleton />
             ) : (
               <TextViewer text={text} sectionTitle={sectionTitle} />
             )}
