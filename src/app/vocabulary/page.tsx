@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { toast } from 'sonner'
 import type { VocabEntry } from '@/lib/db/models'
 
 export default function VocabularyPage() {
@@ -11,6 +12,7 @@ export default function VocabularyPage() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const loadEntries = useCallback(async () => {
     const { VocabService } = await import('@/lib/services/vocab-service')
@@ -23,10 +25,17 @@ export default function VocabularyPage() {
   useEffect(() => { loadEntries() }, [loadEntries])
 
   const handleDelete = useCallback(async (id: string) => {
-    const { VocabService } = await import('@/lib/services/vocab-service')
-    const svc = new VocabService()
-    await svc.delete(id)
-    setEntries(prev => prev.filter(e => e.id !== id))
+    setDeletingId(id)
+    try {
+      const { VocabService } = await import('@/lib/services/vocab-service')
+      const svc = new VocabService()
+      await svc.delete(id)
+      setEntries(prev => prev.filter(e => e.id !== id))
+    } catch {
+      toast.error('Failed to delete word. Please try again.')
+    } finally {
+      setDeletingId(null)
+    }
   }, [])
 
   const filtered = search
@@ -138,12 +147,13 @@ export default function VocabularyPage() {
                             variant="ghost"
                             size="sm"
                             className="text-xs h-7"
+                            disabled={deletingId === entry.id}
                             onClick={(e) => {
                               e.stopPropagation()
                               handleDelete(entry.id)
                             }}
                           >
-                            Remove
+                            {deletingId === entry.id ? 'Removing...' : 'Remove'}
                           </Button>
                         </div>
                       </div>
