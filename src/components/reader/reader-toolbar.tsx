@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BlockTooltip } from '@/components/ui/block-tooltip'
+import { useShortcuts } from '@/hooks/use-shortcuts'
 import type { ViewMode } from '@/hooks/use-reader'
 
 interface ReaderToolbarProps {
@@ -52,6 +53,11 @@ export function ReaderToolbar({
   showLineNumbers, onLineNumbersToggle,
   sidebarCollapsed, onToggleSidebar,
 }: ReaderToolbarProps) {
+  const { getKeysDisplay } = useShortcuts()
+
+  /** Get the display string for a shortcut, falling back to the provided default */
+  const sk = (id: string, fallback: string) => getKeysDisplay(id) ?? fallback
+
   const handleToggleRead = async () => {
     const { SectionRepository } = await import('@/lib/repositories')
     const sectionRepo = new SectionRepository()
@@ -67,7 +73,7 @@ export function ReaderToolbar({
     <div className="border-b bg-background">
       <div className="flex items-center justify-between px-4 py-2">
         <div className="flex items-center gap-3">
-          <BlockTooltip label={sidebarCollapsed ? 'Show Sections' : 'Hide Sections'} shortcut="⌃ [">
+          <BlockTooltip label={sidebarCollapsed ? 'Show Sections' : 'Hide Sections'} shortcut={sk('toggle-sidebar', '⌃ [')}>
             <button
               onClick={onToggleSidebar}
               className="p-1.5 rounded hover:bg-muted text-muted-foreground transition-colors"
@@ -79,7 +85,7 @@ export function ReaderToolbar({
               </svg>
             </button>
           </BlockTooltip>
-          <BlockTooltip label="Back to Dashboard" shortcut="⌃ B">
+          <BlockTooltip label="Back to Dashboard" shortcut={sk('back-to-dashboard', '⌃ B')}>
             <Link href={`/book/${bookId}`}>
               <Button variant="ghost" size="sm">&larr; Dashboard</Button>
             </Link>
@@ -91,7 +97,7 @@ export function ReaderToolbar({
             </>
           )}
           <span className="text-sm font-medium truncate max-w-[200px]">{sectionTitle}</span>
-          <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut="⌃ R">
+          <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut={sk('toggle-read', '⌃ R')}>
             <Badge
               variant={isRead ? 'default' : 'outline'}
               className="cursor-pointer"
@@ -103,7 +109,7 @@ export function ReaderToolbar({
         </div>
         <div className="flex items-center gap-2">
           {/* .nib element indicator toggle */}
-          <BlockTooltip label="Toggle Element Labels" shortcut="⌃ I" hint="Show/hide paragraph, header, section indicators">
+          <BlockTooltip label="Toggle Element Labels" shortcut={sk('toggle-indicators', '⌃ I')} hint="Show/hide paragraph, header, section indicators">
             <button
               onClick={onToggleIndicators}
               className={`px-3 py-1 text-xs border rounded-md transition-colors ${
@@ -117,7 +123,7 @@ export function ReaderToolbar({
           </BlockTooltip>
           {/* Line numbers toggle — only in text/side-by-side modes */}
           {(viewMode === 'text' || viewMode === 'side-by-side') && (
-            <BlockTooltip label={showLineNumbers ? 'Hide Line Numbers' : 'Show Line Numbers'} shortcut="⌃⇧ L" hint="Relative line numbers gutter">
+            <BlockTooltip label={showLineNumbers ? 'Hide Line Numbers' : 'Show Line Numbers'} shortcut={sk('toggle-line-numbers', '⌃⇧ L')} hint="Relative line numbers gutter">
               <button
                 onClick={onLineNumbersToggle}
                 className={`px-3 py-1 text-xs border rounded-md transition-colors font-mono ${
@@ -133,9 +139,10 @@ export function ReaderToolbar({
           {/* View mode toggle */}
           <div className="flex border rounded-md">
             {(['pdf', 'text', 'side-by-side'] as ViewMode[]).map(mode => {
-              const shortcutMap: Record<string, string> = { pdf: '⌃ 1', text: '⌃ 2', 'side-by-side': '⌃ 3' }
+              const shortcutIdMap: Record<string, string> = { pdf: 'view-pdf', text: 'view-text', 'side-by-side': 'view-side-by-side' }
+              const fallbackMap: Record<string, string> = { pdf: '⌃ 1', text: '⌃ 2', 'side-by-side': '⌃ 3' }
               return (
-                <BlockTooltip key={mode} label={mode} shortcut={shortcutMap[mode]}>
+                <BlockTooltip key={mode} label={mode} shortcut={sk(shortcutIdMap[mode], fallbackMap[mode])}>
                   <button
                     onClick={() => onViewModeChange(mode)}
                     className={`px-3 py-1 text-xs capitalize ${
@@ -151,7 +158,7 @@ export function ReaderToolbar({
           {/* Reading mode toggle (scroll vs flip) - only for PDF modes */}
           {viewMode !== 'text' && (
             <div className="flex border rounded-md">
-              <BlockTooltip label="Scroll Mode" shortcut="⌃ S">
+              <BlockTooltip label="Scroll Mode" shortcut={sk('reading-mode-scroll', '⌃ S')}>
                 <button
                   onClick={() => onReadingModeChange('scroll')}
                   className={`px-3 py-1 text-xs ${
@@ -161,7 +168,7 @@ export function ReaderToolbar({
                   Scroll
                 </button>
               </BlockTooltip>
-              <BlockTooltip label="Flip Mode" shortcut="⌃ F">
+              <BlockTooltip label="Flip Mode" shortcut={sk('reading-mode-flip', '⌃ F')}>
                 <button
                   onClick={() => onReadingModeChange('flip')}
                   className={`px-3 py-1 text-xs ${
@@ -190,7 +197,7 @@ export function ReaderToolbar({
           )}
           {/* Page/Section nav */}
           <div className="flex items-center gap-2">
-            <BlockTooltip label={viewMode === 'text' ? 'Previous Section' : 'Previous Page'} shortcut="⌃ ←">
+            <BlockTooltip label={viewMode === 'text' ? 'Previous Section' : 'Previous Page'} shortcut={sk('prev-page', '⌃ ←')}>
               <Button variant="outline" size="sm" onClick={onPrevPage} disabled={!canGoPrev}>
                 &larr; Prev
               </Button>
@@ -204,7 +211,7 @@ export function ReaderToolbar({
                 {currentPage - startPage + 1}/{totalSectionPages} (p.{currentPage})
               </span>
             )}
-            <BlockTooltip label={viewMode === 'text' ? 'Next Section' : 'Next Page'} shortcut="⌃ →">
+            <BlockTooltip label={viewMode === 'text' ? 'Next Section' : 'Next Page'} shortcut={sk('next-page', '⌃ →')}>
               <Button variant="outline" size="sm" onClick={onNextPage} disabled={!canGoNext}>
                 Next &rarr;
               </Button>
