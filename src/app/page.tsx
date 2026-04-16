@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
 import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 import { BookCardSkeleton } from '@/components/library/book-card-skeleton'
-import { RefreshCwIcon, LoaderIcon } from 'lucide-react'
+import { RefreshCwIcon, LoaderIcon, BookOpenIcon } from 'lucide-react'
+import Link from 'next/link'
 import { useSyncStatus } from '@/hooks/use-sync-status'
 import { toast } from 'sonner'
 
@@ -170,6 +171,12 @@ export default function HomePage() {
                   )}
                 </div>
               )}
+              <Link href="/vocabulary">
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <BookOpenIcon className="h-4 w-4" />
+                  Vocabulary
+                </Button>
+              </Link>
               <UploadDialog onBookImported={refresh} />
               {books.length > 0 && (
                 <Button variant="outline" onClick={() => setEditMode(true)}>
