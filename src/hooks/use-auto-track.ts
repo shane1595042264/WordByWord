@@ -5,7 +5,7 @@ import { useEffect, useRef, type RefObject } from 'react'
 export function useAutoTrack(
   sectionId: string,
   isRead: boolean,
-  onMarkedRead: () => void,
+  onMarkedRead: (bookJustCompleted: boolean) => void,
   scrollContainerRef: RefObject<HTMLDivElement | null>,
   /** Optional separate scroll container for text mode — forces endofpage tracking */
   textScrollRef?: RefObject<HTMLDivElement | null>,
@@ -31,8 +31,8 @@ export function useAutoTrack(
 
       const markRead = async (_reason: string) => {
         if (cancelled) return
-        await sectionRepo.markAsRead(sectionId)
-        onMarkedRead()
+        const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+        onMarkedRead(bookJustCompleted)
       }
 
       const isTextMode = viewMode === 'text'

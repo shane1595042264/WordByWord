@@ -143,10 +143,19 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         {!isProcessing && !isFailed && (
           <div className="space-y-1">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{book.progress.percentage}%</span>
+              {book.completedAt ? (
+                <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 6L5 9L10 3" />
+                  </svg>
+                  Complete
+                </span>
+              ) : (
+                <span>{book.progress.percentage}%</span>
+              )}
               <span>{book.progress.read}/{book.progress.total} sections</span>
             </div>
-            <Progress value={book.progress.percentage} className="h-2" />
+            <Progress value={book.progress.percentage} className={`h-2 ${book.completedAt ? '[&_[data-slot=progress-indicator]]:bg-green-500' : ''}`} />
           </div>
         )}
 

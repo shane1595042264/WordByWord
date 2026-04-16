@@ -28,6 +28,7 @@ export class BookRepository {
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
+      completedAt: null,
     }
     await db.books.add(book)
     syncService.markDirty()
@@ -61,6 +62,11 @@ export class BookRepository {
       lastReadAt: Date.now(),
       updatedAt: Date.now(),
     })
+    syncService.markDirty()
+  }
+
+  async markComplete(id: string): Promise<void> {
+    await db.books.update(id, { completedAt: Date.now(), updatedAt: Date.now() })
     syncService.markDirty()
   }
 

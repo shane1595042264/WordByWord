@@ -14,6 +14,7 @@ import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
 import { ReaderToolbar } from '@/components/reader/reader-toolbar'
 import { VimStatusBar } from '@/components/reader/vim-status-bar'
+import { BookCompleteCelebration } from '@/components/reader/book-complete-celebration'
 import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
 import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
 import { NibService } from '@/lib/services/nib-service'
@@ -60,6 +61,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [sideBySideTextProgress, setSideBySideTextProgress] = useState(0)
   /** Flat word index of the currently selected word (for position restore) */
   const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null)
+  const [showCelebration, setShowCelebration] = useState(false)
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
@@ -517,7 +519,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return () => { cancelled = true }
   }, [sectionText, section?.richContent, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
+  const handleMarkedRead = useCallback((bookJustCompleted?: boolean) => {
+    refreshReadStatus()
+    if (bookJustCompleted) setShowCelebration(true)
+  }, [refreshReadStatus])
 
   // Only track after loading completes to ensure scroll containers are mounted
   useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef)
@@ -650,7 +655,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         onViewModeChange={setViewMode}
         readingMode={readingMode}
         onReadingModeChange={setReadingMode}
-        onReadToggle={refreshReadStatus}
+        onReadToggle={handleMarkedRead}
         sectionProgress={effectiveProgress}
         showIndicators={showIndicators}
         onToggleIndicators={() => setShowIndicators(prev => !prev)}
@@ -766,6 +771,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           )}
         </div>
       </div>
+      {showCelebration && book && (
+        <BookCompleteCelebration
+          bookTitle={book.title}
+          onDismiss={() => setShowCelebration(false)}
+        />
+      )}
     </div>
   )
 }

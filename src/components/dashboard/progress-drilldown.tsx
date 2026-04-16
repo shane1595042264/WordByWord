@@ -47,7 +47,19 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
             {book.progress.read}/{book.progress.total} sections ({book.progress.percentage}%)
           </span>
         </div>
-        <Progress value={book.progress.percentage} className="h-3" />
+        <Progress value={book.progress.percentage} className={`h-3 ${book.completedAt ? '[&_[data-slot=progress-indicator]]:bg-green-500' : ''}`} />
+        {book.completedAt && (
+          <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+            <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-white">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12l5 5L20 7" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium">
+              Completed on {new Date(book.completedAt).toLocaleDateString()}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">

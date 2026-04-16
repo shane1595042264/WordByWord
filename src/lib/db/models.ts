@@ -15,6 +15,7 @@ export interface Book {
   lastAccessedScrollProgress: number | null
   /** Flat word index of the selected word (word-level restore) */
   lastAccessedWordIndex: number | null
+  completedAt: number | null
   updatedAt: number
   remoteId?: string
   catalogId?: string

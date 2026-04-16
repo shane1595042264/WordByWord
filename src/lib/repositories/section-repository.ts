@@ -18,9 +18,24 @@ export class SectionRepository {
     return db.sections.where('bookId').equals(bookId).sortBy('order')
   }
 
-  async markAsRead(id: string): Promise<void> {
+  /** Mark section as read. Returns true if this was the last unread section (book just completed). */
+  async markAsRead(id: string): Promise<boolean> {
     await db.sections.update(id, { isRead: true, readAt: Date.now(), updatedAt: Date.now() })
     syncService.markDirty()
+
+    // Check if the entire book is now complete
+    const section = await db.sections.get(id)
+    if (!section) return false
+    const unread = await db.sections.where('bookId').equals(section.bookId).filter(s => !s.isRead).count()
+    if (unread === 0) {
+      const { BookRepository } = await import('./book-repository')
+      const book = await db.books.get(section.bookId)
+      if (book && !book.completedAt) {
+        await new BookRepository().markComplete(section.bookId)
+        return true
+      }
+    }
+    return false
   }
 
   async markAsUnread(id: string): Promise<void> {

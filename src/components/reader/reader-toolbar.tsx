@@ -17,7 +17,7 @@ interface ReaderToolbarProps {
   onViewModeChange: (mode: ViewMode) => void
   readingMode: 'scroll' | 'flip'
   onReadingModeChange: (mode: 'scroll' | 'flip') => void
-  onReadToggle: () => void
+  onReadToggle: (bookJustCompleted?: boolean) => void
   sectionProgress: number
   showIndicators?: boolean
   onToggleIndicators?: () => void
@@ -63,10 +63,11 @@ export function ReaderToolbar({
     const sectionRepo = new SectionRepository()
     if (isRead) {
       await sectionRepo.markAsUnread(sectionId)
+      onReadToggle()
     } else {
-      await sectionRepo.markAsRead(sectionId)
+      const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+      onReadToggle(bookJustCompleted)
     }
-    onReadToggle()
   }
 
   return (

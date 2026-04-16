@@ -104,6 +104,7 @@ export class BookProcessingService {
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
+      completedAt: null,
     }
     await db.books.add(book)
 

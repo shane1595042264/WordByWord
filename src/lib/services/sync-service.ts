@@ -589,6 +589,7 @@ class SyncService {
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
       lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? null,
       lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
+      completedAt: sb.completedAt ? new Date(sb.completedAt as string).getTime() : null,
       remoteId,
       catalogId: sb.catalogId as string,
     })

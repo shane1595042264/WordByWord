@@ -24,6 +24,7 @@ describe('Database', () => {
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
+      completedAt: null,
     }
     await db.books.add(book)
     const retrieved = await db.books.get(book.id)

@@ -83,6 +83,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         lastAccessedSectionId: null,
         lastAccessedScrollProgress: null,
         lastAccessedWordIndex: null,
+        completedAt: null,
         remoteId: uploadResult?.remoteId,
         catalogId: uploadResult?.catalogId,
         jobId: uploadResult?.jobId,
