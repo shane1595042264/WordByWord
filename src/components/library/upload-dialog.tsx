@@ -100,6 +100,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('Upload failed:', err)
       toast.error(`Upload failed: ${message}`, { duration: 5000 })
+      setStep('select')
+      setFile(null)
       setStatus('')
       setLoading(false)
     }

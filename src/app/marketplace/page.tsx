@@ -31,6 +31,7 @@ export default function MarketplacePage() {
   const [search, setSearch] = useState('')
   const [adding, setAdding] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   // Redirect non-admins
   useEffect(() => {
@@ -41,20 +42,27 @@ export default function MarketplacePage() {
 
   const fetchCatalog = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const tokenRes = await fetch('/api/auth/token')
-      if (!tokenRes.ok) return
+      if (!tokenRes.ok) {
+        setError('Failed to authenticate. Please try again.')
+        return
+      }
       const { token } = await tokenRes.json()
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
       const searchParam = search ? `?search=${encodeURIComponent(search)}` : ''
       const res = await fetch(`${apiUrl}/admin/catalog${searchParam}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        setError('Failed to load catalog. Please try again.')
+        return
+      }
       const data = await res.json()
       setCatalog(data.data || [])
     } catch {
-      // ignore
+      setError('Could not connect to the server. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -123,6 +131,11 @@ export default function MarketplacePage() {
 
       {loading ? (
         <div className="text-muted-foreground py-10 text-center">Loading catalog...</div>
+      ) : error ? (
+        <div className="py-10 text-center space-y-3">
+          <p className="text-destructive text-sm">{error}</p>
+          <Button variant="outline" size="sm" onClick={fetchCatalog}>Retry</Button>
+        </div>
       ) : catalog.length === 0 ? (
         <div className="text-muted-foreground py-10 text-center">No books in catalog</div>
       ) : (
