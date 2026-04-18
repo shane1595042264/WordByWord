@@ -587,7 +587,9 @@ class SyncService {
       updatedAt: now,
       lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
-      lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? null,
+      lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
+        ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+        : null,
       lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
       completedAt: sb.completedAt ? new Date(sb.completedAt as string).getTime() : null,
       remoteId,
@@ -671,7 +673,7 @@ class SyncService {
       processingStatus: book.processingStatus,
       lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
       lastAccessedSectionId: book.lastAccessedSectionId ?? null,
-      lastAccessedScrollProgress: book.lastAccessedScrollProgress ?? 0,
+      lastAccessedScrollProgress: (book.lastAccessedScrollProgress ?? 0) / 100, // 0-100 → 0-1
       lastAccessedWordIndex: book.lastAccessedWordIndex ?? null,
       updatedAt: new Date(book.updatedAt).toISOString(),
     }
@@ -763,7 +765,9 @@ class SyncService {
           processingStatus: (sb.processingStatus as Book['processingStatus']) || local.processingStatus,
           lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : local.lastReadAt,
           lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? local.lastAccessedSectionId,
-          lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? local.lastAccessedScrollProgress,
+          lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
+            ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+            : local.lastAccessedScrollProgress,
           lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? local.lastAccessedWordIndex,
           updatedAt: serverUpdated,
         })
