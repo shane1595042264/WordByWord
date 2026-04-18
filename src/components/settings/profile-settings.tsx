@@ -27,6 +27,7 @@ interface UserProfile {
   name: string | null
   avatarUrl: string | null
   authRole: string
+  hasPassword: boolean
 }
 
 export function ProfileSettings() {
@@ -301,6 +302,116 @@ export function ProfileSettings() {
 
       <Button onClick={handleSave} disabled={saving}>
         {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Profile'}
+      </Button>
+
+      {profile && (
+        <PasswordSection
+          hasPassword={profile.hasPassword}
+          onPasswordSet={() => setProfile({ ...profile, hasPassword: true })}
+          getToken={getToken}
+        />
+      )}
+    </div>
+  )
+}
+
+function PasswordSection({
+  hasPassword,
+  onPasswordSet,
+  getToken,
+}: {
+  hasPassword: boolean
+  onPasswordSet: () => void
+  getToken: () => Promise<string | null>
+}) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [success, setSuccess] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function handleSubmit() {
+    setErr(null)
+    if (newPassword.length < 6) { setErr('Password must be at least 6 characters.'); return }
+    if (newPassword !== confirmPassword) { setErr('Passwords do not match.'); return }
+    if (hasPassword && !currentPassword) { setErr('Enter your current password.'); return }
+
+    setSubmitting(true)
+    try {
+      const token = await getToken()
+      if (!token) throw new Error('Not authenticated')
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
+      const body: Record<string, string> = { newPassword }
+      if (hasPassword) body.currentPassword = currentPassword
+      const res = await fetch(`${apiUrl}/users/me/password`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error?.message ?? 'Failed to update password')
+      }
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2500)
+      onPasswordSet()
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Failed to update password')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="border-t pt-6 space-y-3">
+      <div>
+        <Label className="text-base">{hasPassword ? 'Change password' : 'Set a password'}</Label>
+        <p className="text-xs text-muted-foreground mt-1">
+          {hasPassword
+            ? 'Update your password for signing in with email.'
+            : 'You signed up with Google. Set a password to also sign in with email + password.'}
+        </p>
+      </div>
+      {hasPassword && (
+        <div className="space-y-1">
+          <Label htmlFor="current-password" className="text-xs">Current password</Label>
+          <Input
+            id="current-password"
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </div>
+      )}
+      <div className="space-y-1">
+        <Label htmlFor="new-password" className="text-xs">New password</Label>
+        <Input
+          id="new-password"
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          autoComplete="new-password"
+          placeholder="At least 6 characters"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="confirm-password" className="text-xs">Confirm new password</Label>
+        <Input
+          id="confirm-password"
+          type="password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          autoComplete="new-password"
+        />
+      </div>
+      {err && <p className="text-sm text-destructive">{err}</p>}
+      <Button onClick={handleSubmit} disabled={submitting} variant="outline">
+        {submitting ? 'Saving...' : success ? 'Password updated!' : hasPassword ? 'Update password' : 'Set password'}
       </Button>
     </div>
   )
