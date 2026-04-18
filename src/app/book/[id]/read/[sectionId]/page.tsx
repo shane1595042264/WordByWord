@@ -527,12 +527,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Only track after loading completes to ensure scroll containers are mounted
   useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef)
 
-  const handlePageProgress = useCallback((currentPage: number, totalPages: number, scrollPercent: number) => {
+  const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
+    setCurrentPage(page)
     import('@/lib/db/database').then(({ db }) => {
       const now = Date.now()
       db.sections.update(sectionId, {
-        lastPageViewed: currentPage,
+        lastPageViewed: page,
         scrollProgress: scrollPercent,
         updatedAt: now,
       }).catch((err) => {

@@ -359,17 +359,27 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       const { scrollTop, scrollHeight, clientHeight } = container
       const percent = scrollHeight <= clientHeight ? 100 : Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)
 
-      // Figure out which page is in view
+      // Pick the page occupying the most vertical area in the viewport.
+      // "First intersecting" misreports near boundaries (a 1px sliver of
+      // the previous page at the top would win).
       const canvases = container.querySelectorAll('canvas[data-page-num]')
+      const containerRect = container.getBoundingClientRect()
       let visiblePage = startPage
+      let maxVisibleHeight = -1
       for (const canvas of canvases) {
         const rect = canvas.getBoundingClientRect()
-        const containerRect = container.getBoundingClientRect()
-        if (rect.top < containerRect.bottom && rect.bottom > containerRect.top) {
+        const visibleTop = Math.max(rect.top, containerRect.top)
+        const visibleBottom = Math.min(rect.bottom, containerRect.bottom)
+        const visibleHeight = visibleBottom - visibleTop
+        if (visibleHeight > maxVisibleHeight) {
+          maxVisibleHeight = visibleHeight
           visiblePage = Number(canvas.getAttribute('data-page-num'))
-          break
         }
       }
+      // Mark this page as "scroll-originated" so the scroll-to-page effect
+      // below doesn't snap the scroll back to the top of this page when the
+      // parent's currentPage state updates in response to onPageProgress.
+      prevControlledPageRef.current = visiblePage
       onPageProgress?.(visiblePage, totalPages, percent)
     }
 
