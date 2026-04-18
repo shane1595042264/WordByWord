@@ -546,13 +546,12 @@ class SyncService {
   ): Promise<string> {
     const remoteId = sb.id as string
 
-    // Download PDF
-    const pdfBlob = await this.downloadPdf(remoteId)
-    if (!pdfBlob) throw new Error('Failed to download PDF')
-
-    // Get catalog info
+    // Fetch catalog first — we need `format` to decide whether to download
+    // the source file. EPUBs skip the blob entirely; their text lives in sections.
     let title = (sb.customTitle as string) || 'Untitled'
     let author = ''
+    let format: 'pdf' | 'epub' = 'pdf'
+    let catalogCoverUrl: string | null = null
     try {
       const summaryRes = await fetch(`${this.getApiUrl()}/books/${remoteId}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -561,16 +560,27 @@ class SyncService {
         const summary = await summaryRes.json()
         title = summary.catalog?.title || title
         author = summary.catalog?.author || ''
+        if (summary.catalog?.format === 'epub') format = 'epub'
+        catalogCoverUrl = summary.catalog?.coverUrl ?? null
       }
     } catch { /* use defaults */ }
 
-    // Generate cover from PDF page 1
-    let coverImage: string | null = null
-    try {
-      const { PDFService } = await import('./pdf-service')
-      const pdfSvc = new PDFService()
-      coverImage = await pdfSvc.renderPageToImage(pdfBlob, 1, 1.5)
-    } catch { /* no cover, that's fine */ }
+    // PDFs: download the blob so the viewer can render offline. EPUBs don't
+    // need the source file locally — all text already lives in sections.
+    let pdfBlob: Blob | undefined
+    let coverImage: string | null = catalogCoverUrl
+    if (format === 'pdf') {
+      const blob = await this.downloadPdf(remoteId)
+      if (!blob) throw new Error('Failed to download PDF')
+      pdfBlob = blob
+      if (!coverImage) {
+        try {
+          const { PDFService } = await import('./pdf-service')
+          const pdfSvc = new PDFService()
+          coverImage = await pdfSvc.renderPageToImage(pdfBlob, 1, 1.5)
+        } catch { /* no cover, that's fine */ }
+      }
+    }
 
     const localId = uuid()
     const now = Date.now()
@@ -579,6 +589,7 @@ class SyncService {
       title,
       author,
       totalPages: (sb.totalPages as number) ?? 0,
+      format,
       pdfBlob,
       coverImage,
       structureSource: (sb.structureSource as Book['structureSource']) || 'native',

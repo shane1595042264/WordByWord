@@ -26,56 +26,75 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
-    if (f.type !== 'application/pdf') {
-      setStatus('Only PDF files are allowed')
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
+    const isEpub = f.type === 'application/epub+zip' || /\.epub$/i.test(f.name)
+    if (!isPdf && !isEpub) {
+      setStatus('Only PDF and EPUB files are allowed')
       e.target.value = ''
       return
     }
     setFile(f)
-    setStep('mode')
+    // EPUBs skip the mode chooser — always run the EPUB pipeline, no Mathpix toggle
+    setStep(isEpub ? 'uploading' : 'mode')
+    if (isEpub) handleUpload('full', f)
   }, [])
 
-  const handleUpload = useCallback(async (mode: 'full' | 'toc-only') => {
-    if (!file) return
+  const handleUpload = useCallback(async (mode: 'full' | 'toc-only', sourceFile?: File) => {
+    const f = sourceFile ?? file
+    if (!f) return
     setStep('uploading')
     setLoading(true)
 
+    const isEpub = f.type === 'application/epub+zip' || /\.epub$/i.test(f.name)
+    const format: 'pdf' | 'epub' = isEpub ? 'epub' : 'pdf'
+
     try {
-      // Step 1: Extract metadata locally (instant)
-      setStatus('Reading PDF metadata...')
-      const { PDFService } = await import('@/lib/services/pdf-service')
-      const pdfService = new PDFService()
-      const metadata = await pdfService.extractMetadata(file)
-
-      // Step 2: Generate cover from page 1 (instant)
-      setStatus('Generating cover...')
+      let title: string
+      let author: string
+      let totalPages: number
       let coverImage: string | null = null
-      try {
-        coverImage = await pdfService.renderPageToImage(file, 1, 1.5)
-      } catch { /* no cover, that's fine */ }
 
-      // Step 3: Upload PDF to backend with mode
+      if (isEpub) {
+        // For EPUB, we skip local PDF metadata extraction — the backend will
+        // parse the file and populate the catalog (title/author/cover/chapter
+        // count). Show a reasonable local title while processing.
+        setStatus('Reading EPUB...')
+        title = f.name.replace(/\.epub$/i, '')
+        author = ''
+        totalPages = 0
+      } else {
+        setStatus('Reading PDF metadata...')
+        const { PDFService } = await import('@/lib/services/pdf-service')
+        const pdfService = new PDFService()
+        const metadata = await pdfService.extractMetadata(f)
+        title = metadata.title
+        author = metadata.author
+        totalPages = metadata.totalPages
+
+        setStatus('Generating cover...')
+        try {
+          coverImage = await pdfService.renderPageToImage(f, 1, 1.5)
+        } catch { /* no cover, that's fine */ }
+      }
+
       setStatus('Uploading to cloud...')
       const { syncService } = await import('@/lib/services/sync-service')
-      const uploadResult = await syncService.uploadBook(
-        file,
-        metadata.title,
-        metadata.author,
-        metadata.totalPages,
-        mode,
-      )
+      const uploadResult = await syncService.uploadBook(f, title, author, totalPages, mode)
 
       // Step 4: Create local book in IndexedDB
       const localId = uuid()
       const now = Date.now()
       const book: Book = {
         id: localId,
-        title: metadata.title,
-        author: metadata.author,
-        totalPages: metadata.totalPages,
-        pdfBlob: file,
+        title,
+        author,
+        totalPages,
+        format,
+        // For PDFs we keep the blob locally so the viewer can render offline.
+        // For EPUBs we don't render the source file anywhere — skip the blob.
+        pdfBlob: isEpub ? undefined : f,
         coverImage: uploadResult?.coverUrl || coverImage,
-        structureSource: 'native',
+        structureSource: isEpub ? 'epub' : 'native',
         processingStatus: uploadResult?.jobId ? 'processing' : 'complete',
         createdAt: now,
         updatedAt: now,
@@ -115,7 +134,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       }
     }}>
       <DialogTrigger asChild>
-        <Button>Upload PDF</Button>
+        <Button>Upload Book</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -124,8 +143,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         <div className="space-y-4">
           {step === 'select' && (
             <div className="space-y-2">
-              <Label htmlFor="pdf-file">Select PDF file</Label>
-              <Input id="pdf-file" type="file" accept=".pdf" onChange={handleFileSelect} />
+              <Label htmlFor="book-file">Select PDF or EPUB file</Label>
+              <Input id="book-file" type="file" accept=".pdf,.epub" onChange={handleFileSelect} />
               {status && <p className="text-sm text-destructive">{status}</p>}
             </div>
           )}

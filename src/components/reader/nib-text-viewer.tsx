@@ -71,6 +71,14 @@ interface NibTextViewerProps {
   onCursorLineChange?: (info: CursorLineInfo) => void
   /** Current vim mode — controls info panel behavior */
   vimMode?: 'normal' | 'sentence' | 'visual'
+  /**
+   * Reading-comfort knobs for reflowable content (EPUBs especially).
+   * Not yet exposed in the settings UI — defaults match the original fixed
+   * Tailwind classes. Keep these as component props so future settings can
+   * plug in without refactoring.
+   */
+  textSizeClass?: string    // e.g. 'text-base', 'text-lg'
+  lineHeightClass?: string  // e.g. 'leading-relaxed', 'leading-loose'
 }
 
 /**
@@ -154,6 +162,7 @@ function LatexFormulaRun({
  */
 function ParagraphRenderer({
   para, pageNumber, selectedWord, onWordClick, flatIndexStart, registerWordSpan, vimSelectedIndices, highlightedIndices, showIndicators, vimCursorIndex, vimMode,
+  textSizeClass = 'text-base', lineHeightClass = 'leading-relaxed',
 }: {
   para: any
   pageNumber: number
@@ -168,6 +177,10 @@ function ParagraphRenderer({
   vimCursorIndex?: number
   /** Current vim mode */
   vimMode?: string
+  /** Tailwind class for body text size (future EPUB font-size setting) */
+  textSizeClass?: string
+  /** Tailwind class for body line-height (future EPUB line-spacing setting) */
+  lineHeightClass?: string
 }) {
   // Build the full paragraph text and check for special content
   const fullText = para.sentences.map((s: any) => s.text).join(' ')
@@ -184,7 +197,7 @@ function ParagraphRenderer({
   // Standard word-by-word rendering with LaTeX run grouping
   let wordCounter = flatIndexStart
   return (
-    <p className={`leading-relaxed text-base ${isDisplayLatex ? 'text-center my-4' : ''}`}>
+    <p className={`${lineHeightClass} ${textSizeClass} ${isDisplayLatex ? 'text-center my-4' : ''}`}>
       {para.sentences.map((sentence: any, sIdx: number) => {
         // Group sentence words into runs of [regular] and [latex]
         type Run = { type: 'text' | 'latex'; words: NibWord[]; startFlatIdx: number; latexSource?: string }
@@ -347,7 +360,22 @@ export function NibTextViewerSkeleton() {
 }
 
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, onDeselect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
+  {
+    nibDocument,
+    sectionTitle,
+    showIndicators = false,
+    onWordSelect,
+    onDeselect,
+    vimSelectedIndices,
+    scrollContainerRef,
+    bookTitle,
+    onCursorLineChange,
+    vimMode = 'normal',
+    // Reading-comfort defaults match the prior hard-coded Tailwind classes.
+    // Future settings UI (e.g. EPUB font-size slider) can pass different values.
+    textSizeClass = 'text-base',
+    lineHeightClass = 'leading-relaxed',
+  },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -1180,6 +1208,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                         showIndicators={false}
                         vimCursorIndex={vimCursorIndex}
                         vimMode={vimMode}
+                        textSizeClass={textSizeClass}
+                        lineHeightClass={lineHeightClass}
                       />
                     </div>
                   </div>
@@ -1221,6 +1251,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                     showIndicators={showIndicators}
                     vimCursorIndex={vimCursorIndex}
                     vimMode={vimMode}
+                    textSizeClass={textSizeClass}
+                    lineHeightClass={lineHeightClass}
                   />
                 </div>
               )

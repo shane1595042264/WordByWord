@@ -38,6 +38,10 @@ interface ReaderToolbarProps {
   /** Sidebar collapse toggle */
   sidebarCollapsed?: boolean
   onToggleSidebar?: () => void
+  /** Book format — drives which view modes are available and how the page
+   *  indicator is labelled. EPUBs show only Text view and use "Ch." instead
+   *  of "p." since they have no real pages. */
+  format?: 'pdf' | 'epub'
 }
 
 export function ReaderToolbar({
@@ -52,7 +56,9 @@ export function ReaderToolbar({
   onPrevPage, onNextPage, canGoPrev, canGoNext,
   showLineNumbers, onLineNumbersToggle,
   sidebarCollapsed, onToggleSidebar,
+  format = 'pdf',
 }: ReaderToolbarProps) {
+  const isEpub = format === 'epub'
   const { getKeysDisplay } = useShortcuts()
 
   /** Get the display string for a shortcut, falling back to the provided default */
@@ -137,27 +143,29 @@ export function ReaderToolbar({
               </button>
             </BlockTooltip>
           )}
-          {/* View mode toggle */}
-          <div className="flex border rounded-md">
-            {(['pdf', 'text', 'side-by-side'] as ViewMode[]).map(mode => {
-              const shortcutIdMap: Record<string, string> = { pdf: 'view-pdf', text: 'view-text', 'side-by-side': 'view-side-by-side' }
-              const fallbackMap: Record<string, string> = { pdf: '⌃ 1', text: '⌃ 2', 'side-by-side': '⌃ 3' }
-              return (
-                <BlockTooltip key={mode} label={mode} shortcut={sk(shortcutIdMap[mode], fallbackMap[mode])}>
-                  <button
-                    onClick={() => onViewModeChange(mode)}
-                    className={`px-3 py-1 text-xs capitalize ${
-                      viewMode === mode ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                </BlockTooltip>
-              )
-            })}
-          </div>
+          {/* View mode toggle — EPUBs only expose Text view */}
+          {!isEpub && (
+            <div className="flex border rounded-md">
+              {(['pdf', 'text', 'side-by-side'] as ViewMode[]).map(mode => {
+                const shortcutIdMap: Record<string, string> = { pdf: 'view-pdf', text: 'view-text', 'side-by-side': 'view-side-by-side' }
+                const fallbackMap: Record<string, string> = { pdf: '⌃ 1', text: '⌃ 2', 'side-by-side': '⌃ 3' }
+                return (
+                  <BlockTooltip key={mode} label={mode} shortcut={sk(shortcutIdMap[mode], fallbackMap[mode])}>
+                    <button
+                      onClick={() => onViewModeChange(mode)}
+                      className={`px-3 py-1 text-xs capitalize ${
+                        viewMode === mode ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  </BlockTooltip>
+                )
+              })}
+            </div>
+          )}
           {/* Reading mode toggle (scroll vs flip) - only for PDF modes */}
-          {viewMode !== 'text' && (
+          {!isEpub && viewMode !== 'text' && (
             <div className="flex border rounded-md">
               <BlockTooltip label="Scroll Mode" shortcut={sk('reading-mode-scroll', '⌃ S')}>
                 <button
@@ -198,12 +206,16 @@ export function ReaderToolbar({
           )}
           {/* Page/Section nav */}
           <div className="flex items-center gap-2">
-            <BlockTooltip label={viewMode === 'text' ? 'Previous Section' : 'Previous Page'} shortcut={sk('prev-page', '⌃ ←')}>
+            <BlockTooltip label={isEpub ? 'Previous Chapter' : viewMode === 'text' ? 'Previous Section' : 'Previous Page'} shortcut={sk('prev-page', '⌃ ←')}>
               <Button variant="outline" size="sm" onClick={onPrevPage} disabled={!canGoPrev}>
                 &larr; Prev
               </Button>
             </BlockTooltip>
-            {viewMode === 'text' ? (
+            {isEpub ? (
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                Ch.{startPage}
+              </span>
+            ) : viewMode === 'text' ? (
               <span className="text-xs text-muted-foreground whitespace-nowrap">
                 p.{startPage}–{startPage + totalSectionPages - 1}
               </span>
@@ -212,7 +224,7 @@ export function ReaderToolbar({
                 {currentPage - startPage + 1}/{totalSectionPages} (p.{currentPage})
               </span>
             )}
-            <BlockTooltip label={viewMode === 'text' ? 'Next Section' : 'Next Page'} shortcut={sk('next-page', '⌃ →')}>
+            <BlockTooltip label={isEpub ? 'Next Chapter' : viewMode === 'text' ? 'Next Section' : 'Next Page'} shortcut={sk('next-page', '⌃ →')}>
               <Button variant="outline" size="sm" onClick={onNextPage} disabled={!canGoNext}>
                 Next &rarr;
               </Button>

@@ -673,6 +673,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         onLineNumbersToggle={() => setShowLineNumbers(prev => !prev)}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
+        format={book?.format}
       />
       <div className="flex flex-1 overflow-hidden">
         <SectionSidebar
@@ -683,7 +684,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
         />
         <div className="flex-1 overflow-hidden flex flex-col" ref={contentRef}>
-          {viewMode === 'pdf' && (
+          {/*
+            EPUB books have no pdfBlob, so PDF + Side-by-Side viewers would
+            crash. The toolbar hides those buttons, but shortcuts (Ctrl+1 etc.)
+            could still flip viewMode — fall through to Text view in that case.
+          */}
+          {viewMode === 'pdf' && book.pdfBlob && (
             <PDFViewer
               pdfBlob={book.pdfBlob}
               startPage={section.startPage}
@@ -695,7 +701,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               scrollRef={pdfScrollRef}
             />
           )}
-          {viewMode === 'text' && (
+          {(viewMode === 'text' || !book.pdfBlob) && (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex-1 flex overflow-hidden">
                 <RelativeLineNumbers
@@ -743,7 +749,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />
             </div>
           )}
-          {viewMode === 'side-by-side' && (
+          {viewMode === 'side-by-side' && book.pdfBlob && (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex-1 overflow-hidden">
                 <SideBySideViewer

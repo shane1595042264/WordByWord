@@ -40,17 +40,18 @@ export function useReader(bookId: string, sectionId: string) {
     const bookRepo = new BookRepository()
     const sectionRepo = new SectionRepository()
 
-    // Only set viewMode from settings on first load
+    const b = await bookRepo.getById(bookId)
+    // Only set viewMode from settings on first load. EPUB books have no PDF
+    // representation, so force Text view regardless of the saved default.
     if (!initialLoadDone.current) {
       const { SettingsService } = await import('@/lib/services/settings-service')
       const settingsService = new SettingsService()
       const s = settingsService.getSettings()
-      setViewModeState(s.defaultViewMode)
+      const preferred: ViewMode = b?.format === 'epub' ? 'text' : s.defaultViewMode
+      setViewModeState(preferred)
       setReadingModeState(s.readingMode)
       initialLoadDone.current = true
     }
-
-    const b = await bookRepo.getById(bookId)
     const s = await db.sections.get(sectionId)
     if (b && s) {
       const ch = await db.chapters.get(s.chapterId)

@@ -3,9 +3,12 @@ export interface Book {
   title: string
   author: string
   totalPages: number
-  pdfBlob: Blob
+  /** Source format of the book. Defaults to 'pdf' for existing rows. */
+  format?: 'pdf' | 'epub'
+  /** The raw source file. Required for PDFs (viewer needs it); optional for EPUBs. */
+  pdfBlob?: Blob
   coverImage: string | null
-  structureSource: 'native' | 'ai' | 'manual'
+  structureSource: 'native' | 'ai' | 'manual' | 'epub'
   processingStatus: 'pending' | 'processing' | 'complete' | 'error'
   createdAt: number
   lastReadAt: number | null
