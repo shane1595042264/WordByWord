@@ -11,15 +11,25 @@ export default function VocabularyPage() {
   const [entries, setEntries] = useState<VocabEntry[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const loadEntries = useCallback(async () => {
-    const { VocabService } = await import('@/lib/services/vocab-service')
-    const svc = new VocabService()
-    const all = await svc.getAll()
-    setEntries(all)
-    setLoading(false)
+    setLoading(true)
+    setLoadError(false)
+    try {
+      const { VocabService } = await import('@/lib/services/vocab-service')
+      const svc = new VocabService()
+      const all = await svc.getAll()
+      setEntries(all)
+    } catch (err) {
+      console.error('Failed to load vocabulary entries', err)
+      setLoadError(true)
+      toast.error('Failed to load vocabulary. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { loadEntries() }, [loadEntries])
@@ -69,7 +79,15 @@ export default function VocabularyPage() {
         <span className="text-sm text-muted-foreground">{entries.length} words</span>
       </div>
 
-      {entries.length === 0 ? (
+      {loadError ? (
+        <div className="text-center py-16 text-muted-foreground">
+          <p className="text-lg mb-2">Couldn&rsquo;t load vocabulary</p>
+          <p className="text-sm mb-4">Something went wrong reading your saved words.</p>
+          <Button variant="outline" size="sm" onClick={loadEntries}>
+            Try again
+          </Button>
+        </div>
+      ) : entries.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <p className="text-lg mb-2">No words saved yet</p>
           <p className="text-sm">Select a word while reading and press "Add to vocab" to save it here.</p>
