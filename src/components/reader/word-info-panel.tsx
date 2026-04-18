@@ -151,15 +151,11 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   const isBlockContent = !!(word.latexSource && (word.text.startsWith('[') || word.imageUrl))
   const isImageContent = !!word.imageUrl
 
-  // Auto-translate when word changes (and we have an API key)
-  // For block content, skip translation and auto-explain instead
+  // Auto-translate when word changes. Translation now goes through the
+  // backend proxy — no client-side API key required. Image explanation
+  // (Claude Vision) still needs the user's key though, because the backend
+  // doesn't have a URL-based vision endpoint yet.
   useEffect(() => {
-    if (!apiKey) {
-      setTranslation(null)
-      setTranslating(false)
-      return
-    }
-
     let cancelled = false
     setTranslation(null)
     setTranslationError(null)
@@ -177,10 +173,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         try {
           let result: string
           if (isImageContent && word.imageUrl) {
-            // Send image to Claude Vision
+            // Vision — still client-side; requires user's Anthropic key
             result = await svc.explainImage(word.imageUrl, word.sentence.text)
           } else {
-            // Send raw content (markdown table, code)
+            // Backend-proxied content explanation (table/code)
             result = await svc.explainContent(word.latexSource!, word.sentence.text)
           }
           if (!cancelled) {
@@ -195,10 +191,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         }
       })
     } else {
-      // Regular word → translate as usual
+      // Regular word → backend-proxied translation
       setTranslating(true)
       import('@/lib/services/translation-service').then(({ TranslationService }) => {
-        const svc = new TranslationService(apiKey)
+        const svc = new TranslationService()
         svc.translateWord(word.text, word.sentence.text, targetLang)
           .then(result => {
             if (!cancelled) {
@@ -218,9 +214,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     return () => { cancelled = true }
   }, [word, apiKey, targetLang, isBlockContent, isImageContent])
 
-  // Auto-translate sentence when in sentence mode
+  // Auto-translate sentence when in sentence mode (backend-proxied)
   useEffect(() => {
-    if (panelMode !== 'sentence' || !apiKey) {
+    if (panelMode !== 'sentence') {
       setSentenceTranslation(null)
       setSentenceTranslating(false)
       return
@@ -236,7 +232,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       : sentenceText
 
     import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
+      const svc = new TranslationService()
       svc.translateSentence(sentenceText, paragraphText, targetLang)
         .then(result => {
           if (!cancelled) {
@@ -257,15 +253,15 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     return () => { cancelled = true }
   }, [word, apiKey, targetLang, panelMode])
 
-  // Load explanation lazily
+  // Load explanation lazily (backend-proxied — no key needed)
   const handleLoadExplanation = useCallback(async () => {
-    if (explanation || explaining || !apiKey || !translation) return
+    if (explanation || explaining || !translation) return
     setExplaining(true)
     setShowExplanation(true)
 
     try {
       const { TranslationService } = await import('@/lib/services/translation-service')
-      const svc = new TranslationService(apiKey)
+      const svc = new TranslationService()
       const contentText = word.latexSource || word.text
       const contextText = word.latexSource ? `${contentText}\n\nContext: ${word.sentence.text}` : word.sentence.text
       const result = await svc.explainTranslation(
@@ -280,7 +276,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     } finally {
       setExplaining(false)
     }
-  }, [explanation, explaining, apiKey, translation, word, targetLang])
+  }, [explanation, explaining, translation, word, targetLang])
 
   // Add to vocabulary
   const handleAddVocab = useCallback(async () => {
