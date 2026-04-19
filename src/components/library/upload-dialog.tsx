@@ -93,9 +93,9 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         // For PDFs we keep the blob locally so the viewer can render offline.
         // For EPUBs we don't render the source file anywhere — skip the blob.
         pdfBlob: isEpub ? undefined : f,
-        coverImage: uploadResult?.coverUrl || coverImage,
+        coverImage: uploadResult.coverUrl || coverImage,
         structureSource: isEpub ? 'epub' : 'native',
-        processingStatus: uploadResult?.jobId ? 'processing' : 'complete',
+        processingStatus: uploadResult.jobId ? 'processing' : 'complete',
         createdAt: now,
         updatedAt: now,
         lastReadAt: null,
@@ -103,9 +103,9 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
         lastAccessedScrollProgress: null,
         lastAccessedWordIndex: null,
         completedAt: null,
-        remoteId: uploadResult?.remoteId,
-        catalogId: uploadResult?.catalogId,
-        jobId: uploadResult?.jobId,
+        remoteId: uploadResult.remoteId,
+        catalogId: uploadResult.catalogId,
+        jobId: uploadResult.jobId,
       }
       await db.books.add(book)
 

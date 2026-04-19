@@ -179,9 +179,9 @@ class SyncService {
     author?: string,
     totalPages?: number,
     mode?: string,
-  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string; jobId?: string } | null> {
+  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string; jobId?: string }> {
     const token = await this.getToken()
-    if (!token) return null
+    if (!token) throw new Error('Not authenticated — please sign in to upload books.')
 
     const formData = new FormData()
     formData.append('file', file, `${title}.pdf`)
@@ -190,27 +190,22 @@ class SyncService {
     if (totalPages) formData.append('totalPages', String(totalPages))
     if (mode) formData.append('mode', mode)
 
-    try {
-      const res = await fetch(`${this.getApiUrl()}/books/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      })
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null)
-        const errorMsg = errorData?.error || `Upload failed (${res.status})`
-        throw new Error(errorMsg)
-      }
-      const data = await res.json()
-      return {
-        remoteId: data.book.id,
-        catalogId: data.catalogEntry.id,
-        coverUrl: data.catalogEntry.coverUrl || undefined,
-        jobId: data.jobId || undefined,
-      }
-    } catch (err) {
-      console.error('[sync] upload error:', err)
-      return null
+    const res = await fetch(`${this.getApiUrl()}/books/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null)
+      const errorMsg = errorData?.error || `Upload failed (${res.status})`
+      throw new Error(errorMsg)
+    }
+    const data = await res.json()
+    return {
+      remoteId: data.book.id,
+      catalogId: data.catalogEntry.id,
+      coverUrl: data.catalogEntry.coverUrl || undefined,
+      jobId: data.jobId || undefined,
     }
   }
 
