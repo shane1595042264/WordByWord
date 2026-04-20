@@ -321,7 +321,7 @@ class SyncService {
 
       if (!res.ok) {
         this.log('sync:error', `HTTP ${res.status}`)
-        return
+        throw new Error(`Sync request failed: HTTP ${res.status}`)
       }
 
       const result = await res.json()
