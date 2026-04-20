@@ -298,6 +298,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       })
       setAddedToVocab(true)
     } catch (err) {
+      toast.error('Failed to save to vocabulary', { duration: 5000 })
       console.error('Failed to add vocab:', err)
     }
   }, [translation, addedToVocab, word, targetLang, explanation, bookTitle, sectionTitle])
