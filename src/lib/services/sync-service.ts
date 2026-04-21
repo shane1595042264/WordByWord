@@ -671,12 +671,12 @@ class SyncService {
   // ── Transforms: Local → Backend ──────────────────────────────
 
   private bookToSync(book: Book): Record<string, unknown> {
+    // structureSource and processingStatus are backend-managed — the server rejects
+    // client writes on these, and they already flow server→client via applyServerChanges.
     return {
       id: book.remoteId,
       customTitle: book.title,
       coverUrl: book.coverImage ?? null,
-      structureSource: book.structureSource,
-      processingStatus: book.processingStatus,
       lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
       lastAccessedSectionId: book.lastAccessedSectionId ?? null,
       lastAccessedScrollProgress: (book.lastAccessedScrollProgress ?? 0) / 100, // 0-100 → 0-1
