@@ -49,7 +49,17 @@ export class SettingsService {
     if (typeof window === 'undefined') return DEFAULT_SETTINGS
     const stored = localStorage.getItem(SETTINGS_KEY)
     if (!stored) return DEFAULT_SETTINGS
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
+    try {
+      const parsed = JSON.parse(stored)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('settings value is not a plain object')
+      }
+      return { ...DEFAULT_SETTINGS, ...parsed }
+    } catch (err) {
+      console.warn('[settings-service] discarding corrupt bbb-settings; falling back to defaults', err)
+      try { localStorage.removeItem(SETTINGS_KEY) } catch {}
+      return DEFAULT_SETTINGS
+    }
   }
 
   updateSettings(partial: Partial<AppSettings>): void {
