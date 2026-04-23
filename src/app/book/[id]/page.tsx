@@ -2,6 +2,7 @@
 
 import { use, useState, useCallback, useTransition } from 'react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -34,15 +35,24 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const saveEdits = useCallback(async () => {
     if (!book) return
     setSaving(true)
-    const { BookRepository } = await import('@/lib/repositories')
-    const bookRepo = new BookRepository()
-    await bookRepo.updateDetails(book.id, {
-      title: editTitle.trim() || book.title,
-      author: editAuthor.trim(),
-    })
-    setEditing(false)
-    setSaving(false)
-    refresh()
+    try {
+      const { BookRepository } = await import('@/lib/repositories')
+      const bookRepo = new BookRepository()
+      const result = await bookRepo.updateDetails(book.id, {
+        title: editTitle.trim() || book.title,
+        author: editAuthor.trim(),
+      })
+      if (result.backendSyncFailed) {
+        toast.warning('Saved locally — cloud sync failed, will retry')
+      }
+    } catch (err) {
+      console.error('Failed to save book details:', err)
+      toast.error('Failed to save book details')
+    } finally {
+      setEditing(false)
+      setSaving(false)
+      refresh()
+    }
   }, [book, editTitle, editAuthor, refresh])
 
   if (loading) {
