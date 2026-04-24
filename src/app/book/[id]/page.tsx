@@ -120,6 +120,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 onClick={async () => {
                   if (!book) return
                   setGeneratingCover(true)
+                  let coverSet = false
                   try {
                     // Try 1: render page 1 from PDF blob
                     if (book.pdfBlob) {
@@ -132,30 +133,39 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                         // Auto-sync will push coverUrl to backend on next sync cycle
                         const { syncService } = await import('@/lib/services/sync-service')
                         syncService.markDirty()
-                        refresh()
-                        setGeneratingCover(false)
-                        return
+                        coverSet = true
                       }
                     }
-                    // Try 2: Google Books cover via backend
-                    const tokenRes = await fetch('/api/auth/token')
-                    if (tokenRes.ok) {
-                      const { token } = await tokenRes.json()
-                      const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-                      const res = await fetch(`${apiUrl}/books/${book.remoteId}/summary`, {
-                        headers: { Authorization: `Bearer ${token}` },
-                      })
-                      if (res.ok) {
-                        const data = await res.json()
-                        if (data.catalog?.coverUrl) {
-                          const { db } = await import('@/lib/db/database')
-                          await db.books.update(book.id, { coverImage: data.catalog.coverUrl, updatedAt: Date.now() })
-                          refresh()
+                    // Try 2: Google Books cover via backend (only if PDF path didn't produce a cover)
+                    if (!coverSet) {
+                      const tokenRes = await fetch('/api/auth/token')
+                      if (tokenRes.ok) {
+                        const { token } = await tokenRes.json()
+                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                        const res = await fetch(`${apiUrl}/books/${book.remoteId}/summary`, {
+                          headers: { Authorization: `Bearer ${token}` },
+                        })
+                        if (res.ok) {
+                          const data = await res.json()
+                          if (data.catalog?.coverUrl) {
+                            const { db } = await import('@/lib/db/database')
+                            await db.books.update(book.id, { coverImage: data.catalog.coverUrl, updatedAt: Date.now() })
+                            coverSet = true
+                          }
                         }
                       }
                     }
-                  } catch (err) { console.error('Failed to generate cover:', err) }
-                  setGeneratingCover(false)
+                    if (coverSet) {
+                      refresh()
+                    } else {
+                      toast.info('No cover available — you can upload one manually')
+                    }
+                  } catch (err) {
+                    console.error('Failed to generate cover:', err)
+                    toast.error('Failed to generate cover')
+                  } finally {
+                    setGeneratingCover(false)
+                  }
                 }}
               >
                 {generatingCover ? 'Generating...' : 'Generate Cover'}
