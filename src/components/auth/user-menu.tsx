@@ -183,6 +183,9 @@ export function UserMenu() {
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls="user-menu-panel"
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
       >
         {displayIsLoading ? (
@@ -208,7 +211,11 @@ export function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50">
+        <div
+          id="user-menu-panel"
+          role="menu"
+          className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50"
+        >
           <div className="p-3 border-b">
             <div className="flex items-center gap-2 mb-1">
               {displayIsLoading ? (
@@ -230,6 +237,7 @@ export function UserMenu() {
           <div className="p-1">
             <Link
               href="/vocabulary"
+              role="menuitem"
               onClick={() => setOpen(false)}
               className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
             >
@@ -238,6 +246,7 @@ export function UserMenu() {
             {(session.user as Record<string, unknown>).role === 'admin' && (
               <Link
                 href="/marketplace"
+                role="menuitem"
                 onClick={() => setOpen(false)}
                 className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
               >
@@ -246,6 +255,7 @@ export function UserMenu() {
             )}
             <Link
               href="/settings"
+              role="menuitem"
               onClick={() => setOpen(false)}
               className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
             >
@@ -253,6 +263,7 @@ export function UserMenu() {
             </Link>
             <div className="my-1 border-t" />
             <button
+              role="menuitem"
               onClick={() => signOut({ callbackUrl: '/auth/login' })}
               className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive"
             >
