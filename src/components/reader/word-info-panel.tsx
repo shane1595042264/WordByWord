@@ -137,14 +137,19 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
   // Check if already in vocab
   useEffect(() => {
+    let cancelled = false
     setCheckingVocab(true)
     import('@/lib/services/vocab-service').then(({ VocabService }) => {
+      if (cancelled) return
       const svc = new VocabService()
       svc.exists(word.text, word.sentence.text).then(exists => {
-        setAddedToVocab(exists)
-        setCheckingVocab(false)
+        if (!cancelled) {
+          setAddedToVocab(exists)
+          setCheckingVocab(false)
+        }
       })
     })
+    return () => { cancelled = true }
   }, [word])
 
   // Detect if this is a block element (table, code, figure) that should use explanation mode
