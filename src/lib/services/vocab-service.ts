@@ -68,9 +68,26 @@ export class VocabService {
     }
   }
 
-  /** Delete a vocab entry */
+  /** Delete a vocab entry — local IDB + backend soft-delete */
   async delete(id: string): Promise<void> {
     await db.vocabulary.delete(id)
+
+    // Delete from backend too — vocab IDs are shared client/server, no remoteId lookup needed.
+    try {
+      const tokenRes = await fetch('/api/auth/token')
+      if (!tokenRes.ok) return
+      const { token } = await tokenRes.json()
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+      const res = await fetch(`${apiUrl}/vocabulary/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok && res.status !== 404) {
+        console.warn(`Failed to delete vocab from backend: ${res.status}`)
+      }
+    } catch {
+      console.warn('Failed to delete vocab from backend')
+    }
   }
 
   /** Get total count */
