@@ -227,7 +227,7 @@ class SyncService {
 
   // ── Core sync (bidirectional) ────────────────────────────────
 
-  async sync(): Promise<void> {
+  async sync(alreadyRefreshedToken = false): Promise<void> {
     if (this.isSyncing) {
       this.log('sync:skip', 'already syncing')
       return
@@ -314,9 +314,17 @@ class SyncService {
       })
 
       if (res.status === 401) {
+        // Always clear the cached token — the JWT was rejected, so it's stale or invalid.
         this.token = null
+        if (alreadyRefreshedToken) {
+          // Second 401 in the same sync attempt: a fresh token also failed, so the
+          // backend is persistently rejecting auth (secret mismatch, clock skew,
+          // middleware regression). Surface as a hard failure instead of recursing.
+          this.log('sync:error', 'HTTP 401 persisted after token refresh')
+          throw new Error('Sync failed: authentication rejected after refresh')
+        }
         this.isSyncing = false
-        return this.sync()
+        return this.sync(true)
       }
 
       if (!res.ok) {
