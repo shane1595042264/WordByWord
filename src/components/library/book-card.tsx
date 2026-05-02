@@ -186,13 +186,20 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                   e.stopPropagation()
                   try {
                     const tokenRes = await fetch('/api/auth/token')
-                    if (!tokenRes.ok) return
+                    if (!tokenRes.ok) {
+                      toast.error('Session expired - please reload', { duration: 5000 })
+                      return
+                    }
                     const { token } = await tokenRes.json()
                     const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-                    await fetch(`${apiUrl}/processing/${book.jobId}/cancel`, {
+                    const res = await fetch(`${apiUrl}/processing/${book.jobId}/cancel`, {
                       method: 'POST',
                       headers: { Authorization: `Bearer ${token}` },
                     })
+                    if (!res.ok) {
+                      toast.error('Failed to cancel processing', { duration: 5000 })
+                      return
+                    }
                     onProcessingComplete?.() // refresh
                   } catch (err) {
                     toast.error('Failed to cancel processing', { duration: 5000 })
@@ -213,14 +220,21 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                   e.stopPropagation()
                   try {
                     const tokenRes = await fetch('/api/auth/token')
-                    if (!tokenRes.ok) return
+                    if (!tokenRes.ok) {
+                      toast.error('Session expired - please reload', { duration: 5000 })
+                      return
+                    }
                     const { token } = await tokenRes.json()
                     const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
                     const res = await fetch(`${apiUrl}/processing/${book.jobId}/retry`, {
                       method: 'POST',
                       headers: { Authorization: `Bearer ${token}` },
                     })
-                    if (res.ok) onProcessingComplete?.() // refresh to show new processing state
+                    if (res.ok) {
+                      onProcessingComplete?.() // refresh to show new processing state
+                    } else {
+                      toast.error('Failed to retry processing', { duration: 5000 })
+                    }
                   } catch (err) {
                     toast.error('Failed to retry processing', { duration: 5000 })
                     console.error('Retry processing error:', err)
