@@ -601,9 +601,25 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
     wrapper.appendChild(overlay)
 
-    // Scroll the highlight into view within the PDF scroll container
+    // Scroll the highlight into view within the PDF scroll container only.
+    // scrollIntoView() walks all scrollable ancestors (including window),
+    // which jumps the entire app layout in side-by-side reader. Scroll
+    // containerRef directly instead.
     requestAnimationFrame(() => {
-      overlay.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const container = containerRef.current
+      if (!container) return
+      const overlayTop = wrapper.offsetTop + highlightRect.y * displayScale
+      const overlayHeight = highlightRect.height * displayScale
+      const visibleTop = container.scrollTop
+      const visibleBottom = visibleTop + container.clientHeight
+      // Skip if already comfortably in view (avoid pointless animation)
+      const margin = 24
+      if (overlayTop >= visibleTop + margin && overlayTop + overlayHeight <= visibleBottom - margin) {
+        return
+      }
+      const target = overlayTop + overlayHeight / 2 - container.clientHeight / 2
+      const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
+      container.scrollTo({ top: Math.max(0, Math.min(target, maxScroll)), behavior: 'smooth' })
     })
 
     return () => {
