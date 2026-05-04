@@ -40,6 +40,7 @@ export function PageStripEditor({
   const [expectedCount, setExpectedCount] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [tocError, setTocError] = useState<string | null>(null)
   const [hoverGap, setHoverGap] = useState<number | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
 
@@ -96,6 +97,7 @@ export function PageStripEditor({
   const handleProcessTOC = useCallback(async () => {
     if (selectedTocPages.size === 0) return
     setProcessing(true)
+    setTocError(null)
     try {
       const { StructureService } = await import('@/lib/services/structure-service')
       const svc = new StructureService()
@@ -108,11 +110,16 @@ export function PageStripEditor({
           newDividers.push({ page: ch.startPage, title: ch.title || `${labelForLevel} ${newDividers.length + 2}` })
         }
       }
+      if (newDividers.length === 0) {
+        setTocError('No chapters detected in the selected TOC pages. Try selecting different pages.')
+        return
+      }
       setDividers(newDividers)
       setTocSelectMode(false)
       setSelectedTocPages(new Set())
     } catch (err) {
       console.error('TOC processing failed:', err)
+      setTocError(err instanceof Error ? err.message : 'Failed to process TOC')
     } finally {
       setProcessing(false)
     }
@@ -194,6 +201,13 @@ export function PageStripEditor({
           {saving ? 'Saving...' : 'Accept'}
         </Button>
       </div>
+
+      {/* TOC processing error / empty-result message */}
+      {tocError && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {tocError}
+        </div>
+      )}
 
       {/* Strip */}
       <div
