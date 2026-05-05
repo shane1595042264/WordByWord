@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
@@ -26,19 +26,20 @@ function SettingsContent() {
   const isAdmin = (session?.user as any)?.role === 'admin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [saved, setSaved] = useState(false)
-  const [loaded, setLoaded] = useState(false)
 
-  // Dynamic import to avoid SSR issues
-  if (!loaded) {
+  useEffect(() => {
+    let cancelled = false
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
+      if (cancelled) return
       const svc = new SettingsService()
       setSettings(svc.getSettings())
-      setLoaded(true)
     })
+    return () => { cancelled = true }
+  }, [])
+
+  if (!settings) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
   }
-
-  if (!settings) return null
 
   const handleSave = async () => {
     const { SettingsService } = await import('@/lib/services/settings-service')
