@@ -98,6 +98,23 @@ export class UserRepository {
     return rowToUser(rows[0])
   }
 
+  /**
+   * Insert a user only if the email is not already registered.
+   * Always hashes the password (even on conflict) to keep request timing
+   * indistinguishable between "new email" and "duplicate email" — required
+   * to prevent email enumeration on /api/admin/register.
+   */
+  async createIfNotExists(email: string, password: string, name: string): Promise<void> {
+    const sql = getDb()
+    const passwordHash = await bcrypt.hash(password, 12)
+    const emoji = randomEmoji()
+    await sql`
+      INSERT INTO users (email, password_hash, name, auth_role, avatar_url)
+      VALUES (${email.toLowerCase()}, ${passwordHash}, ${name}, 'user', ${emoji})
+      ON CONFLICT (email) DO NOTHING
+    `
+  }
+
   /** Create a user from OAuth (no password) */
   async createFromOAuth(
     email: string,

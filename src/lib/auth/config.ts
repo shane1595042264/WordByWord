@@ -9,8 +9,14 @@ import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import Google from 'next-auth/providers/google'
 import { UserRepository, EMOJI_AVATARS } from './user-repository'
+import { checkRateLimit, getClientIp } from './rate-limit'
 
 const userRepo = new UserRepository()
+
+const LOGIN_PER_IP_MAX = 10
+const LOGIN_PER_IP_WINDOW_MS = 60 * 1000
+const LOGIN_PER_EMAIL_MAX = 10
+const LOGIN_PER_EMAIL_WINDOW_MS = 60 * 1000
 
 /** Pick a random emoji from the shared list. */
 function randomEmoji(): string {
@@ -25,11 +31,32 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         if (!credentials?.email || !credentials?.password) return null
 
         const email = credentials.email as string
         const password = credentials.password as string
+
+        // Rate-limit BEFORE bcrypt.compare to bound CPU cost. Per-IP limit
+        // protects against single-attacker DoS; per-email limit protects a
+        // specific account from credential stuffing across many IPs.
+        // We log to the server console only (returning null surfaces a generic
+        // CredentialsSignin error to the user, no enumeration leak).
+        const ip = getClientIp(request.headers)
+        const ipLimit = checkRateLimit(`login:ip:${ip}`, LOGIN_PER_IP_MAX, LOGIN_PER_IP_WINDOW_MS)
+        if (!ipLimit.allowed) {
+          console.warn(`[auth] login rate limit hit for IP ${ip}`)
+          return null
+        }
+        const emailLimit = checkRateLimit(
+          `login:email:${email.toLowerCase()}`,
+          LOGIN_PER_EMAIL_MAX,
+          LOGIN_PER_EMAIL_WINDOW_MS,
+        )
+        if (!emailLimit.allowed) {
+          console.warn(`[auth] login rate limit hit for email ${email.toLowerCase()}`)
+          return null
+        }
 
         const user = await userRepo.getByEmail(email)
         if (!user) return null
