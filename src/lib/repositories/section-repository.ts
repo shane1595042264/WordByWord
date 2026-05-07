@@ -20,22 +20,28 @@ export class SectionRepository {
 
   /** Mark section as read. Returns true if this was the last unread section (book just completed). */
   async markAsRead(id: string): Promise<boolean> {
-    await db.sections.update(id, { isRead: true, readAt: Date.now(), updatedAt: Date.now() })
-    syncService.markDirty()
+    // Serialize the read-modify-write across sections + books so two concurrent
+    // calls on the last unread sections of the same book can't both flip
+    // book.completedAt and both return true.
+    const bookJustCompleted = await db.transaction('rw', [db.sections, db.books], async () => {
+      const now = Date.now()
+      await db.sections.update(id, { isRead: true, readAt: now, updatedAt: now })
 
-    // Check if the entire book is now complete
-    const section = await db.sections.get(id)
-    if (!section) return false
-    const unread = await db.sections.where('bookId').equals(section.bookId).filter(s => !s.isRead).count()
-    if (unread === 0) {
-      const { BookRepository } = await import('./book-repository')
+      const section = await db.sections.get(id)
+      if (!section) return false
+
+      const unread = await db.sections.where('bookId').equals(section.bookId).filter(s => !s.isRead).count()
+      if (unread !== 0) return false
+
       const book = await db.books.get(section.bookId)
-      if (book && !book.completedAt) {
-        await new BookRepository().markComplete(section.bookId)
-        return true
-      }
-    }
-    return false
+      if (!book || book.completedAt) return false
+
+      await db.books.update(section.bookId, { completedAt: now, updatedAt: now })
+      return true
+    })
+
+    syncService.markDirty()
+    return bookJustCompleted
   }
 
   async markAsUnread(id: string): Promise<void> {
