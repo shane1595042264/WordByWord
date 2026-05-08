@@ -788,16 +788,22 @@ class SyncService {
       }
     }
 
-    // Update/create chapters
+    // Update/create/delete chapters
     for (const sch of serverChanges.chapters ?? []) {
-      if (sch.deletedAt) continue
+      const chapterId = sch.id as string
+      if (sch.deletedAt) {
+        // Cascade-delete sections so the chapter doesn't leave orphaned rows in the accordion
+        await db.sections.where('chapterId').equals(chapterId).delete()
+        await db.chapters.delete(chapterId)
+        continue
+      }
       const remoteBookId = sch.bookId as string
       const localBookId = remoteToLocal.get(remoteBookId)
       if (!localBookId) continue
-      const local = await db.chapters.get(sch.id as string)
+      const local = await db.chapters.get(chapterId)
       if (!local) {
         await db.chapters.add({
-          id: sch.id as string,
+          id: chapterId,
           bookId: localBookId,
           title: (sch.title as string) || '',
           order: (sch.sortOrder as number) ?? 0,
@@ -805,12 +811,26 @@ class SyncService {
           endPage: (sch.endPage as number) ?? 0,
           updatedAt: Date.now(),
         })
+      } else {
+        const serverUpdated = new Date(sch.updatedAt as string).getTime()
+        if (serverUpdated > local.updatedAt) {
+          await db.chapters.update(chapterId, {
+            title: (sch.title as string) || local.title,
+            order: (sch.sortOrder as number) ?? local.order,
+            startPage: (sch.startPage as number) ?? local.startPage,
+            endPage: (sch.endPage as number) ?? local.endPage,
+            updatedAt: serverUpdated,
+          })
+        }
       }
     }
 
-    // Update/create sections
+    // Update/create/delete sections
     for (const ss of serverChanges.sections ?? []) {
-      if (ss.deletedAt) continue
+      if (ss.deletedAt) {
+        await db.sections.delete(ss.id as string)
+        continue
+      }
       const remoteBookId = ss.bookId as string
       const localBookId = remoteToLocal.get(remoteBookId)
       const local = await db.sections.get(ss.id as string)
