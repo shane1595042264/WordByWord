@@ -639,6 +639,9 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   useEffect(() => {
     if (readingMode !== 'flip') return
     const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
         e.preventDefault()
         goNext()
