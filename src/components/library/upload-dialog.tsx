@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { v4 as uuid } from 'uuid'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -125,6 +125,16 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       setLoading(false)
     }
   }, [file, onBookImported])
+
+  useEffect(() => {
+    if (!loading) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [loading])
 
   return (
     <Dialog open={open} onOpenChange={(v) => {
