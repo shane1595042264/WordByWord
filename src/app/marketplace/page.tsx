@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -33,6 +33,10 @@ export default function MarketplacePage() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const searchRef = useRef(search)
+  useEffect(() => { searchRef.current = search }, [search])
+  const abortRef = useRef<AbortController | null>(null)
+
   // Redirect non-admins
   useEffect(() => {
     if (session && !isAdmin) {
@@ -41,19 +45,26 @@ export default function MarketplacePage() {
   }, [session, isAdmin, router])
 
   const fetchCatalog = useCallback(async () => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const { signal } = controller
+
     setLoading(true)
     setError(null)
     try {
-      const tokenRes = await fetch('/api/auth/token')
+      const tokenRes = await fetch('/api/auth/token', { signal })
       if (!tokenRes.ok) {
         setError('Failed to authenticate. Please try again.')
         return
       }
       const { token } = await tokenRes.json()
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-      const searchParam = search ? `?search=${encodeURIComponent(search)}` : ''
+      const currentSearch = searchRef.current
+      const searchParam = currentSearch ? `?search=${encodeURIComponent(currentSearch)}` : ''
       const res = await fetch(`${apiUrl}/admin/catalog${searchParam}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       })
       if (!res.ok) {
         setError('Failed to load catalog. Please try again.')
@@ -61,16 +72,22 @@ export default function MarketplacePage() {
       }
       const data = await res.json()
       setCatalog(data.data || [])
-    } catch {
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return
       setError('Could not connect to the server. Please check your connection and try again.')
     } finally {
-      setLoading(false)
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setLoading(false)
+      }
     }
-  }, [search])
+  }, [])
 
   useEffect(() => {
     if (isAdmin) fetchCatalog()
   }, [isAdmin, fetchCatalog])
+
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   const addToShelf = async (catalogId: string) => {
     setAdding(catalogId)
