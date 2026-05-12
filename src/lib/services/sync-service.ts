@@ -402,13 +402,51 @@ class SyncService {
         await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
       }
 
+      // Per-entity push failures: bump local updatedAt past syncedAt so the next push retries instead of losing the row.
+      const failed = result.failedEntities ?? { books: [], chapters: [], sections: [], vocabulary: [] }
+      const failedBookIds = (failed.books ?? []) as string[]
+      const failedChapterIds = (failed.chapters ?? []) as string[]
+      const failedSectionIds = (failed.sections ?? []) as string[]
+      const failedVocabIds = (failed.vocabulary ?? []) as string[]
+      const failedCount = failedBookIds.length + failedChapterIds.length + failedSectionIds.length + failedVocabIds.length
+
+      if (failedCount > 0) {
+        // Must be strictly greater than syncedAt so the row re-enters the next dirty-window after LAST_SYNCED_KEY advances.
+        const bumpedAt = Math.max(Date.now(), new Date(result.syncedAt).getTime() + 1)
+
+        // Failed book ids are remoteIds; chapters/sections/vocab share the id with the server.
+        const remoteToLocalBook = new Map<string, string>()
+        for (const b of allBooks) {
+          if (b.remoteId) remoteToLocalBook.set(b.remoteId, b.id)
+        }
+        for (const remoteId of failedBookIds) {
+          const localId = remoteToLocalBook.get(remoteId)
+          if (localId) await db.books.update(localId, { updatedAt: bumpedAt })
+        }
+        for (const id of failedChapterIds) {
+          await db.chapters.update(id, { updatedAt: bumpedAt })
+        }
+        for (const id of failedSectionIds) {
+          await db.sections.update(id, { updatedAt: bumpedAt })
+        }
+        for (const id of failedVocabIds) {
+          await db.vocabulary.update(id, { updatedAt: bumpedAt })
+        }
+
+        this.log('sync:partial', `${failedCount} entit${failedCount === 1 ? 'y' : 'ies'} failed — re-queued for next sync (books:${failedBookIds.length} chapters:${failedChapterIds.length} sections:${failedSectionIds.length} vocab:${failedVocabIds.length})`)
+      }
+
       // Guard against timestamp regression: only update if the new syncedAt is newer
       const prevSyncedAt = localStorage.getItem(LAST_SYNCED_KEY)
       if (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt)) {
         localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
       }
       this.log('sync:complete', `synced at ${result.syncedAt}`)
-      this.emitStatus('complete', ':sync complete')
+      if (failedCount > 0) {
+        this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry`)
+      } else {
+        this.emitStatus('complete', ':sync complete')
+      }
 
       // Notify listeners (e.g. useBooks) that sync finished so they can refresh
       window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
