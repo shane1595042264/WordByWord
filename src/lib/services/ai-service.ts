@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { SONNET_MODEL } from '../ai-models'
 
 interface SplitPagesInput {
   pageImages: string[]  // base64 data URLs
@@ -44,7 +45,7 @@ export class AIService {
         const base64 = image.replace(/^data:image\/\w+;base64,/, '')
 
         const response = await this.client.messages.create({
-          model: 'claude-sonnet-4-20250514',
+          model: SONNET_MODEL,
           max_tokens: 4096,
           messages: [{
             role: 'user',
@@ -125,7 +126,7 @@ Respond with ONLY valid JSON in this exact format:
     })
 
     const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: SONNET_MODEL,
       max_tokens: 4096,
       messages: [{ role: 'user', content }],
     })
