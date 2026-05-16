@@ -1,6 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BlockTooltip } from '@/components/ui/block-tooltip'
@@ -60,19 +62,29 @@ export function ReaderToolbar({
 }: ReaderToolbarProps) {
   const isEpub = format === 'epub'
   const { getKeysDisplay } = useShortcuts()
+  const [isTogglingRead, setIsTogglingRead] = useState(false)
 
   /** Get the display string for a shortcut, falling back to the provided default */
   const sk = (id: string, fallback: string) => getKeysDisplay(id) ?? fallback
 
   const handleToggleRead = async () => {
-    const { SectionRepository } = await import('@/lib/repositories')
-    const sectionRepo = new SectionRepository()
-    if (isRead) {
-      await sectionRepo.markAsUnread(sectionId)
-      onReadToggle()
-    } else {
-      const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
-      onReadToggle(bookJustCompleted)
+    if (isTogglingRead) return
+    setIsTogglingRead(true)
+    try {
+      const { SectionRepository } = await import('@/lib/repositories')
+      const sectionRepo = new SectionRepository()
+      if (isRead) {
+        await sectionRepo.markAsUnread(sectionId)
+        onReadToggle()
+      } else {
+        const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+        onReadToggle(bookJustCompleted)
+      }
+    } catch (err) {
+      toast.error('Failed to update read state', { duration: 5000 })
+      console.error('Failed to toggle read state:', err)
+    } finally {
+      setIsTogglingRead(false)
     }
   }
 
@@ -107,7 +119,8 @@ export function ReaderToolbar({
           <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut={sk('toggle-read', '⌃ R')}>
             <Badge
               variant={isRead ? 'default' : 'outline'}
-              className="cursor-pointer"
+              className={`cursor-pointer ${isTogglingRead ? 'pointer-events-none opacity-60' : ''}`}
+              aria-busy={isTogglingRead}
               onClick={handleToggleRead}
             >
               {isRead ? 'Read' : 'Mark as Read'}
