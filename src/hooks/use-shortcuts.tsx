@@ -32,7 +32,7 @@ interface ShortcutContextValue {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'wbw-keyboard-shortcuts'
+const SETTINGS_KEY = 'bbb-settings'
 
 /** Parse "Ctrl+Shift+K" into parts */
 function parseCombo(combo: string): { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean; key: string } {
@@ -75,8 +75,10 @@ function matchesEvent(combo: string, e: KeyboardEvent): boolean {
 function loadCustomMappings(): Record<string, string> {
   if (typeof window === 'undefined') return {}
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
+    const raw = localStorage.getItem(SETTINGS_KEY)
+    if (!raw) return {}
+    const settings = JSON.parse(raw)
+    return settings.keymapOverrides ?? {}
   } catch {
     return {}
   }
@@ -84,7 +86,14 @@ function loadCustomMappings(): Record<string, string> {
 
 function saveCustomMappings(mappings: Record<string, string>) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(mappings))
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY)
+    const settings = raw ? JSON.parse(raw) : {}
+    settings.keymapOverrides = { ...(settings.keymapOverrides ?? {}), ...mappings }
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  } catch {
+    // ignore
+  }
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -140,6 +149,26 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const getAll = useCallback(() => [...shortcuts.values()], [shortcuts])
+
+  // Reload custom mappings when settings change (e.g. from settings page)
+  useEffect(() => {
+    const handler = () => {
+      const fresh = loadCustomMappings()
+      setCustomMappings(fresh)
+      setShortcuts(prev => {
+        const next = new Map(prev)
+        for (const [id, shortcut] of next) {
+          const custom = fresh[id]
+          next.set(id, custom
+            ? { ...shortcut, customKeys: custom }
+            : { ...shortcut, customKeys: undefined })
+        }
+        return next
+      })
+    }
+    window.addEventListener('keymap-changed', handler)
+    return () => window.removeEventListener('keymap-changed', handler)
+  }, [])
 
   // Global keydown handler
   useEffect(() => {

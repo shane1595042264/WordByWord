@@ -11,7 +11,7 @@
  *
  * Modes:
  *   Normal mode   — word-level cursor (h/l next/prev word, j/k word vertical,
- *                    d/u half-page, gg/G, Enter to translate)
+ *                    d/u half-page, gg/G, Enter translate)
  *   Sentence mode — sentence-level selection + translation
  *   Visual mode   — pure Vim visual selection (character/chunk-level, no translation)
  *
@@ -35,6 +35,8 @@ export type VimActionType =
   | 'yank'                // copy (yank) current selection to clipboard
   | 'mode-change'         // switch vim mode
   | 'escape'              // exit to normal mode / clear selection
+  | 'select-word-big'      // W — skip latex runs, jump to next non-latex word
+  | 'select-paragraph'     // S — next paragraph in sentence mode
   | 'custom'              // arbitrary callback (for future extensibility)
 
 export interface VimAction {
@@ -85,6 +87,8 @@ export interface VimRule {
   key: string
   /** Whether Shift must be held (for distinguishing 'v' vs 'V') */
   shift?: boolean
+  /** Whether Ctrl must be held (for distinguishing 'e' vs 'Ctrl+E') */
+  ctrl?: boolean
   /** The action to dispatch */
   action: VimAction
   /** Whether this binding accepts a numeric count prefix */

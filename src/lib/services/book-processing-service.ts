@@ -104,6 +104,7 @@ export class BookProcessingService {
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
+      completedAt: null,
     }
     await db.books.add(book)
 
@@ -160,6 +161,7 @@ export class BookProcessingService {
 
     const book = await db.books.get(bookId)
     if (!book) throw new Error('Book not found')
+    if (!book.pdfBlob) throw new Error('AI chapter processing requires a PDF source (not supported for EPUB books)')
 
     const chapter = await db.chapters.get(chapterId)
     if (!chapter) throw new Error('Chapter not found')

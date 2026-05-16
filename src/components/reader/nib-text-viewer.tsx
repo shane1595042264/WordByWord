@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useCallback, useRef, useMemo, useEffect, useImperativeHandle, forwardRef } from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { NibElementBadge } from '@/components/ui/block-tooltip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { LatexText, containsLatex } from '@/components/reader/latex-renderer'
 import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
 import { WordInfoPanel } from '@/components/reader/word-info-panel'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
 
 /** Handle exposed by NibTextViewer for vim-driven selection */
@@ -69,14 +71,98 @@ interface NibTextViewerProps {
   onCursorLineChange?: (info: CursorLineInfo) => void
   /** Current vim mode — controls info panel behavior */
   vimMode?: 'normal' | 'sentence' | 'visual'
+  /**
+   * Reading-comfort knobs for reflowable content (EPUBs especially).
+   * Not yet exposed in the settings UI — defaults match the original fixed
+   * Tailwind classes. Keep these as component props so future settings can
+   * plug in without refactoring.
+   */
+  textSizeClass?: string    // e.g. 'text-base', 'text-lg'
+  lineHeightClass?: string  // e.g. 'leading-relaxed', 'leading-loose'
 }
 
 /**
- * Renders a paragraph, detecting LaTeX and falling back to LatexText rendering
- * when math expressions are found. Otherwise uses word-level interactivity.
+ * Renders a contiguous run of LaTeX words as a single KaTeX formula
+ * with invisible per-token overlay spans for cursor/selection targeting.
+ */
+function LatexFormulaRun({
+  words,
+  flatIndices,
+  latexSource,
+  selectedWord,
+  vimCursorIndex,
+  vimSelectedIndices,
+  highlightedIndices,
+  vimMode,
+  onWordClick,
+  registerWordSpan,
+  display,
+}: {
+  words: NibWord[]
+  flatIndices: number[]
+  latexSource: string
+  selectedWord: NibWord | null
+  vimCursorIndex?: number
+  vimSelectedIndices?: Set<number>
+  highlightedIndices?: Set<number>
+  vimMode?: string
+  onWordClick: (word: NibWord, el: HTMLElement) => void
+  registerWordSpan: (idx: number, el: HTMLSpanElement | null) => void
+  display?: boolean
+}) {
+  const html = useMemo(() => {
+    try {
+      return katex.renderToString(latexSource, {
+        throwOnError: false,
+        displayMode: display ?? false,
+      })
+    } catch {
+      return latexSource
+    }
+  }, [latexSource, display])
+
+  return (
+    <span className={`nib-latex-group relative inline-block align-middle ${display ? 'block text-center my-4 text-xl' : ''}`}>
+      {/* KaTeX visual output */}
+      <span dangerouslySetInnerHTML={{ __html: html }} className="pointer-events-none" />
+      {/* Invisible token hit targets overlaid on top */}
+      <span className="absolute inset-0 flex items-stretch" style={{ zIndex: 1 }}>
+        {words.map((word, i) => {
+          const idx = flatIndices[i]
+          const isCursor = vimMode === 'normal' && vimCursorIndex === idx
+          const isVimSelected = vimSelectedIndices?.has(idx)
+          const isHighlighted = highlightedIndices?.has(idx)
+          return (
+            <span
+              key={i}
+              ref={el => registerWordSpan(idx, el)}
+              data-word-index={idx}
+              className={`flex-1 cursor-pointer transition-colors ${
+                isCursor ? 'bg-yellow-400/40 rounded' :
+                isVimSelected ? 'bg-blue-500/25' :
+                isHighlighted ? 'bg-amber-500/20' :
+                'hover:bg-primary/10'
+              }`}
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onWordClick(word, e.currentTarget)
+              }}
+            />
+          )
+        })}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * Renders a paragraph with word-level interactivity.
+ * LaTeX formula tokens are rendered via KaTeX with per-token cursor targeting.
  */
 function ParagraphRenderer({
   para, pageNumber, selectedWord, onWordClick, flatIndexStart, registerWordSpan, vimSelectedIndices, highlightedIndices, showIndicators, vimCursorIndex, vimMode,
+  textSizeClass = 'text-base', lineHeightClass = 'leading-relaxed',
 }: {
   para: any
   pageNumber: number
@@ -91,10 +177,13 @@ function ParagraphRenderer({
   vimCursorIndex?: number
   /** Current vim mode */
   vimMode?: string
+  /** Tailwind class for body text size (future EPUB font-size setting) */
+  textSizeClass?: string
+  /** Tailwind class for body line-height (future EPUB line-spacing setting) */
+  lineHeightClass?: string
 }) {
   // Build the full paragraph text and check for special content
   const fullText = para.sentences.map((s: any) => s.text).join(' ')
-  const hasLatexContent = containsLatex(fullText)
   const hasTableContent = isTableBlock(fullText)
 
   // Table rendering
@@ -102,67 +191,143 @@ function ParagraphRenderer({
     return <TableRenderer text={fullText} />
   }
 
-  // LaTeX rendering (no word-level interaction for math paragraphs)
-  if (hasLatexContent) {
-    return (
-      <p className="leading-relaxed text-base">
-        <LatexText text={fullText} />
-      </p>
-    )
-  }
+  // Check if this is a display-mode LaTeX paragraph
+  const isDisplayLatex = para.blockType === 'latex-display'
 
-  // Standard word-by-word rendering with hover/click
+  // Standard word-by-word rendering with LaTeX run grouping
   let wordCounter = flatIndexStart
   return (
-    <p className="leading-relaxed text-base">
-      {para.sentences.map((sentence: any, sIdx: number) => (
-        <span key={`s${sIdx}`} className="relative">
-          {sentence.words.map((word: NibWord, wIdx: number) => {
-            const flatIdx = wordCounter++
-            const isVimSelected = vimSelectedIndices?.has(flatIdx)
-            const isHighlighted = highlightedIndices?.has(flatIdx)
-            const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx && selectedWord != null
-            const wordSpan = (
-              <span
-                ref={(el) => registerWordSpan(flatIdx, el)}
-                data-word-index={flatIdx}
-                className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
-                  selectedWord === word && !isBlockCursor ? 'bg-primary/20 underline decoration-primary' : ''
-                }${isVimSelected ? ' bg-blue-500/25 ring-1 ring-blue-400/50' : ''}${isHighlighted ? ' bg-amber-500/20 ring-1 ring-amber-400/40' : ''}${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
-                style={isBlockCursor ? {
-                  backgroundColor: 'rgba(250, 204, 21, 0.7)',
-                  color: '#000',
-                  borderRadius: '2px',
-                  boxShadow: '0 0 0 1px rgba(250, 204, 21, 0.9)',
-                } : undefined}
-                onClick={(e) => onWordClick(word, e.currentTarget)}
-              >
-                {word.text}
-              </span>
-            )
-            return (
-              <span key={`w${wIdx}`}>
-                {showIndicators ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      {wordSpan}
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="top"
-                      className="bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg shadow-lg shadow-black/10 max-w-sm px-3 py-2"
-                    >
-                      <p className="font-medium text-sm">{word.text}</p>
-                      <p className="text-muted-foreground text-xs mt-1">{sentence.text}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                ) : wordSpan}
-                {wIdx < sentence.words.length - 1 ? ' ' : ''}
-              </span>
-            )
-          })}
-          {' '}
-        </span>
-      ))}
+    <p className={`${lineHeightClass} ${textSizeClass} ${isDisplayLatex ? 'text-center my-4' : ''}`}>
+      {para.sentences.map((sentence: any, sIdx: number) => {
+        // Group sentence words into runs of [regular] and [latex]
+        type Run = { type: 'text' | 'latex'; words: NibWord[]; startFlatIdx: number; latexSource?: string }
+        const runs: Run[] = []
+        let currentRun: Run | null = null
+        const sentenceStartIdx = wordCounter
+
+        sentence.words.forEach((word: NibWord, wIdx: number) => {
+          const flatIdx = sentenceStartIdx + wIdx
+          if (word.isLatex) {
+            if (currentRun?.type === 'latex' && currentRun.latexSource === word.latexSource) {
+              currentRun.words.push(word)
+            } else {
+              if (currentRun) runs.push(currentRun)
+              currentRun = { type: 'latex', words: [word], startFlatIdx: flatIdx, latexSource: word.latexSource }
+            }
+          } else {
+            if (currentRun?.type === 'text') {
+              currentRun.words.push(word)
+            } else {
+              if (currentRun) runs.push(currentRun)
+              currentRun = { type: 'text', words: [word], startFlatIdx: flatIdx }
+            }
+          }
+        })
+        if (currentRun) runs.push(currentRun)
+
+        // Advance wordCounter past this sentence
+        wordCounter += sentence.words.length
+
+        return (
+          <span key={`s${sIdx}`} className="relative">
+            {runs.map((run, rIdx) => {
+              if (run.type === 'latex' && run.latexSource) {
+                const flatIndices = run.words.map((_, i) => run.startFlatIdx + i)
+                return (
+                  <LatexFormulaRun
+                    key={`r${rIdx}`}
+                    words={run.words}
+                    flatIndices={flatIndices}
+                    latexSource={run.latexSource}
+                    selectedWord={selectedWord}
+                    vimCursorIndex={vimCursorIndex}
+                    vimSelectedIndices={vimSelectedIndices}
+                    highlightedIndices={highlightedIndices}
+                    vimMode={vimMode}
+                    onWordClick={onWordClick}
+                    registerWordSpan={registerWordSpan}
+                    display={isDisplayLatex}
+                  />
+                )
+              }
+
+              // Image word — render as inline image with vim cursor support
+              if (run.words.length === 1 && run.words[0].imageUrl) {
+                const word = run.words[0]
+                const flatIdx = run.startFlatIdx
+                const isImgCursor = vimMode === 'normal' && vimCursorIndex === flatIdx
+                const isImgSelected = vimSelectedIndices?.has(flatIdx)
+                const isImgHighlighted = highlightedIndices?.has(flatIdx)
+                return (
+                  <span
+                    key={`r${rIdx}`}
+                    ref={el => registerWordSpan(flatIdx, el as any)}
+                    data-word-index={flatIdx}
+                    className={`block my-4 rounded-md cursor-pointer transition-all ${
+                      isImgCursor ? 'ring-2 ring-yellow-400 bg-yellow-400/10' :
+                      isImgSelected || isImgHighlighted ? 'ring-2 ring-blue-400 bg-blue-500/10' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={(e) => onWordClick(word, e.currentTarget as any)}
+                  >
+                    <img
+                      src={word.imageUrl}
+                      alt={word.text}
+                      className="max-w-full rounded-md"
+                    />
+                  </span>
+                )
+              }
+
+              // Regular text run — render each word individually
+              return run.words.map((word, wIdx) => {
+                const flatIdx = run.startFlatIdx + wIdx
+                const isVimSelected = vimSelectedIndices?.has(flatIdx)
+                const isHighlighted = highlightedIndices?.has(flatIdx)
+                const isBlockCursor = vimMode === 'normal' && vimCursorIndex === flatIdx && selectedWord != null
+                const wordSpan = (
+                  <span
+                    ref={(el) => registerWordSpan(flatIdx, el)}
+                    data-word-index={flatIdx}
+                    className={`cursor-pointer rounded px-px transition-colors hover:bg-primary/10 ${
+                      selectedWord === word && !isBlockCursor ? 'bg-primary/20 underline decoration-primary' : ''
+                    }${isVimSelected ? ' bg-blue-500/25 ring-1 ring-blue-400/50' : ''}${isHighlighted ? ' bg-amber-500/20 ring-1 ring-amber-400/40' : ''}${word.bold ? ' font-bold' : ''}${word.italic ? ' italic' : ''}`}
+                    style={isBlockCursor ? {
+                      backgroundColor: 'rgba(250, 204, 21, 0.7)',
+                      color: '#000',
+                      borderRadius: '2px',
+                      boxShadow: '0 0 0 1px rgba(250, 204, 21, 0.9)',
+                    } : undefined}
+                    onClick={(e) => onWordClick(word, e.currentTarget)}
+                  >
+                    {word.text}
+                  </span>
+                )
+                return (
+                  <span key={`w${run.startFlatIdx + wIdx}`}>
+                    {showIndicators ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {wordSpan}
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg shadow-lg shadow-black/10 max-w-sm px-3 py-2"
+                        >
+                          <p className="font-medium text-sm">{word.text}</p>
+                          <p className="text-muted-foreground text-xs mt-1">{sentence.text}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : wordSpan}
+                    {wIdx < run.words.length - 1 ? ' ' : ''}
+                  </span>
+                )
+              })
+            })}
+            {' '}
+          </span>
+        )
+      })}
     </p>
   )
 }
@@ -173,8 +338,44 @@ function ParagraphRenderer({
  * Headers, footnotes, and body paragraphs are visually separated.
  * Element type indicators can be toggled on/off for testing/debugging.
  */
+
+/** Skeleton placeholder shown while text is being parsed */
+const SKELETON_LINE_WIDTHS = ['w-full', 'w-11/12', 'w-4/5', 'w-full', 'w-3/4', 'w-11/12', 'w-full', 'w-2/3']
+
+export function NibTextViewerSkeleton() {
+  return (
+    <div className="p-6 space-y-6" aria-busy="true" aria-label="Loading text content">
+      {/* Title skeleton */}
+      <Skeleton className="h-7 w-48 mb-4" />
+      {/* Paragraph skeletons — 3 groups with varying line widths */}
+      {[0, 1, 2].map((group) => (
+        <div key={group} className="space-y-3">
+          {SKELETON_LINE_WIDTHS.map((w, i) => (
+            <Skeleton key={i} className={`h-4 ${w}`} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>(function NibTextViewer(
-  { nibDocument, sectionTitle, showIndicators = false, onWordSelect, onDeselect, vimSelectedIndices, scrollContainerRef, bookTitle, onCursorLineChange, vimMode = 'normal' },
+  {
+    nibDocument,
+    sectionTitle,
+    showIndicators = false,
+    onWordSelect,
+    onDeselect,
+    vimSelectedIndices,
+    scrollContainerRef,
+    bookTitle,
+    onCursorLineChange,
+    vimMode = 'normal',
+    // Reading-comfort defaults match the prior hard-coded Tailwind classes.
+    // Future settings UI (e.g. EPUB font-size slider) can pass different values.
+    textSizeClass = 'text-base',
+    lineHeightClass = 'leading-relaxed',
+  },
   ref
 ) {
   const [selectedWord, setSelectedWord] = useState<NibWord | null>(null)
@@ -350,7 +551,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setHighlightedIndices(new Set()) // clear sentence highlight
         const span = wordSpanRefs.current.get(vimCursorRef.current)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         // Sync cursor line with selected word
         reportCursorLineForWord(vimCursorRef.current)
@@ -395,7 +596,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         // Sync cursor line with first word of sentence
         reportCursorLineForWord(flatIdx)
@@ -461,7 +662,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (lastWord) setSelectedWord(lastWord)
       // Scroll to bottom
       const lastSpan = wordSpanRefs.current.get(allWords.length - 1)
-      if (lastSpan) lastSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      if (lastSpan) lastSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       // Update cursor line to last line
       const lines = computeVisualLines()
       if (lines.length > 0) {
@@ -486,7 +687,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (firstWord) setSelectedWord(firstWord)
       // Scroll to top
       const firstSpan = wordSpanRefs.current.get(0)
-      if (firstSpan) firstSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      if (firstSpan) firstSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       // Update cursor line to first line
       const lines = computeVisualLines()
       if (lines.length > 0) {
@@ -557,7 +758,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             setSelectedWord(word)
             const span = wordSpanRefs.current.get(bestIndex)
             if (span) {
-              span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+              span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
             }
             reportCursorLineForWord(bestIndex)
             // Notify parent (for side-by-side PDF sync)
@@ -584,7 +785,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
           onWordSelect?.(word)
         }
         const span = wordSpanRefs.current.get(idx)
-        if (span) span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        if (span) span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
       } else {
         // Blank line — clear word selection, just move the cursor line indicator
         setSelectedWord(null)
@@ -595,7 +796,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
           const st = container.scrollTop
           const vh = container.clientHeight
           if (lineY < st || lineY > st + vh - LINE_HEIGHT) {
-            container.scrollTo({ top: Math.max(0, lineY - vh / 2), behavior: 'smooth' })
+            container.scrollTo({ top: Math.max(0, lineY - vh / 2), behavior: 'instant' })
           }
         }
       }
@@ -678,7 +879,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
-          span.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
         }
         reportCursorLineForWord(flatIdx)
         // Notify parent (for side-by-side PDF sync)
@@ -708,7 +909,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             const spanRect = firstSpan.getBoundingClientRect()
             const containerRect = container.getBoundingClientRect()
             if (spanRect.top < containerRect.top || spanRect.bottom > containerRect.bottom) {
-              firstSpan.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+              firstSpan.scrollIntoView({ behavior: 'instant', block: 'nearest' })
             }
           }
         }
@@ -812,11 +1013,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
   }, [onDeselect])
 
   if (!nibDocument) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground p-8">
-        <p>No parsed content available. Process this chapter first.</p>
-      </div>
-    )
+    return <NibTextViewerSkeleton />
   }
 
   // Precompute flat word index offsets for each paragraph
@@ -860,7 +1057,128 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
               const isQuote = blockType === 'blockquote'
               const isEpigraph = blockType === 'epigraph'
               const isSubheading = blockType === 'subheading'
+              const isFigureCaption = blockType === 'figure-caption'
+              const isFootnote = (blockType as string) === 'footnote'
               const flatOffset = paraFlatOffsets.get(`${page.pageNumber}-${para.index}`) ?? 0
+
+              // Render markdown tables as HTML tables
+              if (blockType === 'table') {
+                const rawMd = para.sentences[0]?.words[0]?.latexSource ?? para.sentences[0]?.words[0]?.text ?? ''
+                const flatIdx = flatOffset
+                const allRows = rawMd.split('\n').filter((r: string) => r.trim())
+                // Separate header, separator, and body rows
+                const isSeparator = (r: string) => /^\|[\s:|-]+\|$/.test(r.trim().replace(/\s/g, ''))
+                const headerRow = allRows[0] ? allRows[0] : ''
+                const bodyRows = allRows.filter((r: string, i: number) => i > 0 && !isSeparator(r))
+                const parseRow = (row: string) => row.split('|').slice(1, -1).map((c: string) => c.trim())
+                const headerCells = parseRow(headerRow)
+
+                const renderCell = (cell: string) => {
+                  // Render any $...$ LaTeX inline
+                  if (cell.includes('$')) {
+                    const parts = cell.split(/(\$[^$]+\$)/g)
+                    return parts.map((part: string, pi: number) => {
+                      if (part.startsWith('$') && part.endsWith('$')) {
+                        const latex = part.slice(1, -1)
+                        try {
+                          return <span key={pi} dangerouslySetInnerHTML={{ __html: katex.renderToString(latex, { throwOnError: false }) }} />
+                        } catch { return <span key={pi}>{part}</span> }
+                      }
+                      return <span key={pi}>{part}</span>
+                    })
+                  }
+                  return cell
+                }
+
+                const isTableCursor = vimMode === 'normal' && vimCursorIndex === flatIdx
+                const isTableHighlighted = highlightedIndices.has(flatIdx) || vimSelectedIndices?.has(flatIdx)
+                return (
+                  <div
+                    key={`${page.pageNumber}-p${para.index}`}
+                    ref={el => { if (el) wordSpanRefs.current.set(flatIdx, el as any) }}
+                    data-word-index={flatIdx}
+                    className={`my-4 overflow-x-auto rounded-md cursor-pointer transition-all ${
+                      isTableCursor ? 'ring-2 ring-yellow-400 bg-yellow-400/10' :
+                      isTableHighlighted ? 'ring-2 ring-blue-400 bg-blue-500/10' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={() => {
+                      const word = para.sentences[0]?.words[0]
+                      if (word) handleWordClick(word, null as any)
+                    }}
+                  >
+                    <table className="border-collapse border border-border text-sm">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          {headerCells.map((cell: string, ci: number) => (
+                            <th key={ci} className="border border-border px-3 py-1.5 text-left font-semibold">
+                              {renderCell(cell)}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bodyRows.map((row: string, ri: number) => {
+                          const cells = parseRow(row)
+                          return (
+                            <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-muted/20'}>
+                              {cells.map((cell: string, ci: number) => (
+                                <td key={ci} className="border border-border px-3 py-1.5">
+                                  {renderCell(cell)}
+                                </td>
+                              ))}
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              }
+
+              // Render code blocks with inline LaTeX rendering
+              if (blockType === 'code-block') {
+                const code = para.sentences[0]?.words[0]?.latexSource ?? para.sentences[0]?.words[0]?.text ?? ''
+                const codeFlatIdx = flatOffset
+                const isCodeCursor = vimMode === 'normal' && vimCursorIndex === codeFlatIdx
+                const isCodeHighlighted = highlightedIndices.has(codeFlatIdx) || vimSelectedIndices?.has(codeFlatIdx)
+                const codeLines = code.split('\n')
+                return (
+                  <div
+                    key={`${page.pageNumber}-p${para.index}`}
+                    ref={el => { if (el) wordSpanRefs.current.set(codeFlatIdx, el as any) }}
+                    data-word-index={codeFlatIdx}
+                    className={`my-4 cursor-pointer transition-all rounded-md ${
+                      isCodeCursor ? 'ring-2 ring-yellow-400' :
+                      isCodeHighlighted ? 'ring-2 ring-blue-400' :
+                      'hover:ring-1 hover:ring-primary/30'
+                    }`}
+                    onClick={() => {
+                      const word = para.sentences[0]?.words[0]
+                      if (word) handleWordClick(word, null as any)
+                    }}
+                  >
+                    <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre leading-relaxed">
+                      {codeLines.map((line: string, li: number) => (
+                        <span key={li}>
+                          {line.includes('$') ? (
+                            line.split(/(\$[^$]+\$)/g).map((part: string, pi: number) => {
+                              if (part.startsWith('$') && part.endsWith('$')) {
+                                const latex = part.slice(1, -1)
+                                try {
+                                  return <span key={pi} dangerouslySetInnerHTML={{ __html: katex.renderToString(latex, { throwOnError: false }) }} />
+                                } catch { return <span key={pi}>{part}</span> }
+                              }
+                              return <span key={pi}>{part}</span>
+                            })
+                          ) : line}
+                          {li < codeLines.length - 1 ? '\n' : ''}
+                        </span>
+                      ))}
+                    </pre>
+                  </div>
+                )
+              }
 
               // Render sub-headings through ParagraphRenderer so words are selectable
               if (isSubheading) {
@@ -890,6 +1208,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                         showIndicators={false}
                         vimCursorIndex={vimCursorIndex}
                         vimMode={vimMode}
+                        textSizeClass={textSizeClass}
+                        lineHeightClass={lineHeightClass}
                       />
                     </div>
                   </div>
@@ -905,6 +1225,10 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                     isQuote ? 'border-l-2 border-indigo-500/40 pl-4 italic' : ''
                   }${
                     isEpigraph ? 'border-l-2 border-violet-500/40 pl-4 italic text-muted-foreground' : ''
+                  }${
+                    isFigureCaption ? 'text-sm text-muted-foreground italic text-center' : ''
+                  }${
+                    isFootnote ? 'text-xs text-muted-foreground border-t border-border/30 pt-2 mt-4' : ''
                   }`}
                 >
                   {showIndicators && (
@@ -927,6 +1251,8 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                     showIndicators={showIndicators}
                     vimCursorIndex={vimCursorIndex}
                     vimMode={vimMode}
+                    textSizeClass={textSizeClass}
+                    lineHeightClass={lineHeightClass}
                   />
                 </div>
               )

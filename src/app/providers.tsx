@@ -5,6 +5,7 @@ import { SessionProvider } from 'next-auth/react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ShortcutProvider } from '@/hooks/use-shortcuts'
 import { SyncProvider } from '@/components/sync-provider'
+import { GlobalNavigationShortcuts } from '@/components/global-navigation-shortcuts'
 
 /**
  * Client-side providers wrapper.
@@ -18,6 +19,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <SessionProvider>
       <SyncProvider>
         <ShortcutProvider>
+          <GlobalNavigationShortcuts />
           <TooltipProvider delayDuration={200}>
             {children}
           </TooltipProvider>

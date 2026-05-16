@@ -8,13 +8,44 @@ interface SectionSidebarProps {
   bookId: string
   sections: Section[]
   currentSectionId: string
+  collapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
-export function SectionSidebar({ bookId, sections, currentSectionId }: SectionSidebarProps) {
+export function SectionSidebar({ bookId, sections, currentSectionId, collapsed, onToggleCollapse }: SectionSidebarProps) {
+  if (collapsed) {
+    return (
+      <div className="h-full border-r flex flex-col items-center py-2 w-10 flex-shrink-0">
+        <button
+          onClick={onToggleCollapse}
+          className="p-1.5 rounded hover:bg-muted text-muted-foreground transition-colors"
+          title="Expand sidebar (Ctrl+[)"
+          aria-label="Expand sidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 4 10 8 6 12" />
+          </svg>
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <ScrollArea className="h-full w-64 border-r">
+    <ScrollArea className="h-full w-64 border-r flex-shrink-0">
       <div className="p-4 space-y-1">
-        <h3 className="text-sm font-medium mb-3">Sections</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">Sections</h3>
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
+            title="Collapse sidebar (Ctrl+[)"
+            aria-label="Collapse sidebar"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="10 4 6 8 10 12" />
+            </svg>
+          </button>
+        </div>
         {sections.map(section => (
           <Link
             key={section.id}

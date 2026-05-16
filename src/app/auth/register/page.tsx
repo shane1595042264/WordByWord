@@ -73,22 +73,23 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-md p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">WordByWord</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Nibbler</h1>
           <p className="text-muted-foreground mt-2">Create your account</p>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+          <div role="alert" aria-live="assertive" className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleRegister} className="space-y-4">
+        <form onSubmit={handleRegister} aria-busy={loading} className="space-y-4">
           <div>
             <label htmlFor="name" className="block text-sm font-medium mb-1.5">Name</label>
             <input
               id="name"
               type="text"
+              autoComplete="name"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="Your name"
@@ -101,6 +102,7 @@ export default function RegisterPage() {
             <input
               id="email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
@@ -113,6 +115,7 @@ export default function RegisterPage() {
             <input
               id="password"
               type="password"
+              autoComplete="new-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="At least 6 characters"
@@ -125,6 +128,7 @@ export default function RegisterPage() {
             <input
               id="confirmPassword"
               type="password"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={e => setConfirmPassword(e.target.value)}
               placeholder="••••••••"
@@ -154,7 +158,7 @@ export default function RegisterPage() {
           onClick={handleGoogleSignup}
           className="w-full py-2.5 rounded-lg border font-medium hover:bg-muted/50 transition-colors flex items-center justify-center gap-2"
         >
-          <svg className="w-5 h-5" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />

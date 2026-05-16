@@ -31,6 +31,19 @@ class SyncService {
   private cleanupFns: (() => void)[] = []
   private conflictResolver: ConflictResolver | null = null
   private hasInitSynced = false
+  private abortController: AbortController | null = null
+
+  // ── Status events ──────────────────────────────────────────
+
+  private emitStatus(
+    status: 'syncing' | 'complete' | 'error',
+    message: string,
+    progress?: { current: number; total: number },
+  ) {
+    window.dispatchEvent(new CustomEvent('nibble:sync-status', {
+      detail: { status, message, progress: progress ?? null },
+    }))
+  }
 
   // ── Lifecycle ────────────────────────────────────────────────
 
@@ -40,25 +53,48 @@ class SyncService {
   }
 
   init() {
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') this.sync()
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    this.cleanupFns.push(() => document.removeEventListener('visibilitychange', onVisibility))
-
     const onBeforeUnload = () => this.flushSync()
     window.addEventListener('beforeunload', onBeforeUnload)
     this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
     // Full sync on init — always sync from epoch on first load to catch all changes
     this.hasInitSynced = false
-    this.sync()
+    this.syncWithRetry()
+  }
+
+  /**
+   * Attempt sync with retry — handles the race condition where
+   * the session cookie may not be fully propagated yet after login.
+   */
+  private async syncWithRetry(retries = 3, delayMs = 1500): Promise<void> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      const tokenBefore = await this.getToken()
+      if (tokenBefore) {
+        // Token available — sync will proceed normally
+        await this.sync()
+        return
+      }
+      this.log('init:retry', `token not available, attempt ${attempt}/${retries}`)
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs))
+      }
+    }
+    // Final attempt even without token pre-check — sync() handles null gracefully
+    this.log('init:retry', 'all retries exhausted, attempting final sync')
+    await this.sync()
   }
 
   destroy() {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    // Abort any in-flight sync fetch to prevent stale responses from overwriting newer data
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
     this.cleanupFns.forEach(fn => fn())
     this.cleanupFns = []
+    // Reset syncing flag so the next init() can sync successfully
+    this.isSyncing = false
   }
 
   // ── Logging ───────────────────────────────────────────────────
@@ -142,35 +178,34 @@ class SyncService {
     title: string,
     author?: string,
     totalPages?: number,
-  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string } | null> {
+    mode?: string,
+  ): Promise<{ remoteId: string; catalogId: string; coverUrl?: string; jobId?: string }> {
     const token = await this.getToken()
-    if (!token) return null
+    if (!token) throw new Error('Not authenticated — please sign in to upload books.')
 
     const formData = new FormData()
     formData.append('file', file, `${title}.pdf`)
     formData.append('title', title)
     if (author) formData.append('author', author)
     if (totalPages) formData.append('totalPages', String(totalPages))
+    if (mode) formData.append('mode', mode)
 
-    try {
-      const res = await fetch(`${this.getApiUrl()}/books/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      })
-      if (!res.ok) {
-        console.error('[sync] upload failed:', res.status)
-        return null
-      }
-      const data = await res.json()
-      return {
-        remoteId: data.book.id,
-        catalogId: data.catalogEntry.id,
-        coverUrl: data.catalogEntry.coverUrl || undefined,
-      }
-    } catch (err) {
-      console.error('[sync] upload error:', err)
-      return null
+    const res = await fetch(`${this.getApiUrl()}/books/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    })
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null)
+      const errorMsg = errorData?.error || `Upload failed (${res.status})`
+      throw new Error(errorMsg)
+    }
+    const data = await res.json()
+    return {
+      remoteId: data.book.id,
+      catalogId: data.catalogEntry.id,
+      coverUrl: data.catalogEntry.coverUrl || undefined,
+      jobId: data.jobId || undefined,
     }
   }
 
@@ -192,12 +227,21 @@ class SyncService {
 
   // ── Core sync (bidirectional) ────────────────────────────────
 
-  async sync(): Promise<void> {
-    if (this.isSyncing) return
+  async sync(alreadyRefreshedToken = false): Promise<void> {
+    if (this.isSyncing) {
+      this.log('sync:skip', 'already syncing')
+      return
+    }
     const token = await this.getToken()
-    if (!token) return
+    if (!token) {
+      this.log('sync:skip', 'no token available (not authenticated?)')
+      return
+    }
 
     this.isSyncing = true
+    // Create an AbortController so destroy() can cancel this in-flight sync
+    this.abortController = new AbortController()
+    const { signal } = this.abortController
     try {
       // On first sync after init, always sync from epoch to catch everything (deletions, new books)
       const isInitSync = !this.hasInitSynced
@@ -208,6 +252,7 @@ class SyncService {
       this.hasInitSynced = true
 
       this.log('sync:start', isInitSync ? 'full sync (init)' : 'incremental')
+      this.emitStatus('syncing', isInitSync ? ':sync --full' : ':sync')
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(sinceMs).toArray(),
@@ -241,6 +286,12 @@ class SyncService {
         .map(v => this.vocabToSync(v, bookRemoteIdMap))
 
       this.log('sync:push', `${syncBooks.length} books, ${syncChapters.length} chapters, ${syncSections.length} sections, ${syncVocab.length} vocab`)
+      const totalDirty = syncBooks.length + syncChapters.length + syncSections.length + syncVocab.length
+      if (totalDirty > 0) {
+        this.emitStatus('syncing', `:push ${totalDirty} change${totalDirty === 1 ? '' : 's'}`)
+      } else {
+        this.emitStatus('syncing', ':pull server changes')
+      }
 
       const res = await fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
@@ -259,17 +310,26 @@ class SyncService {
             exerciseProgress: [],
           },
         }),
+        signal,
       })
 
       if (res.status === 401) {
+        // Always clear the cached token — the JWT was rejected, so it's stale or invalid.
         this.token = null
+        if (alreadyRefreshedToken) {
+          // Second 401 in the same sync attempt: a fresh token also failed, so the
+          // backend is persistently rejecting auth (secret mismatch, clock skew,
+          // middleware regression). Surface as a hard failure instead of recursing.
+          this.log('sync:error', 'HTTP 401 persisted after token refresh')
+          throw new Error('Sync failed: authentication rejected after refresh')
+        }
         this.isSyncing = false
-        return this.sync()
+        return this.sync(true)
       }
 
       if (!res.ok) {
         this.log('sync:error', `HTTP ${res.status}`)
-        return
+        throw new Error(`Sync request failed: HTTP ${res.status}`)
       }
 
       const result = await res.json()
@@ -280,7 +340,11 @@ class SyncService {
       const activeServerBooks = serverBooks.filter(sb => !sb.deletedAt)
       const deletedServerBooks = serverBooks.filter(sb => sb.deletedAt)
       const cloudOnlyBooks = activeServerBooks.filter(sb => !existingRemoteIds.has(sb.id as string))
-      const localOnlyBooks = allBooks.filter(b => b.remoteId && !serverBooks.some(sb => sb.id === b.remoteId))
+      // Only detect hard-deleted books on INIT sync (from epoch) where server returns ALL books.
+      // On incremental syncs, missing books just means they weren't modified — NOT deleted.
+      const localOnlyBooks = isInitSync
+        ? allBooks.filter(b => b.remoteId && !serverBooks.some(sb => sb.id === b.remoteId))
+        : []
       // Books that exist locally but server says deleted
       const cloudDeletedBooks = deletedServerBooks.filter(sb => existingRemoteIds.has(sb.id as string))
 
@@ -312,33 +376,88 @@ class SyncService {
       } else {
         // Auto or cloud wins — apply deletions and download new books
 
-        // 1. Remove locally any books the server soft-deleted (recency: server delete is newer)
+        // 1a. Remove locally any books the server soft-deleted
         for (const sb of cloudDeletedBooks) {
           const localBook = allBooks.find(b => b.remoteId === (sb.id as string))
           if (localBook) {
-            this.log('sync:delete-local', `"${localBook.title}" deleted on cloud`)
+            this.log('sync:delete-local', `"${localBook.title}" soft-deleted on cloud`)
             await db.sections.where('bookId').equals(localBook.id).delete()
             await db.chapters.where('bookId').equals(localBook.id).delete()
+            await db.vocabulary.where('bookId').equals(localBook.id).delete()
             await db.books.delete(localBook.id)
           }
         }
 
-        // 2. Download cloud-only books
-        for (const sb of cloudOnlyBooks) {
-          const remoteId = sb.id as string
-          this.log('sync:download', `"${sb.customTitle || remoteId}"`)
-          try {
-            await this.createLocalBookFromServer(sb, result.serverChanges, token)
-          } catch (err) {
-            this.log('sync:download-error', `${remoteId}: ${err}`)
-          }
+        // 1b. Remove locally any books that have a remoteId but server doesn't know about
+        // (hard-deleted on server — the row is gone, not returned in serverChanges)
+        for (const localBook of localOnlyBooks) {
+          this.log('sync:delete-local', `"${localBook.title}" no longer on server (hard-deleted)`)
+          await db.sections.where('bookId').equals(localBook.id).delete()
+          await db.chapters.where('bookId').equals(localBook.id).delete()
+          await db.vocabulary.where('bookId').equals(localBook.id).delete()
+          await db.books.delete(localBook.id)
         }
+
+        // 2. Download cloud-only books (parallel, concurrency of 3)
+        await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
       }
 
-      localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+      // Per-entity push failures: bump local updatedAt past syncedAt so the next push retries instead of losing the row.
+      const failed = result.failedEntities ?? { books: [], chapters: [], sections: [], vocabulary: [] }
+      const failedBookIds = (failed.books ?? []) as string[]
+      const failedChapterIds = (failed.chapters ?? []) as string[]
+      const failedSectionIds = (failed.sections ?? []) as string[]
+      const failedVocabIds = (failed.vocabulary ?? []) as string[]
+      const failedCount = failedBookIds.length + failedChapterIds.length + failedSectionIds.length + failedVocabIds.length
+
+      if (failedCount > 0) {
+        // Must be strictly greater than syncedAt so the row re-enters the next dirty-window after LAST_SYNCED_KEY advances.
+        const bumpedAt = Math.max(Date.now(), new Date(result.syncedAt).getTime() + 1)
+
+        // Failed book ids are remoteIds; chapters/sections/vocab share the id with the server.
+        const remoteToLocalBook = new Map<string, string>()
+        for (const b of allBooks) {
+          if (b.remoteId) remoteToLocalBook.set(b.remoteId, b.id)
+        }
+        for (const remoteId of failedBookIds) {
+          const localId = remoteToLocalBook.get(remoteId)
+          if (localId) await db.books.update(localId, { updatedAt: bumpedAt })
+        }
+        for (const id of failedChapterIds) {
+          await db.chapters.update(id, { updatedAt: bumpedAt })
+        }
+        for (const id of failedSectionIds) {
+          await db.sections.update(id, { updatedAt: bumpedAt })
+        }
+        for (const id of failedVocabIds) {
+          await db.vocabulary.update(id, { updatedAt: bumpedAt })
+        }
+
+        this.log('sync:partial', `${failedCount} entit${failedCount === 1 ? 'y' : 'ies'} failed — re-queued for next sync (books:${failedBookIds.length} chapters:${failedChapterIds.length} sections:${failedSectionIds.length} vocab:${failedVocabIds.length})`)
+      }
+
+      // Guard against timestamp regression: only update if the new syncedAt is newer
+      const prevSyncedAt = localStorage.getItem(LAST_SYNCED_KEY)
+      if (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt)) {
+        localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+      }
       this.log('sync:complete', `synced at ${result.syncedAt}`)
+      if (failedCount > 0) {
+        this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry`)
+      } else {
+        this.emitStatus('complete', ':sync complete')
+      }
+
+      // Notify listeners (e.g. useBooks) that sync finished so they can refresh
+      window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
     } catch (err) {
+      // Silently ignore aborted requests (from destroy() cancelling in-flight syncs)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        this.log('sync:aborted', 'sync cancelled by destroy()')
+        return
+      }
       console.error('[sync] error:', err)
+      this.emitStatus('error', ':sync failed')
     } finally {
       this.isSyncing = false
     }
@@ -382,17 +501,11 @@ class SyncService {
     const result = await res.json()
     let booksDownloaded = 0
 
-    // Create local books from cloud
-    for (const sb of result.serverChanges.books ?? []) {
-      if (sb.deletedAt) continue
-      try {
-        console.log(`[sync] downloading book: ${sb.customTitle || sb.id}...`)
-        await this.createLocalBookFromServer(sb, result.serverChanges, token)
-        booksDownloaded++
-      } catch (err) {
-        console.error('[sync] failed to download book:', sb.id, err)
-      }
-    }
+    // Create local books from cloud (parallel, concurrency of 3)
+    const activeBooks = (result.serverChanges.books ?? []).filter(
+      (sb: Record<string, unknown>) => !sb.deletedAt,
+    )
+    booksDownloaded = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
 
     // Download vocabulary
     for (const sv of result.serverChanges.vocabulary ?? []) {
@@ -412,11 +525,57 @@ class SyncService {
         lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
         createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
         updatedAt: new Date(sv.updatedAt as string).getTime(),
-      } as VocabEntry).catch(() => {}) // ignore dupes
+      } as VocabEntry).catch((err) => {
+        console.warn('Skipped duplicate vocab entry:', sv.word, err)
+      })
     }
 
     localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
     return { booksDownloaded }
+  }
+
+  // ── Download books with progress and concurrency ──────────────
+
+  private async downloadBooksWithProgress(
+    books: Record<string, unknown>[],
+    serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
+    token: string,
+  ): Promise<number> {
+    const total = books.length
+    if (total === 0) return 0
+
+    let processed = 0
+    let succeeded = 0
+    const CONCURRENCY = 3
+
+    this.emitStatus('syncing', `:pull 0/${total} books`, { current: 0, total })
+
+    // Process in batches of CONCURRENCY
+    for (let i = 0; i < total; i += CONCURRENCY) {
+      const batch = books.slice(i, i + CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map(async (sb) => {
+          const remoteId = sb.id as string
+          this.log('sync:download', `"${sb.customTitle || remoteId}"`)
+          await this.createLocalBookFromServer(sb, serverChanges, token)
+        }),
+      )
+
+      for (let j = 0; j < results.length; j++) {
+        processed++
+        const sb = batch[j]
+        const result = results[j]
+        if (result.status === 'rejected') {
+          this.log('sync:download-error', `${sb.id}: ${result.reason}`)
+        } else {
+          succeeded++
+        }
+        const title = (sb.customTitle as string) || 'book'
+        this.emitStatus('syncing', `:pull "${title}" (${processed}/${total})`, { current: processed, total })
+      }
+    }
+
+    return succeeded
   }
 
   // ── Create a local book from server data ──────────────────────
@@ -428,13 +587,12 @@ class SyncService {
   ): Promise<string> {
     const remoteId = sb.id as string
 
-    // Download PDF
-    const pdfBlob = await this.downloadPdf(remoteId)
-    if (!pdfBlob) throw new Error('Failed to download PDF')
-
-    // Get catalog info
+    // Fetch catalog first — we need `format` to decide whether to download
+    // the source file. EPUBs skip the blob entirely; their text lives in sections.
     let title = (sb.customTitle as string) || 'Untitled'
     let author = ''
+    let format: 'pdf' | 'epub' = 'pdf'
+    let catalogCoverUrl: string | null = null
     try {
       const summaryRes = await fetch(`${this.getApiUrl()}/books/${remoteId}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -443,8 +601,27 @@ class SyncService {
         const summary = await summaryRes.json()
         title = summary.catalog?.title || title
         author = summary.catalog?.author || ''
+        if (summary.catalog?.format === 'epub') format = 'epub'
+        catalogCoverUrl = summary.catalog?.coverUrl ?? null
       }
     } catch { /* use defaults */ }
+
+    // PDFs: download the blob so the viewer can render offline. EPUBs don't
+    // need the source file locally — all text already lives in sections.
+    let pdfBlob: Blob | undefined
+    let coverImage: string | null = catalogCoverUrl
+    if (format === 'pdf') {
+      const blob = await this.downloadPdf(remoteId)
+      if (!blob) throw new Error('Failed to download PDF')
+      pdfBlob = blob
+      if (!coverImage) {
+        try {
+          const { PDFService } = await import('./pdf-service')
+          const pdfSvc = new PDFService()
+          coverImage = await pdfSvc.renderPageToImage(pdfBlob, 1, 1.5)
+        } catch { /* no cover, that's fine */ }
+      }
+    }
 
     const localId = uuid()
     const now = Date.now()
@@ -453,16 +630,20 @@ class SyncService {
       title,
       author,
       totalPages: (sb.totalPages as number) ?? 0,
+      format,
       pdfBlob,
-      coverImage: null,
+      coverImage,
       structureSource: (sb.structureSource as Book['structureSource']) || 'native',
       processingStatus: (sb.processingStatus as Book['processingStatus']) || 'complete',
       createdAt: sb.createdAt ? new Date(sb.createdAt as string).getTime() : now,
       updatedAt: now,
       lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
-      lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? null,
+      lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
+        ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+        : null,
       lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
+      completedAt: sb.completedAt ? new Date(sb.completedAt as string).getTime() : null,
       remoteId,
       catalogId: sb.catalogId as string,
     })
@@ -497,6 +678,7 @@ class SyncService {
         startPage: (ss.startPage as number) ?? 0,
         endPage: (ss.endPage as number) ?? 0,
         extractedText: (ss.extractedText as string) ?? null,
+        richContent: (ss.richContent as string) ?? null,
         isRead: (ss.isRead as boolean) ?? false,
         readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
         lastPageViewed: (ss.lastPageViewed as number) ?? null,
@@ -535,14 +717,15 @@ class SyncService {
   // ── Transforms: Local → Backend ──────────────────────────────
 
   private bookToSync(book: Book): Record<string, unknown> {
+    // structureSource and processingStatus are backend-managed — the server rejects
+    // client writes on these, and they already flow server→client via applyServerChanges.
     return {
       id: book.remoteId,
       customTitle: book.title,
-      structureSource: book.structureSource,
-      processingStatus: book.processingStatus,
+      coverUrl: book.coverImage ?? null,
       lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
       lastAccessedSectionId: book.lastAccessedSectionId ?? null,
-      lastAccessedScrollProgress: book.lastAccessedScrollProgress ?? 0,
+      lastAccessedScrollProgress: (book.lastAccessedScrollProgress ?? 0) / 100, // 0-100 → 0-1
       lastAccessedWordIndex: book.lastAccessedWordIndex ?? null,
       updatedAt: new Date(book.updatedAt).toISOString(),
     }
@@ -574,6 +757,7 @@ class SyncService {
       scrollProgress: (sec.scrollProgress ?? 0) / 100, // 0-100 → 0-1
       sortOrder: sec.order,
       sectionType: 'content',
+      extractedText: sec.extractedText ?? null,
       updatedAt: new Date(sec.updatedAt).toISOString(),
     }
   }
@@ -620,36 +804,109 @@ class SyncService {
       const local = await db.books.get(localId)
       if (!local) continue
       const serverUpdated = new Date(sb.updatedAt as string).getTime()
+      // Always update processingStatus from server (processing → complete transition)
+      const serverProcessingStatus = sb.processingStatus as Book['processingStatus'] | undefined
+      if (serverProcessingStatus === 'complete' && local.processingStatus === 'processing') {
+        await db.books.update(localId, { processingStatus: 'complete', updatedAt: serverUpdated })
+      }
       if (serverUpdated > local.updatedAt) {
         await db.books.update(localId, {
           title: (sb.customTitle as string) || local.title,
+          coverImage: (sb.coverUrl as string) || local.coverImage,
           structureSource: (sb.structureSource as Book['structureSource']) || local.structureSource,
           processingStatus: (sb.processingStatus as Book['processingStatus']) || local.processingStatus,
           lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : local.lastReadAt,
           lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? local.lastAccessedSectionId,
-          lastAccessedScrollProgress: (sb.lastAccessedScrollProgress as number) ?? local.lastAccessedScrollProgress,
+          lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
+            ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+            : local.lastAccessedScrollProgress,
           lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? local.lastAccessedWordIndex,
           updatedAt: serverUpdated,
         })
       }
     }
 
-    // Update existing sections (reading progress merge)
-    for (const ss of serverChanges.sections ?? []) {
-      const local = await db.sections.get(ss.id as string)
-      if (!local) continue
-      const serverUpdated = new Date(ss.updatedAt as string).getTime()
-      if (serverUpdated > local.updatedAt) {
-        await db.sections.update(ss.id as string, {
-          isRead: (ss.isRead as boolean) || local.isRead,
-          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
-          scrollProgress: Math.max(
-            local.scrollProgress ?? 0,
-            ((ss.scrollProgress as number) ?? 0) * 100,
-          ),
-          lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
-          updatedAt: serverUpdated,
+    // Update/create/delete chapters
+    for (const sch of serverChanges.chapters ?? []) {
+      const chapterId = sch.id as string
+      if (sch.deletedAt) {
+        // Cascade-delete sections so the chapter doesn't leave orphaned rows in the accordion
+        await db.sections.where('chapterId').equals(chapterId).delete()
+        await db.chapters.delete(chapterId)
+        continue
+      }
+      const remoteBookId = sch.bookId as string
+      const localBookId = remoteToLocal.get(remoteBookId)
+      if (!localBookId) continue
+      const local = await db.chapters.get(chapterId)
+      if (!local) {
+        await db.chapters.add({
+          id: chapterId,
+          bookId: localBookId,
+          title: (sch.title as string) || '',
+          order: (sch.sortOrder as number) ?? 0,
+          startPage: (sch.startPage as number) ?? 0,
+          endPage: (sch.endPage as number) ?? 0,
+          updatedAt: Date.now(),
         })
+      } else {
+        const serverUpdated = new Date(sch.updatedAt as string).getTime()
+        if (serverUpdated > local.updatedAt) {
+          await db.chapters.update(chapterId, {
+            title: (sch.title as string) || local.title,
+            order: (sch.sortOrder as number) ?? local.order,
+            startPage: (sch.startPage as number) ?? local.startPage,
+            endPage: (sch.endPage as number) ?? local.endPage,
+            updatedAt: serverUpdated,
+          })
+        }
+      }
+    }
+
+    // Update/create/delete sections
+    for (const ss of serverChanges.sections ?? []) {
+      if (ss.deletedAt) {
+        await db.sections.delete(ss.id as string)
+        continue
+      }
+      const remoteBookId = ss.bookId as string
+      const localBookId = remoteToLocal.get(remoteBookId)
+      const local = await db.sections.get(ss.id as string)
+      if (!local && localBookId) {
+        // Create new section from server
+        await db.sections.add({
+          id: ss.id as string,
+          chapterId: ss.chapterId as string,
+          bookId: localBookId,
+          title: (ss.title as string) || '',
+          order: (ss.sortOrder as number) ?? 0,
+          startPage: (ss.startPage as number) ?? 0,
+          endPage: (ss.endPage as number) ?? 0,
+          extractedText: (ss.extractedText as string) ?? null,
+          richContent: (ss.richContent as string) ?? null,
+          isRead: (ss.isRead as boolean) ?? false,
+          readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
+          lastPageViewed: (ss.lastPageViewed as number) ?? null,
+          scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
+          updatedAt: Date.now(),
+        })
+      } else if (local) {
+        // Update existing section (reading progress merge)
+        const serverUpdated = new Date(ss.updatedAt as string).getTime()
+        if (serverUpdated > local.updatedAt) {
+          await db.sections.update(ss.id as string, {
+            isRead: (ss.isRead as boolean) || local.isRead,
+            readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
+            scrollProgress: Math.max(
+              local.scrollProgress ?? 0,
+              ((ss.scrollProgress as number) ?? 0) * 100,
+            ),
+            lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
+            extractedText: (ss.extractedText as string) ?? local.extractedText,
+            richContent: (ss.richContent as string) ?? local.richContent,
+            updatedAt: serverUpdated,
+          })
+        }
       }
     }
 

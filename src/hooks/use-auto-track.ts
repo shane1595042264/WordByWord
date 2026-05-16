@@ -5,12 +5,14 @@ import { useEffect, useRef, type RefObject } from 'react'
 export function useAutoTrack(
   sectionId: string,
   isRead: boolean,
-  onMarkedRead: () => void,
+  onMarkedRead: (bookJustCompleted: boolean) => void,
   scrollContainerRef: RefObject<HTMLDivElement | null>,
   /** Optional separate scroll container for text mode — forces endofpage tracking */
   textScrollRef?: RefObject<HTMLDivElement | null>,
   /** Current view mode — triggers re-evaluation when switching */
   viewMode?: string,
+  /** Optional separate scroll container for PDF mode */
+  pdfScrollRef?: RefObject<HTMLDivElement | null>,
 ) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollCleanupRef = useRef<(() => void) | null>(null)
@@ -29,8 +31,8 @@ export function useAutoTrack(
 
       const markRead = async (_reason: string) => {
         if (cancelled) return
-        await sectionRepo.markAsRead(sectionId)
-        onMarkedRead()
+        const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+        onMarkedRead(bookJustCompleted)
       }
 
       const isTextMode = viewMode === 'text'
@@ -72,20 +74,41 @@ export function useAutoTrack(
         attachScroll()
       } else if (settings.trackingMode === 'endofpage') {
         // End-of-page mode for non-text views
-        const container = scrollContainerRef.current
-        if (!container) return
+        // For PDF mode, use the dedicated PDF scroll container instead of the outer wrapper
+        const targetRef = viewMode === 'pdf' && pdfScrollRef ? pdfScrollRef : scrollContainerRef
 
-        const handleScroll = () => {
-          const { scrollTop, scrollHeight, clientHeight } = container
-          if (scrollTop + clientHeight >= scrollHeight - 50) {
-            markRead('pdf-endofpage')
-            container.removeEventListener('scroll', handleScroll)
+        const attachScroll = () => {
+          if (cancelled) return
+          const container = targetRef.current
+          if (!container) {
+            // Retry — the scroll container may not be rendered yet
+            timerRef.current = setTimeout(attachScroll, 200)
+            return
           }
+
+          const handleScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = container
+            const maxScroll = scrollHeight - clientHeight
+            if (maxScroll < 10) {
+              markRead('pdf-endofpage-fits')
+              container.removeEventListener('scroll', handleScroll)
+              return
+            }
+            if (scrollTop + clientHeight >= scrollHeight - 50) {
+              markRead('pdf-endofpage')
+              container.removeEventListener('scroll', handleScroll)
+            }
+          }
+
+          container.addEventListener('scroll', handleScroll)
+          // Delay initial check to let content fully render
+          setTimeout(() => {
+            if (!cancelled) handleScroll()
+          }, 1500)
+          scrollCleanupRef.current = () => container.removeEventListener('scroll', handleScroll)
         }
 
-        container.addEventListener('scroll', handleScroll)
-        handleScroll()
-        scrollCleanupRef.current = () => container.removeEventListener('scroll', handleScroll)
+        attachScroll()
       } else {
         // Timer mode: mark as read after threshold seconds (non-text modes only)
         const threshold = settings.autoReadThresholdSeconds * 1000
@@ -102,5 +125,5 @@ export function useAutoTrack(
       scrollCleanupRef.current?.()
       scrollCleanupRef.current = null
     }
-  }, [sectionId, isRead, onMarkedRead, scrollContainerRef, textScrollRef, viewMode])
+  }, [sectionId, isRead, onMarkedRead, scrollContainerRef, textScrollRef, viewMode, pdfScrollRef])
 }

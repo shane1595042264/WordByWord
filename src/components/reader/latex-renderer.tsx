@@ -89,7 +89,6 @@ function renderKatex(latex: string, displayMode: boolean): string {
       displayMode,
       throwOnError: false,
       errorColor: '#ef4444',
-      trust: true,
     })
   } catch {
     return latex

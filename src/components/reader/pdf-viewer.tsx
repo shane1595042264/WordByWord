@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
+import { toast } from 'sonner'
 
 /** Describes a word's position on a PDF page (in CSS pixels relative to the page wrapper) */
 export interface PDFTextPosition {
@@ -162,8 +163,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
   // Track which pages have been rendered to avoid re-rendering
   const renderedPagesRef = useRef<Set<number>>(new Set())
-  // Track the pdf document instance for lazy rendering
+  // Track the pdf document instance for lazy rendering (scroll mode)
   const pdfDocRef = useRef<any>(null)
+  // Track the pdf document instance for flip mode (cached across page turns)
+  const flipDocRef = useRef<any>(null)
   // Track container width for consistent scaling
   const containerWidthRef = useRef(0)
 
@@ -172,6 +175,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   useEffect(() => {
     if (readingMode !== 'scroll') return
     let cancelled = false
+    let observerRef: IntersectionObserver | null = null
 
     const setup = async () => {
       try {
@@ -246,6 +250,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           },
           { root: container, rootMargin: '200% 0px 200% 0px', threshold: 0 }
         )
+        observerRef = observer
 
         // Observe all page wrappers
         for (const [, wrapper] of pageWrappersRef.current) {
@@ -258,12 +263,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           if (cancelled) break
           await renderPage(startPage + i)
         }
-
-        return () => {
-          observer.disconnect()
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to load PDF', { duration: 5000 })
+          console.error('PDF scroll setup error:', err)
         }
-      } catch {
-        if (!cancelled) setError('Failed to render PDF')
       }
     }
 
@@ -305,19 +310,44 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           wrapper.style.backgroundColor = ''
           wrapper.appendChild(canvas)
         }
-      } catch {
+      } catch (err) {
         // Mark as not rendered so it can be retried
         renderedPagesRef.current.delete(pageNum)
+        toast.error(`Failed to render page ${pageNum}`, { duration: 5000 })
+        console.error(`PDF page ${pageNum} render error:`, err)
       }
     }
 
     setup()
     return () => {
       cancelled = true
-      // Don't destroy the doc here — the IntersectionObserver callbacks may still fire
-      // The doc will be replaced on next effect run
+      if (observerRef) {
+        observerRef.disconnect()
+        observerRef = null
+      }
+      if (pdfDocRef.current) {
+        pdfDocRef.current.destroy()
+        pdfDocRef.current = null
+      }
     }
   }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions])
+
+  // Scroll mode: scroll to controlled page when it changes (Next/Prev button clicks)
+  const prevControlledPageRef = useRef(currentFlipPage)
+  useEffect(() => {
+    if (readingMode !== 'scroll') return
+    if (currentFlipPage === prevControlledPageRef.current) return
+    prevControlledPageRef.current = currentFlipPage
+
+    // Wait briefly for page wrappers to exist after setup
+    const timer = setTimeout(() => {
+      const wrapper = pageWrappersRef.current.get(currentFlipPage)
+      const container = containerRef.current
+      if (!wrapper || !container) return
+      container.scrollTo({ top: wrapper.offsetTop, behavior: 'smooth' })
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [currentFlipPage, readingMode])
 
   // Scroll mode: track scroll progress
   useEffect(() => {
@@ -329,17 +359,27 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       const { scrollTop, scrollHeight, clientHeight } = container
       const percent = scrollHeight <= clientHeight ? 100 : Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)
 
-      // Figure out which page is in view
+      // Pick the page occupying the most vertical area in the viewport.
+      // "First intersecting" misreports near boundaries (a 1px sliver of
+      // the previous page at the top would win).
       const canvases = container.querySelectorAll('canvas[data-page-num]')
+      const containerRect = container.getBoundingClientRect()
       let visiblePage = startPage
+      let maxVisibleHeight = -1
       for (const canvas of canvases) {
         const rect = canvas.getBoundingClientRect()
-        const containerRect = container.getBoundingClientRect()
-        if (rect.top < containerRect.bottom && rect.bottom > containerRect.top) {
+        const visibleTop = Math.max(rect.top, containerRect.top)
+        const visibleBottom = Math.min(rect.bottom, containerRect.bottom)
+        const visibleHeight = visibleBottom - visibleTop
+        if (visibleHeight > maxVisibleHeight) {
+          maxVisibleHeight = visibleHeight
           visiblePage = Number(canvas.getAttribute('data-page-num'))
-          break
         }
       }
+      // Mark this page as "scroll-originated" so the scroll-to-page effect
+      // below doesn't snap the scroll back to the top of this page when the
+      // parent's currentPage state updates in response to onPageProgress.
+      prevControlledPageRef.current = visiblePage
       onPageProgress?.(visiblePage, totalPages, percent)
     }
 
@@ -352,16 +392,56 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     }
   }, [readingMode, startPage, totalPages, onPageProgress])
 
-  // Flip mode: render single page, scale to fill
+  // Flip mode: load and cache the PDF document when pdfBlob changes
+  useEffect(() => {
+    if (readingMode !== 'flip') return
+    let cancelled = false
+
+    const loadDoc = async () => {
+      try {
+        const pdfjs = await import('pdfjs-dist')
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+
+        const arrayBuffer = await pdfBlob.arrayBuffer()
+        const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+        if (cancelled) { doc.destroy(); return }
+        flipDocRef.current = doc
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to load PDF', { duration: 5000 })
+          console.error('PDF flip load error:', err)
+        }
+      }
+    }
+    loadDoc()
+    return () => {
+      cancelled = true
+      if (flipDocRef.current) {
+        flipDocRef.current.destroy()
+        flipDocRef.current = null
+      }
+    }
+  }, [pdfBlob, readingMode])
+
+  // Flip mode: render current page from cached document
   useEffect(() => {
     if (readingMode !== 'flip') return
     let cancelled = false
 
     const render = async () => {
-      try {
-        const pdfjs = await import('pdfjs-dist')
-        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+      // Wait for the document to be loaded
+      let doc = flipDocRef.current
+      if (!doc) {
+        // Document may still be loading — retry briefly
+        for (let i = 0; i < 20 && !flipDocRef.current; i++) {
+          await new Promise(r => setTimeout(r, 50))
+        }
+        doc = flipDocRef.current
+        if (!doc || cancelled) return
+      }
 
+      try {
         const container = containerRef.current
         if (!container || cancelled) return
         container.innerHTML = ''
@@ -370,8 +450,6 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
         const containerWidth = container.clientWidth
 
-        const arrayBuffer = await pdfBlob.arrayBuffer()
-        const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
         const page = await doc.getPage(currentFlipPage)
         const unscaledViewport = page.getViewport({ scale: 1 })
         const scale = containerWidth / unscaledViewport.width
@@ -403,9 +481,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           container.appendChild(pageWrapper)
           pageWrappersRef.current.set(currentFlipPage, pageWrapper)
         }
-        doc.destroy()
-      } catch {
-        if (!cancelled) setError('Failed to render PDF')
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to render PDF')
+          toast.error('Failed to render PDF page', { duration: 5000 })
+          console.error('PDF flip render error:', err)
+        }
       }
     }
     render()
@@ -520,9 +601,25 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
 
     wrapper.appendChild(overlay)
 
-    // Scroll the highlight into view within the PDF scroll container
+    // Scroll the highlight into view within the PDF scroll container only.
+    // scrollIntoView() walks all scrollable ancestors (including window),
+    // which jumps the entire app layout in side-by-side reader. Scroll
+    // containerRef directly instead.
     requestAnimationFrame(() => {
-      overlay.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const container = containerRef.current
+      if (!container) return
+      const overlayTop = wrapper.offsetTop + highlightRect.y * displayScale
+      const overlayHeight = highlightRect.height * displayScale
+      const visibleTop = container.scrollTop
+      const visibleBottom = visibleTop + container.clientHeight
+      // Skip if already comfortably in view (avoid pointless animation)
+      const margin = 24
+      if (overlayTop >= visibleTop + margin && overlayTop + overlayHeight <= visibleBottom - margin) {
+        return
+      }
+      const target = overlayTop + overlayHeight / 2 - container.clientHeight / 2
+      const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
+      container.scrollTo({ top: Math.max(0, Math.min(target, maxScroll)), behavior: 'smooth' })
     })
 
     return () => {
@@ -542,6 +639,9 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   useEffect(() => {
     if (readingMode !== 'flip') return
     const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
         e.preventDefault()
         goNext()

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,27 +12,34 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import { AdminSettings } from '@/components/settings/admin-settings'
 import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
+import { ProfileSettings } from '@/components/settings/profile-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
 
-export default function SettingsPage() {
+function SettingsContent() {
   const { data: session } = useSession()
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const initialTab = tabParam && ['profile', 'general', 'keymap', 'cloud', 'admin'].includes(tabParam)
+    ? tabParam
+    : 'profile'
   const isAdmin = (session?.user as any)?.role === 'admin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [saved, setSaved] = useState(false)
-  const [loaded, setLoaded] = useState(false)
 
-  // Dynamic import to avoid SSR issues
-  if (!loaded) {
+  useEffect(() => {
+    let cancelled = false
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
+      if (cancelled) return
       const svc = new SettingsService()
       setSettings(svc.getSettings())
-      setLoaded(true)
     })
+    return () => { cancelled = true }
+  }, [])
+
+  if (!settings) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
   }
-
-  if (!settings) return null
 
   const handleSave = async () => {
     const { SettingsService } = await import('@/lib/services/settings-service')
@@ -48,13 +56,18 @@ export default function SettingsPage() {
       </Link>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      <Tabs defaultValue="general">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
           <TabsTrigger value="cloud">Cloud Sync</TabsTrigger>
           {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
         </TabsList>
+
+        <TabsContent value="profile">
+          <ProfileSettings />
+        </TabsContent>
 
         <TabsContent value="general">
           <div className="space-y-6 mt-4">
@@ -216,6 +229,7 @@ export default function SettingsPage() {
                 import('@/lib/services/settings-service').then(({ SettingsService }) => {
                   const svc = new SettingsService()
                   svc.updateSettings(updated)
+                  window.dispatchEvent(new Event('keymap-changed'))
                 })
               }}
             />
@@ -231,5 +245,13 @@ export default function SettingsPage() {
         )}
       </Tabs>
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-20 text-muted-foreground">Loading...</div>}>
+      <SettingsContent />
+    </Suspense>
   )
 }

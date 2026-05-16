@@ -42,3 +42,9 @@ export type { RawTextItem, RawPageData, RawImageRegion, NibParserConfig } from '
 // Text parser (for flat AI/OCR-extracted text)
 export { NibTextParser } from './text-parser'
 export type { NibTextParserConfig } from './text-parser'
+
+// LaTeX tokenizer
+export { tokenizeLatex } from './latex-tokenizer'
+
+// Markdown parser (Mathpix Markdown → NibDocument with LaTeX tokenization)
+export { NibMarkdownParser } from './markdown-parser'

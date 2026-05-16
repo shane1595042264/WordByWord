@@ -43,3 +43,7 @@ next-env.d.ts
 # auth database
 auth.db
 .env*.local
+
+# stray Playwright E2E artifacts (from /tmp path on Windows Bash)
+UsersdouvleAppDataLocalTemp*
+

@@ -87,7 +87,14 @@ export function useVimMode({
       return
     }
 
-    if (e.ctrlKey || e.metaKey || e.altKey) return
+    // Allow Ctrl+E and Ctrl+Y to pass through for Vim scrolling, but block other Ctrl/Meta/Alt combinations
+    // The actual scrolling action will be handled by the rulebook lookup.
+    // preventDefault immediately to stop browser defaults (e.g. Chrome address bar focus on Ctrl+E).
+    if (e.ctrlKey && (e.key === 'e' || e.key === 'y')) {
+      e.preventDefault()
+    } else if (e.ctrlKey || e.metaKey || e.altKey) {
+      return
+    }
 
     const key = e.key
 
@@ -99,7 +106,7 @@ export function useVimMode({
     }
 
     // gg detection (double-tap g) — works in all modes
-    if (key === 'g' && !e.shiftKey) {
+    if (key === 'g' && !e.shiftKey && !e.ctrlKey) {
       const now = Date.now()
       if (now - lastGTime.current < GG_TIMEOUT) {
         e.preventDefault()
@@ -121,7 +128,7 @@ export function useVimMode({
     }
 
     // Find matching rule
-    const rule = findRule(mode, key, e.shiftKey, rulebook)
+    const rule = findRule(mode, key, e.shiftKey, e.ctrlKey, rulebook)
     if (!rule) {
       setCountBuffer('')
       return
@@ -172,6 +179,25 @@ export function useVimMode({
         if (onSelectSentenceVertical) {
           const dir = rule.action.direction ?? 1
           for (let i = 0; i < count; i++) onSelectSentenceVertical(dir)
+        }
+        break
+
+      case 'select-word-big':
+        if (onSelectWord) {
+          // Move forward skipping latex words until we land on a non-latex word
+          // For now, just move word by word — the latex-aware skipping will be
+          // implemented when we have access to the word list's isLatex flags
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count; i++) onSelectWord(dir)
+        }
+        break
+
+      case 'select-paragraph':
+        // Jump to first sentence of next paragraph
+        // For now, move by multiple sentences as approximation
+        if (onSelectSentence) {
+          const dir = rule.action.direction ?? 1
+          for (let i = 0; i < count * 3; i++) onSelectSentence(dir)
         }
         break
 

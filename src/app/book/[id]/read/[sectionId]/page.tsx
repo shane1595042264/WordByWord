@@ -1,18 +1,20 @@
 'use client'
 
 import { use, useCallback, useMemo, useRef, useState, useEffect, type MutableRefObject } from 'react'
-import { useRouter } from 'next/navigation'
+import { notFound, useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
 import { PDFViewer } from '@/components/reader/pdf-viewer'
 import { TextViewer } from '@/components/reader/text-viewer'
-import { NibTextViewer, type NibTextViewerHandle, type CursorLineInfo } from '@/components/reader/nib-text-viewer'
+import { NibTextViewer, NibTextViewerSkeleton, type NibTextViewerHandle, type CursorLineInfo } from '@/components/reader/nib-text-viewer'
 import { SideBySideViewer } from '@/components/reader/side-by-side-viewer'
 import { TocViewer } from '@/components/reader/toc-viewer'
 import { SectionSidebar } from '@/components/reader/section-sidebar'
 import { ReaderToolbar } from '@/components/reader/reader-toolbar'
 import { VimStatusBar } from '@/components/reader/vim-status-bar'
+import { BookCompleteCelebration } from '@/components/reader/book-complete-celebration'
 import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
 import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
 import { NibService } from '@/lib/services/nib-service'
@@ -43,10 +45,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   const contentRef = useRef<HTMLDivElement>(null)
   const textScrollRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>
+  const pdfScrollRef = useRef<HTMLDivElement | null>(null) as MutableRefObject<HTMLDivElement | null>
   const [sectionProgress, setSectionProgress] = useState(0)
   const [showIndicators, setShowIndicators] = useState(false)
   const [syncScroll, setSyncScroll] = useState(true)
   const [showLineNumbers, setShowLineNumbers] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
@@ -57,6 +61,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [sideBySideTextProgress, setSideBySideTextProgress] = useState(0)
   /** Flat word index of the currently selected word (for position restore) */
   const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null)
+  const [showCelebration, setShowCelebration] = useState(false)
 
   // Hoisted callback for cursor line changes (avoids useCallback in JSX)
   const handleCursorLineChange = useCallback((info: CursorLineInfo) => {
@@ -69,12 +74,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (idx !== undefined) setSelectedWordIndex(idx)
   }, [])
 
+  const [globalKeyOverrides, setGlobalKeyOverrides] = useState<Record<string, string>>({})
+
   // Load user keymap overrides on mount
   useEffect(() => {
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
       const svc = new SettingsService()
       const overrides = svc.getSettings().keymapOverrides ?? {}
       setEffectiveRulebook(getEffectiveRulebook(overrides))
+      setGlobalKeyOverrides(overrides)
     })
   }, [])
 
@@ -134,18 +142,98 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
 
+  // ── PDF mode: Vim-style scroll keybindings (Ctrl+E, Ctrl+Y, d, u, gg, G) ──
+  const lastPdfGTime = useRef(0)
+  useEffect(() => {
+    if (viewMode !== 'pdf') return
+    const LINE_HEIGHT = 24
+    const GG_TIMEOUT = 500
+
+    const handlePdfKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+
+      const el = pdfScrollRef.current
+      if (!el) return
+
+      // Ctrl+E — scroll down one line
+      if (e.ctrlKey && e.key === 'e') {
+        e.preventDefault()
+        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+      // Ctrl+Y — scroll up one line
+      if (e.ctrlKey && e.key === 'y') {
+        e.preventDefault()
+        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+
+      // Block other Ctrl/Meta/Alt combos
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      // j — scroll down one line
+      if (e.key === 'j') {
+        e.preventDefault()
+        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+      // k — scroll up one line
+      if (e.key === 'k') {
+        e.preventDefault()
+        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
+        return
+      }
+
+      // d — half-page down
+      if (e.key === 'd') {
+        e.preventDefault()
+        el.scrollBy({ top: el.clientHeight * 0.5, behavior: 'smooth' })
+        return
+      }
+      // u — half-page up
+      if (e.key === 'u') {
+        e.preventDefault()
+        el.scrollBy({ top: -el.clientHeight * 0.5, behavior: 'smooth' })
+        return
+      }
+      // G — scroll to bottom
+      if (e.key === 'G' && e.shiftKey) {
+        e.preventDefault()
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+        return
+      }
+      // gg — scroll to top (double-tap g)
+      if (e.key === 'g' && !e.shiftKey) {
+        const now = Date.now()
+        if (now - lastPdfGTime.current < GG_TIMEOUT) {
+          e.preventDefault()
+          el.scrollTo({ top: 0, behavior: 'smooth' })
+          lastPdfGTime.current = 0
+          return
+        }
+        lastPdfGTime.current = now
+        e.preventDefault()
+        return
+      }
+    }
+    window.addEventListener('keydown', handlePdfKey)
+    return () => window.removeEventListener('keydown', handlePdfKey)
+  }, [viewMode])
+
   // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
-  // On first load, restore to saved word index if available from Continue Reading params
+  // On first load, restore to saved word index if available from Continue Reading params,
+  // or fall back to section-level saved scroll progress (for direct section navigation)
   useEffect(() => {
     if (viewMode === 'text' || viewMode === 'side-by-side') {
       const t = setTimeout(() => {
         const restore = restoreRef.current
         if (restore && !restore.applied && restore.wordIndex != null) {
-          // Restore to exact word position
+          // Restore to exact word position (Continue Reading)
           nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
           restore.applied = true
         } else if (restore && !restore.applied && restore.scrollProgress != null) {
-          // Restore scroll position (no word selected)
+          // Restore scroll position from Continue Reading params
           const el = textScrollRef.current
           if (el) {
             const maxScroll = el.scrollHeight - el.clientHeight
@@ -153,13 +241,23 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           }
           nibTextViewerRef.current?.selectWordByDelta(0)
           restore.applied = true
+        } else if (section?.scrollProgress != null && section.scrollProgress > 0) {
+          // Restore from section-level saved position (returning to section directly)
+          const el = textScrollRef.current
+          if (el) {
+            const maxScroll = el.scrollHeight - el.clientHeight
+            if (maxScroll > 0) {
+              el.scrollTop = (section.scrollProgress / 100) * maxScroll
+            }
+          }
+          nibTextViewerRef.current?.selectWordByDelta(0)
         } else {
           nibTextViewerRef.current?.selectWordByDelta(0)
         }
       }, 300) // Slightly longer delay for content to render
       return () => clearTimeout(t)
     }
-  }, [viewMode])
+  }, [viewMode, section?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute effective progress: cursor line / last text line for text modes,
   // text-side scroll for side-by-side, PDF scroll for PDF mode
@@ -223,49 +321,46 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Reset page/progress when section changes, resume from lastPageViewed if available
   useEffect(() => {
     if (section) {
-      setCurrentPage(section.lastPageViewed ?? section.startPage)
+      // Clamp lastPageViewed to valid bounds to prevent stale/corrupt values
+      // from leaving currentPage beyond navEndPage (which disables the Next button)
+      const saved = section.lastPageViewed
+      const validPage = saved != null
+        ? Math.max(section.startPage, Math.min(saved, section.endPage))
+        : section.startPage
+      setCurrentPage(validPage)
       setSectionProgress(section.scrollProgress ?? 0)
     }
   }, [section?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // In text mode, all section text is shown at once — no page-level navigation.
-  // Prev/Next should jump directly to prev/next section.
-  const isTextMode = viewMode === 'text'
-  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
-  const canGoNext = isTextMode ? !!nextSection : (currentPage < endPage || !!nextSection)
+  // Restore PDF scroll position when returning to a section directly
+  // (not via Continue Reading which uses URL params handled in text mode)
+  useEffect(() => {
+    if (viewMode !== 'pdf' || !section) return
 
-  const goToPrevPage = useCallback(() => {
-    if (isTextMode) {
-      if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
-      return
-    }
-    if (currentPage > startPage) {
-      setCurrentPage(p => p - 1)
-    } else if (prevSection) {
-      router.push(`/book/${bookId}/read/${prevSection.id}`)
-    }
-  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
+    const restore = restoreRef.current
+    // Skip if Continue Reading scroll param exists (handled via currentPage already)
+    if (restore && !restore.applied && restore.scrollProgress != null) return
 
-  const goToNextPage = useCallback(() => {
-    if (isTextMode) {
-      if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
-      return
-    }
-    if (currentPage < endPage) {
-      setCurrentPage(p => p + 1)
-    } else if (nextSection) {
-      router.push(`/book/${bookId}/read/${nextSection.id}`)
-    }
-  }, [isTextMode, currentPage, endPage, nextSection, bookId, router])
+    const savedProgress = section.scrollProgress
+    if (savedProgress == null || savedProgress <= 0) return
 
-  const handlePageChange = useCallback((page: number) => {
-    setCurrentPage(page)
-  }, [])
+    // Wait for PDF pages to render before scrolling
+    const timer = setTimeout(() => {
+      const el = pdfScrollRef.current
+      if (el && el.scrollHeight > el.clientHeight) {
+        const maxScroll = el.scrollHeight - el.clientHeight
+        el.scrollTop = (savedProgress / 100) * maxScroll
+      }
+    }, 800)
+
+    return () => clearTimeout(timer)
+  }, [section?.id, viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Parse section text through .nib pipeline
   // Prefer rich PDF parsing (with font/bold info) when PDF blob is available.
   // Falls back to flat text parsing for scanned/AI-extracted text.
   const [nibDocument, setNibDocument] = useState<NibDocument | null>(null)
+  const [parseError, setParseError] = useState(false)
 
   // Effective end page: always include at least the next section's start page
   // so the PDF shows all content that the nib parser merged (cross-page paragraphs).
@@ -284,14 +379,71 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return ep
   }, [endPage, startPage, nibDocument, nextSection?.startPage])
   const totalSectionPages = effectiveEndPage - startPage + 1
+  // In PDF-only mode, don't count overlap pages — each section shows unique pages only
+  const pdfOnlyTotalPages = endPage - startPage + 1
+
+  // In text mode, all section text is shown at once — no page-level navigation.
+  // Prev/Next should jump directly to prev/next section.
+  const isTextMode = viewMode === 'text'
+  // In side-by-side mode the PDF renders up to effectiveEndPage, so navigation
+  // must match — otherwise the toolbar shows more pages than the user can reach.
+  const navEndPage = viewMode === 'side-by-side' ? effectiveEndPage : endPage
+  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
+  const canGoNext = isTextMode ? !!nextSection : (currentPage < navEndPage || !!nextSection)
+
+  const goToPrevPage = useCallback(() => {
+    if (isTextMode) {
+      if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
+      return
+    }
+    if (currentPage > startPage) {
+      setCurrentPage(p => p - 1)
+    } else if (prevSection) {
+      router.push(`/book/${bookId}/read/${prevSection.id}`)
+    }
+  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
+
+  const goToNextPage = useCallback(() => {
+    if (isTextMode) {
+      if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
+      return
+    }
+    if (currentPage < navEndPage) {
+      setCurrentPage(p => p + 1)
+    } else if (nextSection) {
+      router.push(`/book/${bookId}/read/${nextSection.id}`)
+    }
+  }, [isTextMode, currentPage, navEndPage, nextSection, bookId, router])
+
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page)
+  }, [])
+
+  // Use richContent (Mathpix Markdown) as fallback when extractedText is null
+  const sectionText = section?.extractedText || section?.richContent || null
 
   useEffect(() => {
-    if (!section?.extractedText || !book) { setNibDocument(null); return }
+    if (!book || !section) { setNibDocument(null); setParseError(false); return }
+    if (!sectionText && !section.richContent) { setNibDocument(null); setParseError(false); return }
+    setParseError(false)
 
     let cancelled = false
     const isIntroSection = /introduction$/i.test(section.title.replace(/\s*—\s*/, ' ').trim())
 
-    // Try rich PDF parsing first (preserves bold/italic font info)
+    // Priority 1: richContent (Mathpix Markdown) — synchronous, no flash
+    if (section.richContent) {
+      ;(async () => {
+        const { NibMarkdownParser } = await import('@/lib/nib/markdown-parser')
+        const mdParser = new NibMarkdownParser()
+        const docData = mdParser.parse(section.richContent!, book.title, book.author)
+        const { NibDocument: NibDoc } = await import('@/lib/nib')
+        const doc = NibDoc.fromData(docData)
+        if (!cancelled) setNibDocument(doc)
+      })()
+      return () => { cancelled = true }
+    }
+
+    // Priority 2: rich PDF parsing (preserves bold/italic font info)
     if (book.pdfBlob) {
       const nibService = new NibService()
       nibService.parsePages(
@@ -312,81 +464,114 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             const fallbackService = new NibService()
             if (isIntroSection) {
               setNibDocument(fallbackService.parseExtractedTextIntroOnly(
-                section.extractedText!,
+                sectionText!,
                 book.title,
                 book.author,
                 section.startPage,
               ))
             } else {
               setNibDocument(fallbackService.parseExtractedTextBodyOnly(
-                section.extractedText!,
+                sectionText!,
                 book.title,
                 book.author,
                 section.startPage,
                 section.title,
               ))
             }
-          } catch { setNibDocument(null) }
+          } catch (err) {
+            console.error('Nib text fallback parsing failed:', err)
+            setNibDocument(null)
+            setParseError(true)
+            toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+          }
         }
       })
-    } else {
-      // Text-based parsing (when no PDF blob)
+    } else if (sectionText) {
+      // Priority 3: Text-based parsing (when no PDF blob)
       try {
         const nibService = new NibService()
         if (isIntroSection) {
           setNibDocument(nibService.parseExtractedTextIntroOnly(
-            section.extractedText,
+            sectionText,
             book.title,
             book.author,
             section.startPage,
           ))
         } else {
           setNibDocument(nibService.parseExtractedTextBodyOnly(
-            section.extractedText,
+            sectionText,
             book.title,
             book.author,
             section.startPage,
             section.title,
           ))
         }
-      } catch { setNibDocument(null) }
+      } catch (err) {
+        console.error('Nib text parsing failed:', err)
+        setNibDocument(null)
+        setParseError(true)
+        toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+      }
+    } else {
+      setNibDocument(null)
     }
 
     return () => { cancelled = true }
-  }, [section?.extractedText, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sectionText, section?.richContent, section?.title, book, section?.startPage, section?.endPage, nextSection?.title, nextSection?.startPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleMarkedRead = useCallback(() => { refreshReadStatus() }, [refreshReadStatus])
+  const handleMarkedRead = useCallback((bookJustCompleted?: boolean) => {
+    refreshReadStatus()
+    if (bookJustCompleted) setShowCelebration(true)
+  }, [refreshReadStatus])
 
   // Only track after loading completes to ensure scroll containers are mounted
-  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode)
+  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef)
 
-  const handlePageProgress = useCallback((currentPage: number, totalPages: number, scrollPercent: number) => {
+  const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
+    setCurrentPage(page)
     import('@/lib/db/database').then(({ db }) => {
+      const now = Date.now()
       db.sections.update(sectionId, {
-        lastPageViewed: currentPage,
+        lastPageViewed: page,
         scrollProgress: scrollPercent,
+        updatedAt: now,
+      }).catch((err) => {
+        console.error('Failed to save page progress:', err)
+        if (!saveErrorShownRef.current) {
+          saveErrorShownRef.current = true
+          toast.warning('Could not save reading position. Your progress may not be preserved.')
+        }
       })
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [sectionId])
 
-  // ── Text mode scroll tracking ──
+  // ── Text mode scroll tracking (debounced DB writes) ──
+  const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveErrorShownRef = useRef(false)
   const handleTextScroll = useCallback(() => {
     const el = textScrollRef.current
     if (!el) return
     const { scrollTop, scrollHeight, clientHeight } = el
     const maxScroll = scrollHeight - clientHeight
-    if (maxScroll <= 0) {
-      // Content fits without scrolling — 100% immediately
-      setSectionProgress(100)
-      return
-    }
-    const percent = Math.min(100, Math.round((scrollTop / maxScroll) * 100))
+    const percent = maxScroll <= 0 ? 100 : Math.min(100, Math.round((scrollTop / maxScroll) * 100))
     setSectionProgress(percent)
-    // Persist scroll progress
-    import('@/lib/db/database').then(({ db }) => {
-      db.sections.update(sectionId, { scrollProgress: percent })
-    })
+    // Debounce the DB write to avoid hundreds of writes per second
+    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
+    scrollDbTimerRef.current = setTimeout(() => {
+      import('@/lib/db/database').then(({ db }) => {
+        const now = Date.now()
+        db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now }).catch((err) => {
+          console.error('Failed to save scroll progress:', err)
+          if (!saveErrorShownRef.current) {
+            saveErrorShownRef.current = true
+            toast.warning('Could not save reading position. Your progress may not be preserved.')
+          }
+        })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
+      })
+    }, 500)
   }, [sectionId])
 
   // Track a flag so the effect can re-trigger once loading completes and the ref mounts
@@ -402,51 +587,68 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (viewMode !== 'text') return
     if (!textScrollRef.current) return
-    // Delay to let content render fully
-    const timer = setTimeout(() => handleTextScroll(), 300)
+    // Delay longer than scroll restore (300ms) to avoid overwriting restored position
+    const timer = setTimeout(() => handleTextScroll(), 600)
     return () => clearTimeout(timer)
   }, [viewMode, textScrollReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keyboard shortcuts ──
-  useShortcut('toggle-indicators', 'Toggle Element Labels', 'Ctrl+i', useCallback(() => {
+  useShortcut('toggle-indicators', 'Toggle Element Labels', globalKeyOverrides['toggle-indicators'] || 'Ctrl+i', useCallback(() => {
     setShowIndicators(prev => !prev)
   }, []))
 
-  useShortcut('view-pdf', 'PDF View', 'Ctrl+1', useCallback(() => {
+  useShortcut('view-pdf', 'PDF View', globalKeyOverrides['view-pdf'] || 'Ctrl+1', useCallback(() => {
     setViewMode('pdf')
   }, [setViewMode]))
 
-  useShortcut('view-text', 'Text View', 'Ctrl+2', useCallback(() => {
+  useShortcut('view-text', 'Text View', globalKeyOverrides['view-text'] || 'Ctrl+2', useCallback(() => {
     setViewMode('text')
   }, [setViewMode]))
 
-  useShortcut('view-side-by-side', 'Side-by-Side View', 'Ctrl+3', useCallback(() => {
+  useShortcut('view-side-by-side', 'Side-by-Side View', globalKeyOverrides['view-side-by-side'] || 'Ctrl+3', useCallback(() => {
     setViewMode('side-by-side')
   }, [setViewMode]))
 
-  useShortcut('toggle-line-numbers', 'Toggle Line Numbers', 'Ctrl+Shift+l', useCallback(() => {
+  useShortcut('toggle-line-numbers', 'Toggle Line Numbers', globalKeyOverrides['toggle-line-numbers'] || 'Ctrl+Shift+l', useCallback(() => {
     setShowLineNumbers(prev => !prev)
   }, []))
 
-  useShortcut('prev-page', 'Previous Page', 'Ctrl+ArrowLeft', goToPrevPage)
-  useShortcut('next-page', 'Next Page', 'Ctrl+ArrowRight', goToNextPage)
+  useShortcut('toggle-sidebar', 'Toggle Sidebar', globalKeyOverrides['toggle-sidebar'] || 'Ctrl+[', useCallback(() => {
+    setSidebarCollapsed(prev => !prev)
+  }, []))
+
+  useShortcut('prev-page', 'Previous Page', globalKeyOverrides['prev-page'] || 'Ctrl+ArrowLeft', goToPrevPage)
+  useShortcut('next-page', 'Next Page', globalKeyOverrides['next-page'] || 'Ctrl+ArrowRight', goToNextPage)
 
   // Persist currentPage to DB
   useEffect(() => {
     if (!section) return
     import('@/lib/db/database').then(({ db }) => {
-      db.sections.update(sectionId, { lastPageViewed: currentPage })
+      const now = Date.now()
+      db.sections.update(sectionId, { lastPageViewed: currentPage, updatedAt: now }).catch((err) => {
+        console.error('Failed to save current page:', err)
+        if (!saveErrorShownRef.current) {
+          saveErrorShownRef.current = true
+          toast.warning('Could not save reading position. Your progress may not be preserved.')
+        }
+      })
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
     })
   }, [currentPage, sectionId, section])
 
-  if (loading || !book || !section) {
+  if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+  }
+
+  if (!book || !section) {
+    notFound()
   }
 
   return (
     <div className="flex flex-col h-screen">
       <ReaderToolbar
         bookId={bookId}
+        bookTitle={book?.title}
         sectionTitle={section.title}
         isRead={section.isRead}
         sectionId={sectionId}
@@ -454,14 +656,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         onViewModeChange={setViewMode}
         readingMode={readingMode}
         onReadingModeChange={setReadingMode}
-        onReadToggle={refreshReadStatus}
+        onReadToggle={handleMarkedRead}
         sectionProgress={effectiveProgress}
         showIndicators={showIndicators}
         onToggleIndicators={() => setShowIndicators(prev => !prev)}
         syncScroll={syncScroll}
         onSyncScrollChange={setSyncScroll}
         currentPage={currentPage}
-        totalSectionPages={totalSectionPages}
+        totalSectionPages={viewMode === 'pdf' ? pdfOnlyTotalPages : totalSectionPages}
         startPage={startPage}
         onPrevPage={goToPrevPage}
         onNextPage={goToNextPage}
@@ -469,27 +671,37 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         canGoNext={canGoNext}
         showLineNumbers={showLineNumbers}
         onLineNumbersToggle={() => setShowLineNumbers(prev => !prev)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
+        format={book?.format}
       />
       <div className="flex flex-1 overflow-hidden">
         <SectionSidebar
           bookId={bookId}
           sections={chapterSections}
           currentSectionId={sectionId}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
         />
         <div className="flex-1 overflow-hidden flex flex-col" ref={contentRef}>
-          {viewMode === 'pdf' && (
+          {/*
+            EPUB books have no pdfBlob, so PDF + Side-by-Side viewers would
+            crash. The toolbar hides those buttons, but shortcuts (Ctrl+1 etc.)
+            could still flip viewMode — fall through to Text view in that case.
+          */}
+          {viewMode === 'pdf' && book.pdfBlob && (
             <PDFViewer
               pdfBlob={book.pdfBlob}
               startPage={section.startPage}
-              endPage={effectiveEndPage}
+              endPage={endPage}
               readingMode={readingMode}
               currentPage={currentPage}
               onPageChange={handlePageChange}
               onPageProgress={handlePageProgress}
-              sectionEndPage={section.endPage}
+              scrollRef={pdfScrollRef}
             />
           )}
-          {viewMode === 'text' && (
+          {(viewMode === 'text' || !book.pdfBlob) && (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex-1 flex overflow-hidden">
                 <RelativeLineNumbers
@@ -500,10 +712,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   linePositions={linePositions}
                 />
               <div className="flex-1 overflow-auto" ref={textScrollCallbackRef} onScroll={handleTextScroll}>
-                {/^(table of )?contents$/i.test(section.title) && section.extractedText ? (
+                {/^(table of )?contents$/i.test(section.title) && sectionText ? (
                   <TocViewer
                     bookId={bookId}
-                    extractedText={section.extractedText}
+                    extractedText={sectionText}
                     sectionTitle={section.title}
                   />
                 ) : nibDocument ? (
@@ -517,22 +729,34 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     onCursorLineChange={handleCursorLineChange}
                     vimMode={vim.mode}
                   />
+                ) : parseError && !sectionText ? (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8 gap-4">
+                    <p className="text-center">Text extraction failed for this section. This may be a scanned or image-based PDF.</p>
+                    <button
+                      onClick={() => setViewMode('pdf')}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                    >
+                      Switch to PDF View
+                    </button>
+                  </div>
+                ) : !nibDocument && !parseError && (sectionText || section.richContent) ? (
+                  <NibTextViewerSkeleton />
                 ) : (
-                  <TextViewer text={section.extractedText} sectionTitle={section.title} />
+                  <TextViewer text={sectionText} sectionTitle={section.title} />
                 )}
               </div>
               </div>
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />
             </div>
           )}
-          {viewMode === 'side-by-side' && (
+          {viewMode === 'side-by-side' && book.pdfBlob && (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex-1 overflow-hidden">
                 <SideBySideViewer
                   pdfBlob={book.pdfBlob}
                   startPage={section.startPage}
                   endPage={effectiveEndPage}
-                  text={section.extractedText}
+                  text={sectionText}
                   nibDocument={nibDocument}
                   sectionTitle={section.title}
                   readingMode={readingMode}
@@ -554,6 +778,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           )}
         </div>
       </div>
+      {showCelebration && book && (
+        <BookCompleteCelebration
+          bookTitle={book.title}
+          onDismiss={() => setShowCelebration(false)}
+        />
+      )}
     </div>
   )
 }

@@ -5,11 +5,16 @@ import { useSession } from 'next-auth/react'
 import { syncService, type SyncConflict } from '@/lib/services/sync-service'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Toaster } from 'sonner'
+import { useSyncStatus } from '@/hooks/use-sync-status'
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { status } = useSession()
   const [conflict, setConflict] = useState<SyncConflict | null>(null)
   const [resolver, setResolver] = useState<((choice: 'cloud' | 'local' | 'auto') => void) | null>(null)
+
+  // Activate sync status toasts when authenticated
+  useSyncStatus({ showToasts: true })
 
   const handleConflict = useCallback((c: SyncConflict): Promise<'cloud' | 'local' | 'auto'> => {
     return new Promise((resolve) => {
@@ -33,6 +38,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
+      <Toaster position="bottom-right" richColors closeButton />
       <Dialog open={conflict !== null} onOpenChange={(open) => {
         if (!open && resolver) resolver('auto')
       }}>

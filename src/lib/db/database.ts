@@ -54,6 +54,22 @@ export class BitByBitDB extends Dexie {
         }),
       ])
     })
+    this.version(5).stores({
+      books: 'id, title, createdAt, lastReadAt, updatedAt, remoteId, jobId',
+      chapters: 'id, bookId, order, updatedAt',
+      sections: 'id, chapterId, bookId, order, isRead, updatedAt',
+      vocabulary: 'id, word, targetLanguage, bookTitle, createdAt, reviewCount, updatedAt, bookId',
+    })
+    this.version(6).stores({
+      books: 'id, title, createdAt, lastReadAt, updatedAt, remoteId, jobId, completedAt',
+      chapters: 'id, bookId, order, updatedAt',
+      sections: 'id, chapterId, bookId, order, isRead, updatedAt',
+      vocabulary: 'id, word, targetLanguage, bookTitle, createdAt, reviewCount, updatedAt, bookId',
+    }).upgrade(tx => {
+      return tx.table('books').toCollection().modify(book => {
+        if (book.completedAt === undefined) book.completedAt = null
+      })
+    })
   }
 }
 

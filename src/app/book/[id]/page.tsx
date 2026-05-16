@@ -1,12 +1,15 @@
 'use client'
 
-import { use, useState, useCallback } from 'react'
+import { use, useState, useCallback, useTransition } from 'react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useBookDetail } from '@/hooks/use-book-detail'
 import { ProgressDrilldown } from '@/components/dashboard/progress-drilldown'
 import { ProcessButton } from '@/components/dashboard/process-button'
+import type { Divider } from '@/components/editor/page-strip-editor'
 
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -15,6 +18,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const [editTitle, setEditTitle] = useState('')
   const [editAuthor, setEditAuthor] = useState('')
   const [saving, setSaving] = useState(false)
+  const [generatingCover, setGeneratingCover] = useState(false)
+  const [showChapterEditor, setShowChapterEditor] = useState(false)
 
   const startEditing = useCallback(() => {
     if (!book) return
@@ -30,15 +35,24 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const saveEdits = useCallback(async () => {
     if (!book) return
     setSaving(true)
-    const { BookRepository } = await import('@/lib/repositories')
-    const bookRepo = new BookRepository()
-    await bookRepo.updateDetails(book.id, {
-      title: editTitle.trim() || book.title,
-      author: editAuthor.trim(),
-    })
-    setEditing(false)
-    setSaving(false)
-    refresh()
+    try {
+      const { BookRepository } = await import('@/lib/repositories')
+      const bookRepo = new BookRepository()
+      const result = await bookRepo.updateDetails(book.id, {
+        title: editTitle.trim() || book.title,
+        author: editAuthor.trim(),
+      })
+      if (result.backendSyncFailed) {
+        toast.warning('Saved locally — cloud sync failed, will retry')
+      }
+    } catch (err) {
+      console.error('Failed to save book details:', err)
+      toast.error('Failed to save book details')
+    } finally {
+      setEditing(false)
+      setSaving(false)
+      refresh()
+    }
   }, [book, editTitle, editAuthor, refresh])
 
   if (loading) {
@@ -91,15 +105,75 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
         ← Back to Library
       </Link>
 
-      <div className="flex gap-6 mb-8">
-        <div className="w-32 h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0">
+      <div className="flex flex-col sm:flex-row gap-6 mb-8 items-center sm:items-start">
+        <div className="w-24 h-32 sm:w-32 sm:h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
           {book.coverImage ? (
             <img src={book.coverImage} alt={book.title} className="object-cover w-full h-full rounded-lg" />
           ) : (
-            <span className="text-5xl">📖</span>
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-5xl">📖</span>
+              <Button
+                size="xs"
+                variant="outline"
+                className="text-[10px] px-2 py-1"
+                disabled={generatingCover}
+                onClick={async () => {
+                  if (!book) return
+                  setGeneratingCover(true)
+                  let coverSet = false
+                  try {
+                    // Try 1: render page 1 from PDF blob
+                    if (book.pdfBlob) {
+                      const { PDFService } = await import('@/lib/services/pdf-service')
+                      const pdfSvc = new PDFService()
+                      const cover = await pdfSvc.renderPageToImage(book.pdfBlob, 1, 1.5)
+                      if (cover) {
+                        const { db } = await import('@/lib/db/database')
+                        await db.books.update(book.id, { coverImage: cover, updatedAt: Date.now() })
+                        // Auto-sync will push coverUrl to backend on next sync cycle
+                        const { syncService } = await import('@/lib/services/sync-service')
+                        syncService.markDirty()
+                        coverSet = true
+                      }
+                    }
+                    // Try 2: Google Books cover via backend (only if PDF path didn't produce a cover)
+                    if (!coverSet) {
+                      const tokenRes = await fetch('/api/auth/token')
+                      if (tokenRes.ok) {
+                        const { token } = await tokenRes.json()
+                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+                        const res = await fetch(`${apiUrl}/books/${book.remoteId}/summary`, {
+                          headers: { Authorization: `Bearer ${token}` },
+                        })
+                        if (res.ok) {
+                          const data = await res.json()
+                          if (data.catalog?.coverUrl) {
+                            const { db } = await import('@/lib/db/database')
+                            await db.books.update(book.id, { coverImage: data.catalog.coverUrl, updatedAt: Date.now() })
+                            coverSet = true
+                          }
+                        }
+                      }
+                    }
+                    if (coverSet) {
+                      refresh()
+                    } else {
+                      toast.info('No cover available — you can upload one manually')
+                    }
+                  } catch (err) {
+                    console.error('Failed to generate cover:', err)
+                    toast.error('Failed to generate cover')
+                  } finally {
+                    setGeneratingCover(false)
+                  }
+                }}
+              >
+                {generatingCover ? 'Generating...' : 'Generate Cover'}
+              </Button>
+            </div>
           )}
         </div>
-        <div className="flex flex-col gap-2 flex-1">
+        <div className="flex flex-col gap-2 flex-1 items-center sm:items-start text-center sm:text-left w-full">
           {editing ? (
             <>
               <input
@@ -135,6 +209,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 <button
                   onClick={startEditing}
                   className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  aria-label="Edit book details"
                   title="Edit book details"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
@@ -148,18 +223,102 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             <Badge variant="outline">{book.chapters.length} chapters</Badge>
             <Badge variant="outline">{book.allSections.length} sections</Badge>
           </div>
-          {continueSection && continueSectionUrl && (
-            <Link href={continueSectionUrl} className="mt-2">
-              <Button>Continue Reading</Button>
-            </Link>
-          )}
+          {continueSection && continueSectionUrl && (() => {
+            // Use last-accessed scroll progress if this is the last-accessed section,
+            // otherwise fall back to section's own scrollProgress
+            const sectionProgress = (lastAccessedSection && continueSection.id === lastAccessedSection.id)
+              ? (book.lastAccessedScrollProgress ?? continueSection.scrollProgress ?? 0)
+              : (continueSection.isRead ? 100 : (continueSection.scrollProgress ?? 0))
+            return (
+              <Link href={continueSectionUrl} className="mt-3 block w-full sm:max-w-xs">
+                <Button className="w-full flex flex-col items-start gap-1 h-auto py-2.5 px-4">
+                  <span className="text-sm font-medium">Continue Reading</span>
+                  <span className="text-xs opacity-80 truncate w-full text-left">{continueSection.title}</span>
+                  <div className="w-full bg-primary-foreground/30 rounded-full h-1.5 mt-0.5">
+                    <div
+                      className="bg-primary-foreground rounded-full h-1.5 transition-all"
+                      style={{ width: `${Math.min(100, Math.max(0, sectionProgress))}%` }}
+                    />
+                  </div>
+                </Button>
+              </Link>
+            )
+          })()}
           {book.processingStatus !== 'complete' && (
             <ProcessButton bookId={book.id} totalChapters={book.chapters.length} onComplete={refresh} />
           )}
         </div>
       </div>
 
-      <ProgressDrilldown book={book} />
+      <ProgressDrilldown book={book} onReorganize={book.totalPages > 0 && book.pdfBlob && book.remoteId ? () => setShowChapterEditor(true) : undefined} />
+
+      {/* Chapter reorganize dialog */}
+      <Dialog open={showChapterEditor} onOpenChange={setShowChapterEditor}>
+        <DialogContent className="max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Reorganize Chapters</DialogTitle>
+          </DialogHeader>
+          {showChapterEditor && book.pdfBlob && book.remoteId && (() => {
+            // Lazy import to avoid SSR issues with pdf.js
+            const PageStripEditor = require('@/components/editor/page-strip-editor').PageStripEditor
+            const existingDividers: Divider[] = book.chapters
+              .filter(ch => ch.startPage > 1)
+              .map(ch => ({ page: ch.startPage, title: ch.title }))
+
+            return (
+              <PageStripEditor
+                pdfBlob={book.pdfBlob}
+                startPage={1}
+                endPage={book.totalPages}
+                totalBookPages={book.totalPages}
+                bookRemoteId={book.remoteId!}
+                existingDividers={existingDividers}
+                level="chapter"
+                onSave={async (dividers: Divider[]) => {
+                  const { StructureService } = await import('@/lib/services/structure-service')
+                  const svc = new StructureService()
+                  const sorted = [...dividers].sort((a, b) => a.page - b.page)
+                  const chapters: Array<{ title: string; startPage: number; endPage: number }> = []
+                  let currentStart = 1
+                  for (const div of sorted) {
+                    chapters.push({
+                      title: chapters.length === 0 ? (book.chapters[0]?.title || 'Chapter 1') : chapters[chapters.length - 1]?.title || 'Chapter',
+                      startPage: currentStart,
+                      endPage: div.page - 1,
+                    })
+                    currentStart = div.page
+                  }
+                  // Fix titles: each divider names the chapter that STARTS at that page
+                  const finalChapters: Array<{ title: string; startPage: number; endPage: number }> = []
+                  let cs = 1
+                  for (let i = 0; i < sorted.length; i++) {
+                    finalChapters.push({
+                      title: i === 0 ? (book.chapters[0]?.title || 'Chapter 1') : sorted[i - 1].title,
+                      startPage: cs,
+                      endPage: sorted[i].page - 1,
+                    })
+                    cs = sorted[i].page
+                  }
+                  finalChapters.push({
+                    title: sorted.length > 0 ? sorted[sorted.length - 1].title : 'Chapter 1',
+                    startPage: cs,
+                    endPage: book.totalPages,
+                  })
+
+                  await svc.saveStructure(book.remoteId!, finalChapters)
+                  // Force sync and refresh
+                  const { syncService } = await import('@/lib/services/sync-service')
+                  syncService.markDirty()
+                  await syncService.sync()
+                  setShowChapterEditor(false)
+                  refresh()
+                }}
+                onClose={() => setShowChapterEditor(false)}
+              />
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

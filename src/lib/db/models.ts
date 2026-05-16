@@ -3,9 +3,12 @@ export interface Book {
   title: string
   author: string
   totalPages: number
-  pdfBlob: Blob
+  /** Source format of the book. Defaults to 'pdf' for existing rows. */
+  format?: 'pdf' | 'epub'
+  /** The raw source file. Required for PDFs (viewer needs it); optional for EPUBs. */
+  pdfBlob?: Blob
   coverImage: string | null
-  structureSource: 'native' | 'ai' | 'manual'
+  structureSource: 'native' | 'ai' | 'manual' | 'epub'
   processingStatus: 'pending' | 'processing' | 'complete' | 'error'
   createdAt: number
   lastReadAt: number | null
@@ -15,9 +18,11 @@ export interface Book {
   lastAccessedScrollProgress: number | null
   /** Flat word index of the selected word (word-level restore) */
   lastAccessedWordIndex: number | null
+  completedAt: number | null
   updatedAt: number
   remoteId?: string
   catalogId?: string
+  jobId?: string
 }
 
 export interface Chapter {
@@ -69,6 +74,7 @@ export interface Section {
   startPage: number
   endPage: number
   extractedText: string | null
+  richContent?: string | null  // Mathpix Markdown (tables, formulas, formatted text)
   isRead: boolean
   readAt: number | null
   lastPageViewed: number | null  // last page user was on within this section

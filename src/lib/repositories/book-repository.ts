@@ -28,6 +28,7 @@ export class BookRepository {
       lastAccessedSectionId: null,
       lastAccessedScrollProgress: null,
       lastAccessedWordIndex: null,
+      completedAt: null,
     }
     await db.books.add(book)
     syncService.markDirty()
@@ -64,6 +65,11 @@ export class BookRepository {
     syncService.markDirty()
   }
 
+  async markComplete(id: string): Promise<void> {
+    await db.books.update(id, { completedAt: Date.now(), updatedAt: Date.now() })
+    syncService.markDirty()
+  }
+
   async updateProcessingStatus(id: string, status: Book['processingStatus']): Promise<void> {
     await db.books.update(id, { processingStatus: status, updatedAt: Date.now() })
     syncService.markDirty()
@@ -73,7 +79,7 @@ export class BookRepository {
   async updateDetails(
     id: string,
     data: { title?: string; author?: string; coverImage?: string | null },
-  ): Promise<void> {
+  ): Promise<{ backendSyncFailed: boolean }> {
     // Update local Dexie DB immediately
     const update: Partial<Book> = { updatedAt: Date.now() }
     if (data.title !== undefined) update.title = data.title
@@ -82,10 +88,15 @@ export class BookRepository {
     await db.books.update(id, update)
     syncService.markDirty()
 
+    // Fetch remoteId after local update; skip backend push if book hasn't been
+    // synced to the catalog yet — markDirty above will let the next global sync pick it up.
+    const book = await db.books.get(id)
+    if (!book?.remoteId) return { backendSyncFailed: false }
+
     // Sync to backend
     try {
       const tokenRes = await fetch('/api/auth/token')
-      if (!tokenRes.ok) return
+      if (!tokenRes.ok) return { backendSyncFailed: true }
       const { token } = await tokenRes.json()
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
@@ -94,7 +105,7 @@ export class BookRepository {
       if (data.author !== undefined) backendData.author = data.author
       if (data.coverImage !== undefined) backendData.coverUrl = data.coverImage
 
-      await fetch(`${apiUrl}/books/${id}/metadata`, {
+      const res = await fetch(`${apiUrl}/books/${book.remoteId}/metadata`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -102,9 +113,15 @@ export class BookRepository {
         },
         body: JSON.stringify(backendData),
       })
+      if (!res.ok) {
+        console.warn(`Failed to sync book metadata to backend: ${res.status}`)
+        return { backendSyncFailed: true }
+      }
+      return { backendSyncFailed: false }
     } catch {
       // Backend sync failed — local update still succeeded (offline-first)
       console.warn('Failed to sync book metadata to backend')
+      return { backendSyncFailed: true }
     }
   }
 

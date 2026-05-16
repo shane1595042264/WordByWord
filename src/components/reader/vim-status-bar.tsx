@@ -29,7 +29,7 @@ export function VimStatusBar({ mode, countBuffer, enabled, flashMessage }: VimSt
   }
 
   const hints: Record<VimMode, string> = {
-    normal: 'h/l word · j/k line · d/u page · Enter translate · s sent · v visual',
+    normal: 'h/l word · j/k line · d/u half-page · Ctrl+E/Y scroll · Enter translate · s sent · v visual',
     sentence: 'h/l sent · j/k line · Enter translate · Esc normal',
     visual: 'h/l extend · j/k line · V line · G bottom · Esc normal',
   }

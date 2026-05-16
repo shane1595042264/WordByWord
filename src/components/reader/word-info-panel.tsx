@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, type CSSProperties } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { ShortcutButton } from '@/components/ui/shortcut-button'
 import type { NibWord } from '@/lib/nib'
 import type { TranslationResult } from '@/lib/services/translation-service'
 import type { TargetLanguage } from '@/lib/services/settings-service'
+import { toast } from 'sonner'
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -135,61 +137,91 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
   // Check if already in vocab
   useEffect(() => {
+    let cancelled = false
     setCheckingVocab(true)
     import('@/lib/services/vocab-service').then(({ VocabService }) => {
+      if (cancelled) return
       const svc = new VocabService()
       svc.exists(word.text, word.sentence.text).then(exists => {
-        setAddedToVocab(exists)
-        setCheckingVocab(false)
+        if (!cancelled) {
+          setAddedToVocab(exists)
+          setCheckingVocab(false)
+        }
       })
     })
+    return () => { cancelled = true }
   }, [word])
 
-  // Auto-translate when word changes (and we have an API key)
-  useEffect(() => {
-    if (!apiKey) {
-      setTranslation(null)
-      setTranslating(false)
-      return
-    }
+  // Detect if this is a block element (table, code, figure) that should use explanation mode
+  const isBlockContent = !!(word.latexSource && (word.text.startsWith('[') || word.imageUrl))
+  const isImageContent = !!word.imageUrl
 
+  // Auto-translate when word changes. Translation now goes through the
+  // backend proxy — no client-side API key required. Image explanation
+  // (Claude Vision) still needs the user's key though, because the backend
+  // doesn't have a URL-based vision endpoint yet.
+  useEffect(() => {
     let cancelled = false
-    setTranslating(true)
     setTranslation(null)
     setTranslationError(null)
     setExplanation(null)
     setShowExplanation(false)
 
-    import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
-      svc.translateWord(word.text, word.sentence.text, targetLang)
-        .then(result => {
-          if (!cancelled) {
-            setTranslation(result)
-            setTranslating(false)
-          }
-        })
-        .catch(err => {
-          if (!cancelled) {
-            setTranslationError(err.message || 'Translation failed')
-            setTranslating(false)
-          }
-        })
-    })
+    if (isBlockContent) {
+      // Block content (table/code/figure) → skip translation, auto-explain
+      setTranslating(false)
+      setShowExplanation(true)
+      setExplaining(true)
 
-    // Also lazy-load the explanation in the background
-    import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
-      // We need to wait for translation to complete before explaining
-      // This is handled separately when user clicks "See explanation"
-    })
+      import('@/lib/services/translation-service').then(async ({ TranslationService }) => {
+        const svc = new TranslationService(apiKey)
+        try {
+          let result: string
+          if (isImageContent && word.imageUrl) {
+            // Vision — still client-side; requires user's Anthropic key
+            result = await svc.explainImage(word.imageUrl, word.sentence.text)
+          } else {
+            // Backend-proxied content explanation (table/code)
+            result = await svc.explainContent(word.latexSource!, word.sentence.text)
+          }
+          if (!cancelled) {
+            setExplanation(result)
+            setExplaining(false)
+          }
+        } catch (err: any) {
+          if (!cancelled) {
+            setExplanation(`Explanation failed: ${err.message}`)
+            setExplaining(false)
+          }
+        }
+      })
+    } else {
+      // Regular word → backend-proxied translation
+      setTranslating(true)
+      import('@/lib/services/translation-service').then(({ TranslationService }) => {
+        const svc = new TranslationService()
+        svc.translateWord(word.text, word.sentence.text, targetLang)
+          .then(result => {
+            if (!cancelled) {
+              setTranslation(result)
+              setTranslating(false)
+            }
+          })
+          .catch(err => {
+            if (!cancelled) {
+              setTranslationError(err.message || 'Translation failed')
+              setTranslating(false)
+            }
+          })
+      })
+    }
 
     return () => { cancelled = true }
-  }, [word, apiKey, targetLang])
+  }, [word, apiKey, targetLang, isBlockContent, isImageContent])
 
-  // Auto-translate sentence when in sentence mode
+  // Auto-translate sentence when in sentence mode (backend-proxied)
   useEffect(() => {
-    if (panelMode !== 'sentence' || !apiKey) {
+    if (panelMode !== 'sentence') {
       setSentenceTranslation(null)
       setSentenceTranslating(false)
       return
@@ -205,7 +237,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       : sentenceText
 
     import('@/lib/services/translation-service').then(({ TranslationService }) => {
-      const svc = new TranslationService(apiKey)
+      const svc = new TranslationService()
       svc.translateSentence(sentenceText, paragraphText, targetLang)
         .then(result => {
           if (!cancelled) {
@@ -213,10 +245,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             setSentenceTranslating(false)
           }
         })
-        .catch(() => {
+        .catch((err) => {
           if (!cancelled) {
             setSentenceTranslation('Translation failed.')
             setSentenceTranslating(false)
+            toast.error('Sentence translation failed', { duration: 5000 })
+            console.error('Sentence translation error:', err)
           }
         })
     })
@@ -224,18 +258,20 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     return () => { cancelled = true }
   }, [word, apiKey, targetLang, panelMode])
 
-  // Load explanation lazily
+  // Load explanation lazily (backend-proxied — no key needed)
   const handleLoadExplanation = useCallback(async () => {
-    if (explanation || explaining || !apiKey || !translation) return
+    if (explanation || explaining || !translation) return
     setExplaining(true)
     setShowExplanation(true)
 
     try {
       const { TranslationService } = await import('@/lib/services/translation-service')
-      const svc = new TranslationService(apiKey)
+      const svc = new TranslationService()
+      const contentText = word.latexSource || word.text
+      const contextText = word.latexSource ? `${contentText}\n\nContext: ${word.sentence.text}` : word.sentence.text
       const result = await svc.explainTranslation(
-        word.text,
-        word.sentence.text,
+        contentText,
+        contextText,
         translation.translation,
         targetLang,
       )
@@ -245,7 +281,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     } finally {
       setExplaining(false)
     }
-  }, [explanation, explaining, apiKey, translation, word, targetLang])
+  }, [explanation, explaining, translation, word, targetLang])
 
   // Add to vocabulary
   const handleAddVocab = useCallback(async () => {
@@ -267,6 +303,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       })
       setAddedToVocab(true)
     } catch (err) {
+      toast.error('Failed to save to vocabulary', { duration: 5000 })
       console.error('Failed to add vocab:', err)
     }
   }, [translation, addedToVocab, word, targetLang, explanation, bookTitle, sectionTitle])
@@ -415,7 +452,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             <>
               {/* Word + pronunciation row */}
               <div className="flex items-baseline gap-2 mb-0.5">
-                <span className="font-bold text-xl leading-tight">{word.text}</span>
+                <span className="font-bold text-xl leading-tight">
+                  {word.imageUrl ? 'Figure' : word.latexSource && word.text.startsWith('[') ? word.text.replace(/[\[\]]/g, '') : word.text}
+                </span>
                 {translation?.pronunciation && (
                   <span className="text-sm text-muted-foreground/70 font-mono">
                     {translation.pronunciation}
@@ -521,9 +560,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                       <div className="h-3 w-3/5 bg-muted/40 rounded animate-pulse" />
                     </div>
                   ) : explanation ? (
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {explanation}
-                    </p>
+                    <div className="text-xs text-muted-foreground leading-relaxed prose prose-xs prose-neutral dark:prose-invert max-w-none [&_h1]:text-sm [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-1 [&_p]:my-1 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:my-0.5 [&_strong]:text-foreground">
+                      <ReactMarkdown>{explanation}</ReactMarkdown>
+                    </div>
                   ) : null}
                 </div>
               )}
