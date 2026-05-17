@@ -4,6 +4,27 @@
 
 ---
 
+## 0. Evolutions (read before anything else)
+
+Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
+
+### 2026-05-16 — Vocab is now part of an external knowledge base, not local-first
+
+Vocab capture used to be a fully local-first feature (IndexedDB + nibble-api `vocabulary` table). It now writes through to a separate personal-website knowledge base at https://shanejli.com — that is the user-facing source of truth for vocab.
+
+- The click path is unchanged on the frontend: `VocabService.add()` still writes IndexedDB first so the user sees the entry instantly and the local-first guarantee for *reading* vocab is preserved.
+- After IDB write, `add()` calls `syncService.syncNow()` (a new method that bypasses the 30s debounce). This kicks an immediate `POST /api/sync` to nibble-api. nibble-api forwards the new vocab entry to the personal-website knowledge base (`POST /api/knowledge/notes` with a Bearer PAT). See `nibble-api/src/services/knowledge-base.service.ts`.
+- If the forward fails (knowledge base down, PAT misconfigured), nibble-api adds the entry to `failedEntities.vocabulary` so the WordByWord sync layer re-bumps `updatedAt` and retries on the next tick. The local IndexedDB row stays — the user does not lose their word.
+- Section 5 (Data Model) and Section 10 (Backlog item: "Backend + user accounts + cloud sync") below were written before this change. Treat them as historical context, not current truth.
+
+**Why the change:** Shane wants one knowledge base across all his tools (the periodic-website's knowledge module is the canonical store). Nibbler-side flashcards were duplicating work.
+
+**Don't undo this without explicit user consent:**
+- Don't restore a long debounce for vocab — vocab adds are deliberate user actions and need to feel instant.
+- Don't re-route vocab through a path that bypasses the forward. Every new vocab must land in the personal-website knowledge base.
+
+---
+
 ## 1. Vision
 
 **WordByWord** (codenamed "Bit by Bit" / BBB) is a **local-first, AI-powered PDF reading tracker** for technical books. It treats every book like a structured online course — chapters become modules, sections become lessons — and tracks non-linear reading progress section by section.
