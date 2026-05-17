@@ -23,6 +23,18 @@ Vocab capture used to be a fully local-first feature (IndexedDB + nibble-api `vo
 - Don't restore a long debounce for vocab — vocab adds are deliberate user actions and need to feel instant.
 - Don't re-route vocab through a path that bypasses the forward. Every new vocab must land in the personal-website knowledge base.
 
+### 2026-05-16 — The /vocabulary route is gone; the in-app link points to shanejli
+
+The locally-rendered vocab list page (`src/app/vocabulary/page.tsx` with the IndexedDB read flow) was removed because vocab now lives at https://shanejli.com/knowledge. Treat that URL as the canonical vocab UI for users.
+
+- Both in-app entry points (`src/app/page.tsx` home toolbar, `src/components/auth/user-menu.tsx` profile menu) are now plain `<a target="_blank" rel="noopener noreferrer" href="https://shanejli.com/knowledge">` external links with a ↗ glyph. They no longer use Next.js `<Link>`. Don't convert them back — the destination is a different origin.
+- `src/app/vocabulary/page.tsx` is reduced to a `redirect('https://shanejli.com/knowledge')` so direct URL access and bookmarks still land in the right place. Don't restore the IndexedDB-backed page here; if you want a local cache view, build it on a different route.
+- The `VocabService` reads (`getAll`, `getByLanguage`, `getByBook`, `count`, `markReviewed`, `updateExplanation`) are still in place because other in-reader UI paths reference them, but nothing now renders a full vocab list inside this app.
+
+**Why the change:** Two surfaces for the same data is a maintenance burden. The personal-website's knowledge UI has richer features (categories, source filtering, connections). Consolidating.
+
+**Don't undo this without explicit user consent:** in particular, don't recreate the local `/vocabulary` page just because the route exists or because tests reference it.
+
 ---
 
 ## 1. Vision

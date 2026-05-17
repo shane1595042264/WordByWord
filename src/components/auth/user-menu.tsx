@@ -235,14 +235,16 @@ export function UserMenu() {
             )}
           </div>
           <div className="p-1">
-            <Link
-              href="/vocabulary"
+            <a
+              href="https://shanejli.com/knowledge"
+              target="_blank"
+              rel="noopener noreferrer"
               role="menuitem"
               onClick={() => setOpen(false)}
               className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
             >
-              Vocabulary
-            </Link>
+              Vocabulary ↗
+            </a>
             {(session.user as Record<string, unknown>).role === 'admin' && (
               <Link
                 href="/marketplace"

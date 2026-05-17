@@ -171,12 +171,17 @@ export default function HomePage() {
                   )}
                 </div>
               )}
-              <Link href="/vocabulary">
+              <a
+                href="https://shanejli.com/knowledge"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <Button variant="outline" size="sm" className="gap-1.5">
                   <BookOpenIcon className="h-4 w-4" />
                   Vocabulary
+                  <span aria-hidden="true" className="text-xs opacity-60">↗</span>
                 </Button>
-              </Link>
+              </a>
               <UploadDialog onBookImported={refresh} />
               {books.length > 0 && (
                 <Button variant="outline" onClick={() => setEditMode(true)}>
