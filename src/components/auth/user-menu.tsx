@@ -5,6 +5,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 import { useShortcut } from '@/hooks/use-shortcuts'
+import { clearLocalUserData } from '@/lib/auth/clear-local-data'
 
 const EMOJI_AVATARS = [
   '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
@@ -35,6 +36,14 @@ export function UserMenu() {
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [imgError, setImgError] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+
+  const handleSignOut = useCallback(async () => {
+    if (signingOut) return
+    setSigningOut(true)
+    await clearLocalUserData()
+    await signOut({ callbackUrl: '/auth/login' })
+  }, [signingOut])
 
   const buttonRef = useRef<HTMLButtonElement>(null)
 
@@ -266,10 +275,11 @@ export function UserMenu() {
             <div className="my-1 border-t" />
             <button
               role="menuitem"
-              onClick={() => signOut({ callbackUrl: '/auth/login' })}
-              className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Sign out
+              {signingOut ? 'Signing out…' : 'Sign out'}
             </button>
           </div>
         </div>
