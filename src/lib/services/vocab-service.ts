@@ -15,7 +15,10 @@ export class VocabService {
       reviewCount: 0,
       lastReviewedAt: null,
     })
-    syncService.markDirty()
+    // Vocab adds are deliberate, low-frequency user actions — push immediately
+    // so the entry shows up in the personal-website knowledge base inside a
+    // second instead of waiting for the 30s scroll-progress debounce.
+    syncService.syncNow()
     return id
   }
 

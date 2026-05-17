@@ -124,6 +124,19 @@ class SyncService {
     this.debounceTimer = setTimeout(() => this.sync(), SYNC_DEBOUNCE_MS)
   }
 
+  /**
+   * Trigger a sync immediately, bypassing the debounce. Use for deliberate
+   * user actions (e.g. adding a vocab word) where waiting 30s feels broken.
+   *
+   * markDirty() is still called by the caller so that if isSyncing is already
+   * true here, the regular debounce will pick up this entity later as the
+   * safety net.
+   */
+  syncNow(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    void this.sync()
+  }
+
   // ── Token management ─────────────────────────────────────────
 
   private async getToken(): Promise<string | null> {
