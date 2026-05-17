@@ -8,7 +8,7 @@
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import Google from 'next-auth/providers/google'
-import { UserRepository, EMOJI_AVATARS } from './user-repository'
+import { UserRepository, stableEmojiForId } from './user-repository'
 import { checkRateLimit, getClientIp } from './rate-limit'
 
 const userRepo = new UserRepository()
@@ -17,11 +17,6 @@ const LOGIN_PER_IP_MAX = 10
 const LOGIN_PER_IP_WINDOW_MS = 60 * 1000
 const LOGIN_PER_EMAIL_MAX = 10
 const LOGIN_PER_EMAIL_WINDOW_MS = 60 * 1000
-
-/** Pick a random emoji from the shared list. */
-function randomEmoji(): string {
-  return EMOJI_AVATARS[Math.floor(Math.random() * EMOJI_AVATARS.length)]
-}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -64,11 +59,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const valid = await userRepo.verifyPassword(user, password)
         if (!valid) return null
 
-        // Backfill: assign a random emoji if user has no avatar
+        // Backfill: assign a stable emoji if user has no avatar. If the DB
+        // write fails we keep the same emoji across attempts (id-derived) so
+        // the user doesn't see the avatar shuffle on every sign-in, and we
+        // surface the failure to logs instead of swallowing it.
         let image = user.image
         if (!image) {
-          image = randomEmoji()
-          await userRepo.updateProfile(user.id, { image }).catch(() => {})
+          image = stableEmojiForId(user.id)
+          await userRepo.updateProfile(user.id, { image }).catch((err: unknown) => {
+            console.error('[auth] avatar backfill failed for user %s: %s', user.id, err)
+          })
         }
 
         return {
@@ -127,12 +127,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // Use the existing user's ID
           user.id = existingUser.id
           user.name = existingUser.name ?? user.name
-          // Backfill: assign a random emoji if existing user has no avatar
+          // Backfill: assign a stable id-derived emoji if existing user has
+          // no avatar. Same reasoning as the credentials path — keep the
+          // emoji stable across retries and log DB failures.
           if (existingUser.image) {
             user.image = existingUser.image
           } else {
-            const emoji = randomEmoji()
-            await userRepo.updateProfile(existingUser.id, { image: emoji }).catch(() => {})
+            const emoji = stableEmojiForId(existingUser.id)
+            await userRepo.updateProfile(existingUser.id, { image: emoji }).catch((err: unknown) => {
+              console.error('[auth] avatar backfill failed for user %s: %s', existingUser.id, err)
+            })
             user.image = emoji
           }
           ;(user as Record<string, unknown>).role = existingUser.role

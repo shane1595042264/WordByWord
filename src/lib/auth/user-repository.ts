@@ -17,6 +17,19 @@ function randomEmoji(): string {
   return EMOJI_AVATARS[Math.floor(Math.random() * EMOJI_AVATARS.length)]
 }
 
+/**
+ * Deterministic avatar for a known user id. Used on sign-in backfill so that
+ * if the DB write fails the user sees the same emoji on the next attempt
+ * instead of a fresh random one (which would look like the avatar is glitching).
+ */
+export function stableEmojiForId(id: string): string {
+  let h = 5381 >>> 0
+  for (let i = 0; i < id.length; i++) {
+    h = (Math.imul(h, 33) ^ id.charCodeAt(i)) >>> 0
+  }
+  return EMOJI_AVATARS[h % EMOJI_AVATARS.length]
+}
+
 export interface AuthUser {
   id: string
   name: string | null
