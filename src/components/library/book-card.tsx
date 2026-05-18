@@ -34,7 +34,7 @@ const STAGE_LABELS: Record<string, string> = {
 export function BookCard({ book, editMode, selected, onToggleSelect, onProcessingComplete }: BookCardProps) {
   const isProcessing = book.processingStatus === 'processing'
   const isFailed = book.processingStatus === 'error'
-  const { data: processing, pollError } = useProcessingStatus(isProcessing ? book.jobId : undefined)
+  const { data: processing, pollError, retry } = useProcessingStatus(isProcessing ? book.jobId : undefined)
   const [showLog, setShowLog] = useState(false)
   const [hovered, setHovered] = useState(false)
   const completedRef = useRef(false)
@@ -77,9 +77,17 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
       )}
 
       {isProcessing && pollError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2 gap-1">
           <span className="text-2xl">&#x26A0;</span>
-          <span className="text-xs mt-1 text-center opacity-80">Sync paused</span>
+          <span className="text-xs text-center opacity-80">Sync paused</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-6 px-2 text-[10px] mt-1"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); retry() }}
+          >
+            Retry
+          </Button>
         </div>
       )}
 

@@ -134,4 +134,83 @@ describe('useProcessingStatus', () => {
     expect(fx.calls[3].url).toContain('/processing/job-401')
     unmount()
   })
+
+  it('after MAX failures surfaces pollError and resumes via 15s backoff (does not stop permanently)', async () => {
+    const fx = setupFetch()
+    const useProcessingStatus = await loadHook()
+    const { result, unmount } = renderHook(() => useProcessingStatus('job-backoff'))
+
+    // Initial token + processing call
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(1))
+    fx.resolveAt(0, { token: makeJwt(60_000) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(2))
+    expect(fx.calls[1].url).toContain('/processing/job-backoff')
+    // Fail #1
+    fx.resolveAt(1, { error: 'boom' }, 500)
+
+    // 3s tick -> call #2 (token cached)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(3))
+    fx.resolveAt(2, { error: 'boom' }, 500)
+
+    // 3s tick -> call #3
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(4))
+    fx.resolveAt(3, { error: 'boom' }, 500)
+
+    // After 3rd failure pollError surfaces and the 3s interval is cleared
+    await waitFor(() => expect(result.current.pollError).not.toBeNull())
+    const callsAfterError = fx.calls.length
+
+    // 3s tick should NOT fire a new poll — the normal interval is gone
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    expect(fx.calls.length).toBe(callsAfterError)
+
+    // Backoff timer (15s) should fire a fresh poll
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(callsAfterError + 1))
+    expect(fx.calls[callsAfterError].url).toContain('/processing/job-backoff')
+
+    unmount()
+  })
+
+  it('retry() clears pollError and resumes the 3s cadence after a successful poll', async () => {
+    const fx = setupFetch()
+    const useProcessingStatus = await loadHook()
+    const { result, unmount } = renderHook(() => useProcessingStatus('job-retry'))
+
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(1))
+    fx.resolveAt(0, { token: makeJwt(60_000) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(2))
+    fx.resolveAt(1, { error: 'boom' }, 500)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(3))
+    fx.resolveAt(2, { error: 'boom' }, 500)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(4))
+    fx.resolveAt(3, { error: 'boom' }, 500)
+
+    await waitFor(() => expect(result.current.pollError).not.toBeNull())
+    const callsBeforeRetry = fx.calls.length
+
+    // User clicks Retry → immediate poll fires
+    await act(async () => { result.current.retry() })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(callsBeforeRetry + 1))
+    expect(fx.calls[callsBeforeRetry].url).toContain('/processing/job-retry')
+
+    // This retry-triggered poll succeeds → pollError clears
+    fx.resolveAt(callsBeforeRetry, { status: 'processing', progress: 42, stage: 'ocr', error: null, bookId: null })
+    await waitFor(() => expect(result.current.pollError).toBeNull())
+    await waitFor(() => expect(result.current.data?.progress).toBe(42))
+
+    // 3s cadence resumed — next tick fires another poll
+    const callsAfterRetrySuccess = fx.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(3001) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(callsAfterRetrySuccess + 1))
+    expect(fx.calls[callsAfterRetrySuccess].url).toContain('/processing/job-retry')
+
+    unmount()
+  })
 })
