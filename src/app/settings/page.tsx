@@ -86,11 +86,13 @@ function SettingsContent() {
             </div>
 
             <div className="space-y-2">
-              <Label>Reading tracking mode</Label>
-              <div className="flex gap-2">
+              <Label id="tracking-mode-label">Reading tracking mode</Label>
+              <div className="flex gap-2" role="radiogroup" aria-labelledby="tracking-mode-label">
                 <Button
                   variant={settings.trackingMode === 'timer' ? 'default' : 'outline'}
                   size="sm"
+                  role="radio"
+                  aria-checked={settings.trackingMode === 'timer'}
                   onClick={() => setSettings({ ...settings, trackingMode: 'timer' })}
                 >
                   Timer
@@ -98,6 +100,8 @@ function SettingsContent() {
                 <Button
                   variant={settings.trackingMode === 'endofpage' ? 'default' : 'outline'}
                   size="sm"
+                  role="radio"
+                  aria-checked={settings.trackingMode === 'endofpage'}
                   onClick={() => setSettings({ ...settings, trackingMode: 'endofpage' })}
                 >
                   End of Page
@@ -110,8 +114,9 @@ function SettingsContent() {
 
             {settings.trackingMode === 'timer' && (
               <div className="space-y-2">
-                <Label>Auto-read threshold: {settings.autoReadThresholdSeconds}s</Label>
+                <Label id="auto-read-threshold-label">Auto-read threshold: {settings.autoReadThresholdSeconds}s</Label>
                 <Slider
+                  aria-labelledby="auto-read-threshold-label"
                   value={[settings.autoReadThresholdSeconds]}
                   onValueChange={([v]) => setSettings({ ...settings, autoReadThresholdSeconds: v })}
                   min={1}
@@ -125,13 +130,15 @@ function SettingsContent() {
             )}
 
             <div className="space-y-2">
-              <Label>Default view mode</Label>
-              <div className="flex gap-2">
+              <Label id="default-view-mode-label">Default view mode</Label>
+              <div className="flex gap-2" role="radiogroup" aria-labelledby="default-view-mode-label">
                 {(['pdf', 'text', 'side-by-side'] as const).map(mode => (
                   <Button
                     key={mode}
                     variant={settings.defaultViewMode === mode ? 'default' : 'outline'}
                     size="sm"
+                    role="radio"
+                    aria-checked={settings.defaultViewMode === mode}
                     onClick={() => setSettings({ ...settings, defaultViewMode: mode })}
                     className="capitalize"
                   >
@@ -142,8 +149,9 @@ function SettingsContent() {
             </div>
 
             <div className="space-y-2">
-              <Label>Translation language</Label>
+              <Label htmlFor="target-language">Translation language</Label>
               <select
+                id="target-language"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={settings.targetLanguage}
                 onChange={e => setSettings({ ...settings, targetLanguage: e.target.value as any })}
@@ -160,11 +168,13 @@ function SettingsContent() {
             </div>
 
             <div className="space-y-2">
-              <Label>Default reading mode</Label>
-              <div className="flex gap-2">
+              <Label id="reading-mode-label">Default reading mode</Label>
+              <div className="flex gap-2" role="radiogroup" aria-labelledby="reading-mode-label">
                 <Button
                   variant={settings.readingMode === 'scroll' ? 'default' : 'outline'}
                   size="sm"
+                  role="radio"
+                  aria-checked={settings.readingMode === 'scroll'}
                   onClick={() => setSettings({ ...settings, readingMode: 'scroll' })}
                 >
                   Scroll
@@ -172,6 +182,8 @@ function SettingsContent() {
                 <Button
                   variant={settings.readingMode === 'flip' ? 'default' : 'outline'}
                   size="sm"
+                  role="radio"
+                  aria-checked={settings.readingMode === 'flip'}
                   onClick={() => setSettings({ ...settings, readingMode: 'flip' })}
                 >
                   Flip
@@ -189,6 +201,7 @@ function SettingsContent() {
                   type="button"
                   role="switch"
                   aria-checked={settings.warnBeforeSync}
+                  aria-labelledby="warn-before-sync-label"
                   onClick={() => setSettings({ ...settings, warnBeforeSync: !settings.warnBeforeSync })}
                   className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
                     settings.warnBeforeSync ? 'bg-primary' : 'bg-muted'
@@ -198,7 +211,7 @@ function SettingsContent() {
                     settings.warnBeforeSync ? 'translate-x-5' : 'translate-x-0'
                   }`} />
                 </button>
-                <span className="text-sm">Warn before sync</span>
+                <span id="warn-before-sync-label" className="text-sm">Warn before sync</span>
               </div>
               <p className="text-xs text-muted-foreground">
                 When enabled, you&apos;ll be asked before cloud changes are applied (e.g. deletions from another device).
