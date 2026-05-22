@@ -14,6 +14,7 @@ export function useReader(bookId: string, sectionId: string) {
   const [viewMode, setViewModeState] = useState<ViewMode>('side-by-side')
   const [readingMode, setReadingModeState] = useState<'scroll' | 'flip'>('scroll')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const initialLoadDone = useRef(false)
 
   // Wrap setters to also persist to settings
@@ -34,54 +35,65 @@ export function useReader(bookId: string, sectionId: string) {
   // Full load — only on initial mount or section change
   const loadData = useCallback(async () => {
     setLoading(true)
-    const { BookRepository, SectionRepository } = await import('@/lib/repositories')
-    const { db } = await import('@/lib/db/database')
+    setError(null)
+    try {
+      const { BookRepository, SectionRepository } = await import('@/lib/repositories')
+      const { db } = await import('@/lib/db/database')
 
-    const bookRepo = new BookRepository()
-    const sectionRepo = new SectionRepository()
+      const bookRepo = new BookRepository()
+      const sectionRepo = new SectionRepository()
 
-    const b = await bookRepo.getById(bookId)
-    // Only set viewMode from settings on first load. EPUB books have no PDF
-    // representation, so force Text view regardless of the saved default.
-    if (!initialLoadDone.current) {
-      const { SettingsService } = await import('@/lib/services/settings-service')
-      const settingsService = new SettingsService()
-      const s = settingsService.getSettings()
-      const preferred: ViewMode = b?.format === 'epub' ? 'text' : s.defaultViewMode
-      setViewModeState(preferred)
-      setReadingModeState(s.readingMode)
-      initialLoadDone.current = true
+      const b = await bookRepo.getById(bookId)
+      // Only set viewMode from settings on first load. EPUB books have no PDF
+      // representation, so force Text view regardless of the saved default.
+      if (!initialLoadDone.current) {
+        const { SettingsService } = await import('@/lib/services/settings-service')
+        const settingsService = new SettingsService()
+        const s = settingsService.getSettings()
+        const preferred: ViewMode = b?.format === 'epub' ? 'text' : s.defaultViewMode
+        setViewModeState(preferred)
+        setReadingModeState(s.readingMode)
+        initialLoadDone.current = true
+      }
+      const s = await db.sections.get(sectionId)
+      if (b && s) {
+        const ch = await db.chapters.get(s.chapterId)
+        const siblings = await sectionRepo.getByChapter(s.chapterId)
+        const allSections = await sectionRepo.getByBook(bookId)
+        setBook(b)
+        setSection(s)
+        setChapter(ch ?? null)
+        setChapterSections(siblings)
+        setAllBookSections(allSections)
+        await bookRepo.updateLastRead(bookId)
+      }
+    } catch (err) {
+      console.error('Failed to load reader data:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load this section')
+    } finally {
+      setLoading(false)
     }
-    const s = await db.sections.get(sectionId)
-    if (b && s) {
-      const ch = await db.chapters.get(s.chapterId)
-      const siblings = await sectionRepo.getByChapter(s.chapterId)
-      const allSections = await sectionRepo.getByBook(bookId)
-      setBook(b)
-      setSection(s)
-      setChapter(ch ?? null)
-      setChapterSections(siblings)
-      setAllBookSections(allSections)
-      await bookRepo.updateLastRead(bookId)
-    }
-    setLoading(false)
   }, [bookId, sectionId])
 
   useEffect(() => { loadData() }, [loadData])
 
   // Lightweight refresh — just update section read status + sidebar dots
   const refreshReadStatus = useCallback(async () => {
-    const { SectionRepository } = await import('@/lib/repositories')
-    const { db } = await import('@/lib/db/database')
-    const sectionRepo = new SectionRepository()
+    try {
+      const { SectionRepository } = await import('@/lib/repositories')
+      const { db } = await import('@/lib/db/database')
+      const sectionRepo = new SectionRepository()
 
-    const s = await db.sections.get(sectionId)
-    if (s) setSection(s)
+      const s = await db.sections.get(sectionId)
+      if (s) setSection(s)
 
-    // Update sidebar dots
-    if (section?.chapterId) {
-      const siblings = await sectionRepo.getByChapter(section.chapterId)
-      setChapterSections(siblings)
+      // Update sidebar dots
+      if (section?.chapterId) {
+        const siblings = await sectionRepo.getByChapter(section.chapterId)
+        setChapterSections(siblings)
+      }
+    } catch (err) {
+      console.error('Failed to refresh read status:', err)
     }
   }, [sectionId, section?.chapterId])
 
@@ -104,6 +116,6 @@ export function useReader(bookId: string, sectionId: string) {
     viewMode, setViewMode,
     readingMode, setReadingMode,
     prevSection, nextSection,
-    loading, refresh: loadData, refreshReadStatus,
+    loading, error, refresh: loadData, refreshReadStatus,
   }
 }

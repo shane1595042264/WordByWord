@@ -16,6 +16,7 @@ import { ReaderToolbar } from '@/components/reader/reader-toolbar'
 import { VimStatusBar } from '@/components/reader/vim-status-bar'
 import { BookCompleteCelebration } from '@/components/reader/book-complete-celebration'
 import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
+import { Button } from '@/components/ui/button'
 import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
 import { NibService } from '@/lib/services/nib-service'
 import type { NibDocument } from '@/lib/nib'
@@ -40,7 +41,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     viewMode, setViewMode,
     readingMode, setReadingMode,
     prevSection, nextSection,
-    loading, refreshReadStatus,
+    loading, error, refresh, refreshReadStatus,
   } = useReader(bookId, sectionId)
 
   const contentRef = useRef<HTMLDivElement>(null)
@@ -638,6 +639,21 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-4">
+        <h2 className="text-xl font-semibold">Failed to load section</h2>
+        <p className="text-muted-foreground text-center max-w-md">{error}</p>
+        <div className="flex gap-2">
+          <Button onClick={() => { refresh() }}>Retry</Button>
+          <Button variant="outline" onClick={() => router.back()}>
+            Go back
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   if (!book || !section) {
