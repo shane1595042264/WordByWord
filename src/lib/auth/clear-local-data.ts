@@ -24,8 +24,7 @@ export async function clearLocalUserData(): Promise<void> {
   }
 
   try {
-    localStorage.removeItem('nibble_lastSyncedAt')
-    localStorage.removeItem('nibble_syncLog')
+    syncService.clearLocalSyncState()
   } catch (err) {
     console.warn('[clearLocalUserData] localStorage clear failed', err)
   }

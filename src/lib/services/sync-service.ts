@@ -184,6 +184,25 @@ class SyncService {
     return localStorage.getItem(LAST_SYNCED_KEY)
   }
 
+  /**
+   * Force the next sync() call to run as a full sync from epoch.
+   * Used after server-side processing finishes producing chapters/sections
+   * whose updatedAt may predate the local lastSyncedAt watermark.
+   */
+  forceFullSyncNext(): void {
+    this.hasInitSynced = false
+    localStorage.removeItem(LAST_SYNCED_KEY)
+  }
+
+  /**
+   * Drop the local sync watermark and rolling log. Called on sign-out so a
+   * different user on the same browser profile starts from a clean slate.
+   */
+  clearLocalSyncState(): void {
+    localStorage.removeItem(LAST_SYNCED_KEY)
+    localStorage.removeItem(SYNC_LOG_KEY)
+  }
+
   // ── Book upload ──────────────────────────────────────────────
 
   async uploadBook(

@@ -213,11 +213,8 @@ export default function HomePage() {
           onToggleSelect={toggleSelect}
           onProcessingComplete={async () => {
             try {
-              // Force full sync from epoch to pull new chapters/sections from processing
-              localStorage.removeItem('nibble_lastSyncedAt')
               const { syncService } = await import('@/lib/services/sync-service')
-              // @ts-ignore — reset init flag to force full sync
-              syncService['hasInitSynced'] = false
+              syncService.forceFullSyncNext()
               await syncService.sync()
               refresh()
             } catch (err) {
