@@ -139,6 +139,15 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   useEffect(() => {
     let cancelled = false
     setCheckingVocab(true)
+    // Treat any rejection (IDB transient error, schema mismatch, chunk-load
+    // failure) as unknown-state → leave the button usable; the add path has
+    // its own error toast.
+    const handleFailure = (err: unknown) => {
+      if (cancelled) return
+      console.warn('vocab existence check failed:', err)
+      setAddedToVocab(false)
+      setCheckingVocab(false)
+    }
     import('@/lib/services/vocab-service').then(({ VocabService }) => {
       if (cancelled) return
       const svc = new VocabService()
@@ -147,8 +156,8 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
           setAddedToVocab(exists)
           setCheckingVocab(false)
         }
-      })
-    })
+      }, handleFailure)
+    }, handleFailure)
     return () => { cancelled = true }
   }, [word])
 
