@@ -57,12 +57,13 @@ export class TranslationService {
     return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
   }
 
-  private async postJson<T>(path: string, body: unknown): Promise<T> {
+  private async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const token = await this.getToken()
     const res = await fetch(`${this.getApiUrl()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
+      signal,
     })
     if (!res.ok) {
       const text = await res.text()
@@ -76,11 +77,13 @@ export class TranslationService {
     word: string,
     sentence: string,
     targetLang: TargetLanguage,
+    signal?: AbortSignal,
   ): Promise<TranslationResult> {
     const langName = getLangLabel(targetLang)
     const parsed = await this.postJson<{ pronunciation: string; translation: string; partOfSpeech: string }>(
       '/ai/translate-word',
       { word, sentence, targetLanguage: langName },
+      signal,
     )
     return {
       word,
@@ -95,11 +98,13 @@ export class TranslationService {
     sentence: string,
     paragraphText: string,
     targetLang: TargetLanguage,
+    signal?: AbortSignal,
   ): Promise<SentenceTranslationResult> {
     const langName = getLangLabel(targetLang)
     const parsed = await this.postJson<{ translation: string }>(
       '/ai/translate-sentence',
       { sentence, paragraphContext: paragraphText, targetLanguage: langName },
+      signal,
     )
     return { translation: parsed.translation }
   }
@@ -110,20 +115,23 @@ export class TranslationService {
     sentence: string,
     translation: string,
     targetLang: TargetLanguage,
+    signal?: AbortSignal,
   ): Promise<ExplanationResult> {
     const langName = getLangLabel(targetLang)
     const parsed = await this.postJson<{ explanation: string }>(
       '/ai/explain-translation',
       { word, sentence, translation, targetLanguage: langName },
+      signal,
     )
     return { explanation: parsed.explanation }
   }
 
   /** Explain a block of content (table, code, formula, etc.). */
-  async explainContent(content: string, surroundingContext: string): Promise<string> {
+  async explainContent(content: string, surroundingContext: string, signal?: AbortSignal): Promise<string> {
     const parsed = await this.postJson<{ explanation: string }>(
       '/ai/explain-content',
       { content, surroundingContext },
+      signal,
     )
     return parsed.explanation
   }
@@ -138,6 +146,7 @@ export class TranslationService {
   async explainImage(
     imageUrl: string,
     surroundingContext: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     if (!this.apiKey) {
       throw new Error('Figure explanation requires an Anthropic API key in Settings (vision).')
@@ -164,6 +173,7 @@ export class TranslationService {
           ],
         }],
       }),
+      signal,
     })
     if (!res.ok) {
       const errorText = await res.text()

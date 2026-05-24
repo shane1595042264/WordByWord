@@ -38,6 +38,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
   const liveDragPos = useRef<{ x: number; y: number } | null>(null)
   const [, forceRender] = useState(0)
+  // Tracks in-flight handleLoadExplanation request so word-change cleanup
+  // and unmount can abort the lazy explanation call.
+  const explanationControllerRef = useRef<AbortController | null>(null)
 
   // Track anchor position changes from scrolling (re-render when anchor moves)
   const [anchorPos, setAnchorPos] = useState<{ x: number; y: number } | null>(null)
@@ -171,9 +174,15 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   // doesn't have a URL-based vision endpoint yet.
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
+    // Abort any in-flight lazy explanation from the previous word so it
+    // can't land on the new word's panel and burn an Anthropic call.
+    explanationControllerRef.current?.abort()
+    explanationControllerRef.current = null
     setTranslation(null)
     setTranslationError(null)
     setExplanation(null)
+    setExplaining(false)
     setShowExplanation(false)
 
     if (isBlockContent) {
@@ -188,16 +197,17 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
           let result: string
           if (isImageContent && word.imageUrl) {
             // Vision — still client-side; requires user's Anthropic key
-            result = await svc.explainImage(word.imageUrl, word.sentence.text)
+            result = await svc.explainImage(word.imageUrl, word.sentence.text, controller.signal)
           } else {
             // Backend-proxied content explanation (table/code)
-            result = await svc.explainContent(word.latexSource!, word.sentence.text)
+            result = await svc.explainContent(word.latexSource!, word.sentence.text, controller.signal)
           }
           if (!cancelled) {
             setExplanation(result)
             setExplaining(false)
           }
         } catch (err: any) {
+          if (err?.name === 'AbortError') return
           if (!cancelled) {
             setExplanation(`Explanation failed: ${err.message}`)
             setExplaining(false)
@@ -209,7 +219,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       setTranslating(true)
       import('@/lib/services/translation-service').then(({ TranslationService }) => {
         const svc = new TranslationService()
-        svc.translateWord(word.text, word.sentence.text, targetLang)
+        svc.translateWord(word.text, word.sentence.text, targetLang, controller.signal)
           .then(result => {
             if (!cancelled) {
               setTranslation(result)
@@ -217,6 +227,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             }
           })
           .catch(err => {
+            if (err?.name === 'AbortError') return
             if (!cancelled) {
               setTranslationError(err.message || 'Translation failed')
               setTranslating(false)
@@ -225,7 +236,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       })
     }
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [word, apiKey, targetLang, isBlockContent, isImageContent])
 
   // Auto-translate sentence when in sentence mode (backend-proxied)
@@ -237,6 +251,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setSentenceTranslating(true)
     setSentenceTranslation(null)
 
@@ -247,7 +262,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
     import('@/lib/services/translation-service').then(({ TranslationService }) => {
       const svc = new TranslationService()
-      svc.translateSentence(sentenceText, paragraphText, targetLang)
+      svc.translateSentence(sentenceText, paragraphText, targetLang, controller.signal)
         .then(result => {
           if (!cancelled) {
             setSentenceTranslation(result.translation)
@@ -255,6 +270,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
           }
         })
         .catch((err) => {
+          if (err?.name === 'AbortError') return
           if (!cancelled) {
             setSentenceTranslation('Translation failed.')
             setSentenceTranslating(false)
@@ -264,12 +280,18 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         })
     })
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [word, apiKey, targetLang, panelMode])
 
   // Load explanation lazily (backend-proxied — no key needed)
   const handleLoadExplanation = useCallback(async () => {
     if (explanation || explaining || !translation) return
+    explanationControllerRef.current?.abort()
+    const controller = new AbortController()
+    explanationControllerRef.current = controller
     setExplaining(true)
     setShowExplanation(true)
 
@@ -283,12 +305,14 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         contextText,
         translation.translation,
         targetLang,
+        controller.signal,
       )
-      setExplanation(result.explanation)
-    } catch {
-      setExplanation('Failed to load explanation.')
+      if (!controller.signal.aborted) setExplanation(result.explanation)
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      if (!controller.signal.aborted) setExplanation('Failed to load explanation.')
     } finally {
-      setExplaining(false)
+      if (!controller.signal.aborted) setExplaining(false)
     }
   }, [explanation, explaining, translation, word, targetLang])
 
