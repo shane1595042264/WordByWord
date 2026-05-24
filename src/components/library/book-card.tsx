@@ -37,6 +37,8 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
   const { data: processing, pollError, retry } = useProcessingStatus(isProcessing ? book.jobId : undefined)
   const [showLog, setShowLog] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(false)
   const completedRef = useRef(false)
   const hasLog = !!book.jobId
 
@@ -189,9 +191,12 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                 variant="destructive"
                 size="sm"
                 className="w-full text-xs"
+                disabled={isCancelling}
                 onClick={async (e) => {
                   e.preventDefault()
                   e.stopPropagation()
+                  if (isCancelling) return
+                  setIsCancelling(true)
                   try {
                     const tokenRes = await fetch('/api/auth/token')
                     if (!tokenRes.ok) {
@@ -212,6 +217,8 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                   } catch (err) {
                     toast.error('Failed to cancel processing', { duration: 5000 })
                     console.error('Cancel processing error:', err)
+                  } finally {
+                    setIsCancelling(false)
                   }
                 }}
               >
@@ -223,9 +230,12 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                 variant="default"
                 size="sm"
                 className="w-full text-xs"
+                disabled={isRetrying}
                 onClick={async (e) => {
                   e.preventDefault()
                   e.stopPropagation()
+                  if (isRetrying) return
+                  setIsRetrying(true)
                   try {
                     const tokenRes = await fetch('/api/auth/token')
                     if (!tokenRes.ok) {
@@ -246,6 +256,8 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                   } catch (err) {
                     toast.error('Failed to retry processing', { duration: 5000 })
                     console.error('Retry processing error:', err)
+                  } finally {
+                    setIsRetrying(false)
                   }
                 }}
               >
