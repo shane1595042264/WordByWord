@@ -53,6 +53,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [showLineNumbers, setShowLineNumbers] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
+  const yankFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
   const [totalVisualLines, setTotalVisualLines] = useState(0)
@@ -109,10 +110,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onYank: useCallback(() => {
       const text = nibTextViewerRef.current?.getSelectedText()
       if (text) {
+        if (yankFlashTimerRef.current) clearTimeout(yankFlashTimerRef.current)
         navigator.clipboard.writeText(text).then(() => {
           const preview = text.length > 40 ? text.slice(0, 40) + '…' : text
           setYankFlash(`Copied: "${preview}"`)
-          setTimeout(() => setYankFlash(''), 1500)
+          yankFlashTimerRef.current = setTimeout(() => setYankFlash(''), 1500)
         }).catch(() => {
           // Fallback for browsers that block clipboard API
           const ta = document.createElement('textarea')
@@ -124,7 +126,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           document.execCommand('copy')
           document.body.removeChild(ta)
           setYankFlash('Copied!')
-          setTimeout(() => setYankFlash(''), 1500)
+          yankFlashTimerRef.current = setTimeout(() => setYankFlash(''), 1500)
         })
       }
     }, []),
@@ -142,6 +144,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }, []),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
+
+  // Clear pending yank-flash timer on unmount (avoids setState on unmounted component).
+  useEffect(() => () => {
+    if (yankFlashTimerRef.current) clearTimeout(yankFlashTimerRef.current)
+  }, [])
 
   // ── PDF mode: Vim-style scroll keybindings (Ctrl+E, Ctrl+Y, d, u, gg, G) ──
   const lastPdfGTime = useRef(0)
