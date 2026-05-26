@@ -305,7 +305,12 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                     endPage: book.totalPages,
                   })
 
-                  await svc.saveStructure(book.remoteId!, finalChapters)
+                  try {
+                    await svc.saveStructure(book.remoteId!, finalChapters)
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to save chapters')
+                    return
+                  }
                   // Force sync and refresh
                   const { syncService } = await import('@/lib/services/sync-service')
                   syncService.markDirty()

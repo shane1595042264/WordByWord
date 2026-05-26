@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
@@ -110,7 +111,12 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
       return base
     })
 
-    await svc.saveStructure(bookRemoteId, fullChapters)
+    try {
+      await svc.saveStructure(bookRemoteId, fullChapters)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save sections')
+      return
+    }
     const { syncService } = await import('@/lib/services/sync-service')
     syncService.markDirty()
     await syncService.sync()
