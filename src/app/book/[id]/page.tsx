@@ -275,7 +275,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 existingDividers={existingDividers}
                 level="chapter"
                 onSave={async (dividers: Divider[]) => {
-                  const { StructureService } = await import('@/lib/services/structure-service')
+                  const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
                   const svc = new StructureService()
                   const sorted = [...dividers].sort((a, b) => a.page - b.page)
                   const chapters: Array<{ title: string; startPage: number; endPage: number }> = []
@@ -306,9 +306,17 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                   })
 
                   try {
-                    await svc.saveStructure(book.remoteId!, finalChapters)
+                    await svc.saveStructure(
+                      book.remoteId!,
+                      finalChapters,
+                      book.updatedAt ? new Date(book.updatedAt).toISOString() : undefined,
+                    )
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : 'Failed to save chapters')
+                    if (err instanceof StaleBookError) {
+                      toast.error(err.message)
+                    } else {
+                      toast.error(err instanceof Error ? err.message : 'Failed to save chapters')
+                    }
                     return
                   }
                   // Force sync and refresh

@@ -15,6 +15,7 @@ interface ChapterAccordionProps {
   chapters: ChapterWithSections[]
   pdfBlob?: Blob
   bookRemoteId?: string
+  bookUpdatedAt?: number
   totalBookPages?: number
   searchQuery?: string
 }
@@ -25,7 +26,7 @@ interface ChapterGroup {
   progress: { read: number; total: number; percentage: number }
 }
 
-export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
+export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, bookUpdatedAt, totalBookPages, searchQuery }: ChapterAccordionProps) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null)
   const [dividingChapter, setDividingChapter] = useState<ChapterWithSections | null>(null)
@@ -74,7 +75,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
   const hasNesting = groups.some(g => g.chapters.length > 1 || g.chapters[0]?.title !== g.title)
   const handleSaveSections = useCallback(async (chapter: ChapterWithSections, dividers: Divider[]) => {
     if (!bookRemoteId || !totalBookPages) return
-    const { StructureService } = await import('@/lib/services/structure-service')
+    const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
     const svc = new StructureService()
 
     // Build sections for this chapter from dividers
@@ -112,9 +113,17 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     })
 
     try {
-      await svc.saveStructure(bookRemoteId, fullChapters)
+      await svc.saveStructure(
+        bookRemoteId,
+        fullChapters,
+        bookUpdatedAt ? new Date(bookUpdatedAt).toISOString() : undefined,
+      )
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save sections')
+      if (err instanceof StaleBookError) {
+        toast.error(err.message)
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Failed to save sections')
+      }
       return
     }
     const { syncService } = await import('@/lib/services/sync-service')
@@ -123,7 +132,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     setDividingChapter(null)
     // Trigger a page refresh
     window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
-  }, [bookRemoteId, totalBookPages, chapters])
+  }, [bookRemoteId, bookUpdatedAt, totalBookPages, chapters])
   const divideDialog = dividingChapter && pdfBlob && bookRemoteId && totalBookPages ? (() => {
     const PageStripEditor = require('@/components/editor/page-strip-editor').PageStripEditor
     const existingDividers: Divider[] = dividingChapter.sections
