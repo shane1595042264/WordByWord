@@ -21,6 +21,17 @@ export interface SyncConflict {
   cloudDeletedBooks: number
 }
 
+class PdfDownloadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly transient: boolean,
+  ) {
+    super(message)
+    this.name = 'PdfDownloadError'
+  }
+}
+
 type ConflictResolver = (conflict: SyncConflict) => Promise<'cloud' | 'local' | 'auto'>
 
 class SyncService {
@@ -243,18 +254,51 @@ class SyncService {
 
   // ── Download PDF from cloud ──────────────────────────────────
 
-  private async downloadPdf(remoteBookId: string): Promise<Blob | null> {
+  private async downloadPdf(remoteBookId: string): Promise<Blob> {
     const token = await this.getToken()
-    if (!token) return null
+    if (!token) {
+      throw new PdfDownloadError('no auth token', null, false)
+    }
+    let res: Response
     try {
-      const res = await fetch(`${this.getApiUrl()}/books/${remoteBookId}/download`, {
+      res = await fetch(`${this.getApiUrl()}/books/${remoteBookId}/download`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) return null
-      return await res.blob()
-    } catch {
-      return null
+    } catch (err) {
+      // AbortError must propagate so destroy()-driven cancels don't get retried.
+      if (err instanceof DOMException && err.name === 'AbortError') throw err
+      throw new PdfDownloadError(
+        `network error: ${err instanceof Error ? err.message : String(err)}`,
+        null,
+        true,
+      )
     }
+    if (!res.ok) {
+      const transient = res.status >= 500 || res.status === 408 || res.status === 429
+      throw new PdfDownloadError(`HTTP ${res.status}`, res.status, transient)
+    }
+    return await res.blob()
+  }
+
+  private async downloadPdfWithRetry(remoteBookId: string): Promise<Blob> {
+    const backoffsMs = [1000, 3000, 8000]
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+      try {
+        return await this.downloadPdf(remoteBookId)
+      } catch (err) {
+        lastErr = err
+        if (err instanceof DOMException && err.name === 'AbortError') throw err
+        const transient = err instanceof PdfDownloadError && err.transient
+        if (!transient || attempt === backoffsMs.length) throw err
+        this.log(
+          'sync:download-retry',
+          `${remoteBookId}: attempt ${attempt + 1} failed (${err instanceof Error ? err.message : String(err)}); retrying in ${backoffsMs[attempt]}ms`,
+        )
+        await new Promise(r => setTimeout(r, backoffsMs[attempt]))
+      }
+    }
+    throw lastErr
   }
 
   // ── Core sync (bidirectional) ────────────────────────────────
@@ -274,6 +318,7 @@ class SyncService {
     // Create an AbortController so destroy() can cancel this in-flight sync
     this.abortController = new AbortController()
     const { signal } = this.abortController
+    let failedDownloads: Array<{ remoteId: string; title: string }> = []
     try {
       // On first sync after init, always sync from epoch to catch everything (deletions, new books)
       const isInitSync = !this.hasInitSynced
@@ -431,7 +476,8 @@ class SyncService {
         }
 
         // 2. Download cloud-only books (parallel, concurrency of 3)
-        await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
+        const dlResult = await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
+        failedDownloads = dlResult.failed
       }
 
       // Per-entity push failures: bump local updatedAt past syncedAt so the next push retries instead of losing the row.
@@ -468,13 +514,27 @@ class SyncService {
         this.log('sync:partial', `${failedCount} entit${failedCount === 1 ? 'y' : 'ies'} failed — re-queued for next sync (books:${failedBookIds.length} chapters:${failedChapterIds.length} sections:${failedSectionIds.length} vocab:${failedVocabIds.length})`)
       }
 
-      // Guard against timestamp regression: only update if the new syncedAt is newer
+      // Guard against timestamp regression: only update if the new syncedAt is newer.
+      // Also stall LAST_SYNCED_KEY when any cloud-only book failed to download — the
+      // failed remoteIds must remain in `cloudOnlyBooks` on the next sync so the
+      // download is retried instead of being silently skipped.
       const prevSyncedAt = localStorage.getItem(LAST_SYNCED_KEY)
-      if (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt)) {
+      if (failedDownloads.length === 0 && (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt))) {
         localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
       }
       this.log('sync:complete', `synced at ${result.syncedAt}`)
-      if (failedCount > 0) {
+      if (failedDownloads.length > 0) {
+        const n = failedDownloads.length
+        const titles = failedDownloads.slice(0, 3).map(f => `"${f.title}"`).join(', ')
+        const more = n > 3 ? ` and ${n - 3} more` : ''
+        const dlMsg = `${n} book${n === 1 ? '' : 's'} failed to download (${titles}${more}) — will retry next sync`
+        if (failedCount > 0) {
+          this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry; ${dlMsg}`)
+        } else {
+          this.emitStatus('error', `:sync partial — ${dlMsg}`)
+        }
+        this.log('sync:download-partial', dlMsg)
+      } else if (failedCount > 0) {
         this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry`)
       } else {
         this.emitStatus('complete', ':sync complete')
@@ -544,7 +604,14 @@ class SyncService {
     })
 
     // Create local books from cloud (parallel, concurrency of 3)
-    const booksDownloaded = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
+    const { succeeded: booksDownloaded, failed: failedDownloads } = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
+    if (failedDownloads.length > 0) {
+      const n = failedDownloads.length
+      const titles = failedDownloads.slice(0, 3).map(f => `"${f.title}"`).join(', ')
+      const more = n > 3 ? ` and ${n - 3} more` : ''
+      this.log('sync:download-partial', `${n} book(s) failed to download (${titles}${more})`)
+      this.emitStatus('error', `:download partial — ${n} book${n === 1 ? '' : 's'} failed (${titles}${more}) — try Download again`)
+    }
 
     // Download vocabulary
     for (const sv of serverVocab as Record<string, unknown>[]) {
@@ -579,12 +646,13 @@ class SyncService {
     books: Record<string, unknown>[],
     serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
     token: string,
-  ): Promise<number> {
+  ): Promise<{ succeeded: number; failed: Array<{ remoteId: string; title: string }> }> {
     const total = books.length
-    if (total === 0) return 0
+    if (total === 0) return { succeeded: 0, failed: [] }
 
     let processed = 0
     let succeeded = 0
+    const failed: Array<{ remoteId: string; title: string }> = []
     const CONCURRENCY = 3
 
     this.emitStatus('syncing', `:pull 0/${total} books`, { current: 0, total })
@@ -604,17 +672,18 @@ class SyncService {
         processed++
         const sb = batch[j]
         const result = results[j]
+        const title = (sb.customTitle as string) || 'book'
         if (result.status === 'rejected') {
           this.log('sync:download-error', `${sb.id}: ${result.reason}`)
+          failed.push({ remoteId: sb.id as string, title })
         } else {
           succeeded++
         }
-        const title = (sb.customTitle as string) || 'book'
         this.emitStatus('syncing', `:pull "${title}" (${processed}/${total})`, { current: processed, total })
       }
     }
 
-    return succeeded
+    return { succeeded, failed }
   }
 
   // ── Create a local book from server data ──────────────────────
@@ -650,9 +719,7 @@ class SyncService {
     let pdfBlob: Blob | undefined
     let coverImage: string | null = catalogCoverUrl
     if (format === 'pdf') {
-      const blob = await this.downloadPdf(remoteId)
-      if (!blob) throw new Error('Failed to download PDF')
-      pdfBlob = blob
+      pdfBlob = await this.downloadPdfWithRetry(remoteId)
       if (!coverImage) {
         try {
           const { PDFService } = await import('./pdf-service')
