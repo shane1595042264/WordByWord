@@ -43,7 +43,11 @@ export function CloudSyncSettings() {
       setMessage(`Downloaded ${result.booksDownloaded} book(s) from cloud. Refresh to see them.`)
       await refreshStatus()
     } catch (err) {
-      setMessage(`Download failed: ${err}`)
+      // downloadFromCloud only throws before the local IDB is touched, so we
+      // can promise the user nothing was destroyed.
+      const detail = err instanceof Error ? err.message : String(err)
+      setMessage(`Download failed — your local data is unchanged. (${detail})`)
+      await refreshStatus()
     } finally {
       setSyncing(false)
     }

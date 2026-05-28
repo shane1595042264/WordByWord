@@ -509,13 +509,9 @@ class SyncService {
     const token = await this.getToken()
     if (!token) return { booksDownloaded: 0 }
 
-    // Clear ALL local data first — cloud is the source of truth
-    await db.sections.clear()
-    await db.chapters.clear()
-    await db.vocabulary.clear()
-    await db.books.clear()
-
-    // Get all server data by syncing from epoch with no local changes
+    // Fetch + parse + shape-validate BEFORE touching local IDB. If any of
+    // (network, non-2xx, parse, malformed payload) fails we throw with the
+    // user's library completely untouched — no recovery path needed.
     const res = await fetch(`${this.getApiUrl()}/sync`, {
       method: 'POST',
       headers: {
@@ -531,16 +527,27 @@ class SyncService {
     if (!res.ok) throw new Error(`Sync failed: ${res.status}`)
 
     const result = await res.json()
-    let booksDownloaded = 0
+    const serverBooks = result?.serverChanges?.books
+    const serverVocab = result?.serverChanges?.vocabulary
+    if (!Array.isArray(serverBooks) || !Array.isArray(serverVocab)) {
+      throw new Error('Sync failed: malformed server response')
+    }
+    const activeBooks = (serverBooks as Record<string, unknown>[]).filter((sb) => !sb.deletedAt)
+
+    // Past this point, the cloud payload is valid — commit to replacing local
+    // data. Wipe atomically so the four tables can't end up half-cleared.
+    await db.transaction('rw', [db.books, db.chapters, db.sections, db.vocabulary], async () => {
+      await db.sections.clear()
+      await db.chapters.clear()
+      await db.vocabulary.clear()
+      await db.books.clear()
+    })
 
     // Create local books from cloud (parallel, concurrency of 3)
-    const activeBooks = (result.serverChanges.books ?? []).filter(
-      (sb: Record<string, unknown>) => !sb.deletedAt,
-    )
-    booksDownloaded = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
+    const booksDownloaded = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
 
     // Download vocabulary
-    for (const sv of result.serverChanges.vocabulary ?? []) {
+    for (const sv of serverVocab as Record<string, unknown>[]) {
       await db.vocabulary.add({
         id: sv.id as string,
         word: sv.word as string,
