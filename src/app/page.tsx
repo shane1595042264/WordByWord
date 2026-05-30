@@ -94,8 +94,13 @@ export default function HomePage() {
   const handleDeleteConfirmed = useCallback(async () => {
     const { BookRepository } = await import('@/lib/repositories/book-repository')
     const repo = new BookRepository()
+    let anyBackendSyncFailed = false
     for (const id of selectedIds) {
-      await repo.delete(id)
+      const result = await repo.delete(id)
+      if (result.backendSyncFailed) anyBackendSyncFailed = true
+    }
+    if (anyBackendSyncFailed) {
+      toast.warning('Deleted locally — cloud sync failed, will retry')
     }
     setShowDeleteDialog(false)
     setSelectedIds(new Set())

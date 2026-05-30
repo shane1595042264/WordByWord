@@ -125,7 +125,7 @@ export class BookRepository {
     }
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string): Promise<{ backendSyncFailed: boolean }> {
     // Get remoteId before deleting locally
     const book = await db.books.get(id)
     const remoteId = book?.remoteId
@@ -136,20 +136,30 @@ export class BookRepository {
       await db.books.delete(id)
     })
 
-    // Delete from backend too
-    if (remoteId) {
-      try {
-        const tokenRes = await fetch('/api/auth/token')
-        if (!tokenRes.ok) return
-        const { token } = await tokenRes.json()
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
-        await fetch(`${apiUrl}/books/${remoteId}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      } catch {
-        console.warn('Failed to delete book from backend')
+    // Local-only book never reached the backend — nothing to delete remotely.
+    if (!remoteId) return { backendSyncFailed: false }
+
+    try {
+      const tokenRes = await fetch('/api/auth/token')
+      if (!tokenRes.ok) {
+        console.warn(`Failed to delete book from backend: auth token fetch returned ${tokenRes.status}`)
+        return { backendSyncFailed: true }
       }
+      const { token } = await tokenRes.json()
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+      const res = await fetch(`${apiUrl}/books/${remoteId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      // 404 = already gone on server (parity with KAN-137 vocab delete)
+      if (!res.ok && res.status !== 404) {
+        console.warn(`Failed to delete book from backend: ${res.status}`)
+        return { backendSyncFailed: true }
+      }
+      return { backendSyncFailed: false }
+    } catch {
+      console.warn('Failed to delete book from backend')
+      return { backendSyncFailed: true }
     }
   }
 }
