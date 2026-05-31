@@ -17,6 +17,7 @@ export function HeatmapGrid({ sections, onSectionClick }: HeatmapGridProps) {
             <TooltipTrigger asChild>
               <button
                 onClick={() => onSectionClick?.(section.id)}
+                aria-label={`${section.title} — ${section.isRead ? 'Read' : 'Unread'}, pages ${section.startPage}-${section.endPage}`}
                 className={`w-4 h-4 rounded-sm transition-colors cursor-pointer ${
                   section.isRead
                     ? 'bg-green-500 hover:bg-green-400'
