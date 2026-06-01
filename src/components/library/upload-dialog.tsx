@@ -16,6 +16,11 @@ interface UploadDialogProps {
 
 type UploadStep = 'select' | 'mode' | 'uploading'
 
+// Mirrors nibble-api's config.MAX_UPLOAD_SIZE_MB default (100). The backend
+// still enforces the limit and returns 413 — this is purely a UX guard so we
+// don't spend pdfjs metadata extract + a full upload before failing.
+const MAX_UPLOAD_SIZE_MB = 100
+
 export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<UploadStep>('select')
@@ -30,6 +35,11 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
     const isEpub = f.type === 'application/epub+zip' || /\.epub$/i.test(f.name)
     if (!isPdf && !isEpub) {
       setStatus('Only PDF and EPUB files are allowed')
+      e.target.value = ''
+      return
+    }
+    if (f.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
+      setStatus(`File must be under ${MAX_UPLOAD_SIZE_MB} MB`)
       e.target.value = ''
       return
     }
