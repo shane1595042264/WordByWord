@@ -188,6 +188,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         textPositionsRef.current.clear()
         pageWrappersRef.current.clear()
         renderedPagesRef.current.clear()
+        viewportInfoRef.current.clear()
 
         const containerWidth = container.clientWidth
         containerWidthRef.current = containerWidth
@@ -447,6 +448,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         container.innerHTML = ''
         textPositionsRef.current.clear()
         pageWrappersRef.current.clear()
+        viewportInfoRef.current.clear()
 
         const containerWidth = container.clientWidth
 
