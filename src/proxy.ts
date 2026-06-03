@@ -9,7 +9,7 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Public routes — no auth required
-  const publicPaths = ['/auth/login', '/auth/register', '/api/auth', '/api/admin']
+  const publicPaths = ['/auth/login', '/auth/register', '/api/auth', '/api/admin/register']
   const isPublic = publicPaths.some(p => pathname.startsWith(p))
   if (isPublic) return NextResponse.next()
 
