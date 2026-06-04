@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { toast } from 'sonner'
 import type { Book, Chapter, Section } from '@/lib/db/models'
 
 export type ViewMode = 'pdf' | 'text' | 'side-by-side'
@@ -22,6 +23,11 @@ export function useReader(bookId: string, sectionId: string) {
     setViewModeState(mode)
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
       new SettingsService().updateSettings({ defaultViewMode: mode })
+    }).catch((err) => {
+      toast.error('Failed to save view preference', {
+        description: err instanceof Error ? err.message : 'Unknown storage error.',
+        duration: 5000,
+      })
     })
   }, [])
 
@@ -29,6 +35,11 @@ export function useReader(bookId: string, sectionId: string) {
     setReadingModeState(mode)
     import('@/lib/services/settings-service').then(({ SettingsService }) => {
       new SettingsService().updateSettings({ readingMode: mode })
+    }).catch((err) => {
+      toast.error('Failed to save reading mode', {
+        description: err instanceof Error ? err.message : 'Unknown storage error.',
+        duration: 5000,
+      })
     })
   }, [])
 

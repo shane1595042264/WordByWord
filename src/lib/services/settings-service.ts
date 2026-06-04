@@ -65,7 +65,17 @@ export class SettingsService {
   updateSettings(partial: Partial<AppSettings>): void {
     const current = this.getSettings()
     const updated = { ...current, ...partial }
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated))
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated))
+    } catch (err) {
+      const name = err instanceof Error ? err.name : 'Error'
+      const reason = name === 'QuotaExceededError'
+        ? 'browser storage is full'
+        : name === 'SecurityError'
+          ? 'browser storage is blocked (third-party / private mode)'
+          : 'browser storage write failed'
+      throw new Error(`Could not save settings: ${reason}.`, { cause: err })
+    }
   }
 
   getApiKey(): string | null {

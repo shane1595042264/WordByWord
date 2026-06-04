@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -44,9 +45,16 @@ function SettingsContent() {
   const handleSave = async () => {
     const { SettingsService } = await import('@/lib/services/settings-service')
     const svc = new SettingsService()
-    svc.updateSettings(settings)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      svc.updateSettings(settings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      toast.error('Failed to save settings', {
+        description: err instanceof Error ? err.message : 'Unknown storage error.',
+        duration: 5000,
+      })
+    }
   }
 
   return (
@@ -243,6 +251,11 @@ function SettingsContent() {
                   const svc = new SettingsService()
                   svc.updateSettings(updated)
                   window.dispatchEvent(new Event('keymap-changed'))
+                }).catch((err) => {
+                  toast.error('Failed to save keymap', {
+                    description: err instanceof Error ? err.message : 'Unknown storage error.',
+                    duration: 5000,
+                  })
                 })
               }}
             />
