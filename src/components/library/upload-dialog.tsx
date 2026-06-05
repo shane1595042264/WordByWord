@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { v4 as uuid } from 'uuid'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
+  const uploadingRef = useRef(false)
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -52,6 +53,8 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
   const handleUpload = useCallback(async (mode: 'full' | 'toc-only', sourceFile?: File) => {
     const f = sourceFile ?? file
     if (!f) return
+    if (uploadingRef.current) return
+    uploadingRef.current = true
     setStep('uploading')
     setLoading(true)
 
@@ -124,6 +127,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       setStatus('')
       setStep('select')
       setFile(null)
+      uploadingRef.current = false
       onBookImported()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -133,6 +137,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       setFile(null)
       setStatus('')
       setLoading(false)
+      uploadingRef.current = false
     }
   }, [file, onBookImported])
 
@@ -174,7 +179,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
               <p className="text-sm font-medium">{file.name}</p>
               <p className="text-xs text-muted-foreground">Choose processing mode:</p>
 
-              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" onClick={() => handleUpload('full')}>
+              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" disabled={loading} onClick={() => handleUpload('full')}>
                 <div className="min-w-0">
                   <div className="font-semibold">Full Processing</div>
                   <div className="text-xs text-muted-foreground font-normal">
@@ -183,7 +188,7 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
                 </div>
               </Button>
 
-              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" onClick={() => handleUpload('toc-only')}>
+              <Button className="w-full justify-start text-left h-auto py-3 whitespace-normal" variant="outline" disabled={loading} onClick={() => handleUpload('toc-only')}>
                 <div className="min-w-0">
                   <div className="font-semibold">TOC Only</div>
                   <div className="text-xs text-muted-foreground font-normal">
