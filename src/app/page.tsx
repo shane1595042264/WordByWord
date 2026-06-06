@@ -22,6 +22,8 @@ export default function HomePage() {
   const [editMode, setEditMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
   const { isSyncing: backgroundSyncing, progress: syncProgress } = useSyncStatus({ showToasts: true })
@@ -92,21 +94,44 @@ export default function HomePage() {
   }, [])
 
   const handleDeleteConfirmed = useCallback(async () => {
-    const { BookRepository } = await import('@/lib/repositories/book-repository')
-    const repo = new BookRepository()
+    if (isDeleting) return
+    const ids = Array.from(selectedIds)
+    const total = ids.length
+    setIsDeleting(true)
+    setDeleteProgress({ current: 0, total })
+    let succeeded = 0
     let anyBackendSyncFailed = false
-    for (const id of selectedIds) {
-      const result = await repo.delete(id)
-      if (result.backendSyncFailed) anyBackendSyncFailed = true
+    let didThrow = false
+    try {
+      const { BookRepository } = await import('@/lib/repositories/book-repository')
+      const repo = new BookRepository()
+      for (const id of ids) {
+        const result = await repo.delete(id)
+        if (result.backendSyncFailed) anyBackendSyncFailed = true
+        succeeded += 1
+        setDeleteProgress({ current: succeeded, total })
+      }
+    } catch (err) {
+      didThrow = true
+      console.error('Delete failed mid-loop:', err)
+    } finally {
+      if (didThrow) {
+        const failed = total - succeeded
+        toast.error('Failed to delete some books', {
+          description: `${succeeded} deleted, ${failed} not deleted. Refresh and try again.`,
+          duration: 6000,
+        })
+      } else if (anyBackendSyncFailed) {
+        toast.warning('Deleted locally — cloud sync failed, will retry')
+      }
+      setShowDeleteDialog(false)
+      setSelectedIds(new Set())
+      setEditMode(false)
+      setIsDeleting(false)
+      setDeleteProgress(null)
+      refresh()
     }
-    if (anyBackendSyncFailed) {
-      toast.warning('Deleted locally — cloud sync failed, will retry')
-    }
-    setShowDeleteDialog(false)
-    setSelectedIds(new Set())
-    setEditMode(false)
-    refresh()
-  }, [selectedIds, refresh])
+  }, [selectedIds, isDeleting, refresh])
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -238,6 +263,8 @@ export default function HomePage() {
         count={selectedIds.size}
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setShowDeleteDialog(false)}
+        isDeleting={isDeleting}
+        progress={deleteProgress ?? undefined}
       />
     </div>
   )
