@@ -27,10 +27,13 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [fetchError, setFetchError] = useState<FetchError | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const lastTimestampRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!open) return
     setFetchError(null)
+    setLogs([])
+    lastTimestampRef.current = null
     let interval: ReturnType<typeof setInterval> | undefined
     let cancelled = false
 
@@ -52,7 +55,13 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
         }
         const { token } = await tokenRes.json()
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-        const res = await fetch(`${apiUrl}/processing/${jobId}/logs`, {
+        // Server filter is gte; bump by 1ms to avoid re-shipping the boundary row.
+        let url = `${apiUrl}/processing/${jobId}/logs`
+        if (lastTimestampRef.current) {
+          const boundary = new Date(new Date(lastTimestampRef.current).getTime() + 1).toISOString()
+          url += `?since=${encodeURIComponent(boundary)}`
+        }
+        const res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (!res.ok) {
@@ -63,7 +72,10 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
         }
         const data = await res.json()
         if (cancelled) return
-        setLogs(data.logs || [])
+        const newLogs: LogEntry[] = data.logs || []
+        if (newLogs.length === 0) return
+        lastTimestampRef.current = newLogs[newLogs.length - 1].timestamp
+        setLogs(prev => prev.concat(newLogs))
       } catch (err) {
         console.error('Failed to fetch processing logs:', err)
         if (cancelled) return
