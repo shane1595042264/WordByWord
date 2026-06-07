@@ -535,29 +535,39 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Only track after loading completes to ensure scroll containers are mounted
   useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef)
 
+  // ── Scroll progress persistence (debounced; shared by PDF and text modes) ──
+  const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveErrorShownRef = useRef(false)
+
   const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
     setCurrentPage(page)
-    import('@/lib/db/database').then(({ db }) => {
-      const now = Date.now()
-      db.sections.update(sectionId, {
-        lastPageViewed: page,
-        scrollProgress: scrollPercent,
-        updatedAt: now,
-      }).catch((err) => {
-        console.error('Failed to save page progress:', err)
-        if (!saveErrorShownRef.current) {
-          saveErrorShownRef.current = true
-          toast.warning('Could not save reading position. Your progress may not be preserved.')
-        }
+    // Debounce the DB write — pdf-viewer's onPageProgress fires on every native scroll event (30-60/s)
+    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
+    scrollDbTimerRef.current = setTimeout(() => {
+      import('@/lib/db/database').then(({ db }) => {
+        const now = Date.now()
+        db.sections.update(sectionId, {
+          lastPageViewed: page,
+          scrollProgress: scrollPercent,
+          updatedAt: now,
+        }).catch((err) => {
+          console.error('Failed to save page progress:', err)
+          if (!saveErrorShownRef.current) {
+            saveErrorShownRef.current = true
+            toast.warning('Could not save reading position. Your progress may not be preserved.')
+          }
+        })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
       })
-      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
-    })
+    }, 500)
   }, [sectionId])
 
-  // ── Text mode scroll tracking (debounced DB writes) ──
-  const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const saveErrorShownRef = useRef(false)
+  // Clear any pending trailing-debounce write on unmount so it can't fire post-navigation.
+  useEffect(() => () => {
+    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
+  }, [])
+
   const handleTextScroll = useCallback(() => {
     const el = textScrollRef.current
     if (!el) return
