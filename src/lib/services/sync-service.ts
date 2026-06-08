@@ -593,6 +593,7 @@ class SyncService {
       throw new Error('Sync failed: malformed server response')
     }
     const activeBooks = (serverBooks as Record<string, unknown>[]).filter((sb) => !sb.deletedAt)
+    const activeVocab = (serverVocab as Record<string, unknown>[]).filter((sv) => !sv.deletedAt)
 
     // Past this point, the cloud payload is valid — commit to replacing local
     // data. Wipe atomically so the four tables can't end up half-cleared.
@@ -613,8 +614,9 @@ class SyncService {
       this.emitStatus('error', `:download partial — ${n} book${n === 1 ? '' : 's'} failed (${titles}${more}) — try Download again`)
     }
 
-    // Download vocabulary
-    for (const sv of serverVocab as Record<string, unknown>[]) {
+    // Download vocabulary (active rows only — server returns soft-deleted vocab
+    // so the incremental sync path can mirror tombstones; bootstrap must skip them)
+    for (const sv of activeVocab) {
       await db.vocabulary.add({
         id: sv.id as string,
         word: sv.word as string,
@@ -754,9 +756,9 @@ class SyncService {
       catalogId: sb.catalogId as string,
     })
 
-    // Create chapters
+    // Create chapters (skip soft-deleted — see vocab note above)
     const serverChapters = (serverChanges.chapters ?? []).filter(
-      (ch: Record<string, unknown>) => ch.bookId === remoteId
+      (ch: Record<string, unknown>) => ch.bookId === remoteId && !ch.deletedAt
     )
     for (const sch of serverChapters) {
       await db.chapters.add({
@@ -770,9 +772,9 @@ class SyncService {
       })
     }
 
-    // Create sections
+    // Create sections (skip soft-deleted — see vocab note above)
     const serverSections = (serverChanges.sections ?? []).filter(
-      (sec: Record<string, unknown>) => sec.bookId === remoteId
+      (sec: Record<string, unknown>) => sec.bookId === remoteId && !sec.deletedAt
     )
     for (const ss of serverSections) {
       await db.sections.add({
