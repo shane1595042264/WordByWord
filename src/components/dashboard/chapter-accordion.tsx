@@ -173,27 +173,8 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
     })
   }, [chapters, query, isSearching])
 
-  if (!hasNesting) {
-    // Flat rendering (no groups)
-    return (
-      <div className="space-y-2">
-        {filteredChapters.map(chapter => (
-          <FlatChapter key={chapter.id} bookId={bookId} chapter={chapter}
-            expanded={isSearching || expandedChapter === chapter.id}
-            onToggle={() => setExpandedChapter(expandedChapter === chapter.id ? null : chapter.id)}
-            canDivide={!!pdfBlob && !!bookRemoteId}
-            onDivide={() => setDividingChapter(chapter)}
-            searchQuery={query}
-          />
-        ))}
-        {filteredChapters.length === 0 && isSearching && (
-          <p className="text-sm text-muted-foreground py-4 text-center">No chapters or sections match your search.</p>
-        )}
-        {divideDialog}
-      </div>
-    )
-  }
-  // Filter groups for search
+  // Filter groups for search. Must sit above the !hasNesting early return so
+  // hook count stays stable when chapters flip between flat and nested formats.
   const filteredGroups = useMemo(() => {
     if (!isSearching) return groups
     return groups
@@ -215,6 +196,27 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
       })
       .filter((g): g is ChapterGroup => g !== null)
   }, [groups, query, isSearching])
+
+  if (!hasNesting) {
+    // Flat rendering (no groups)
+    return (
+      <div className="space-y-2">
+        {filteredChapters.map(chapter => (
+          <FlatChapter key={chapter.id} bookId={bookId} chapter={chapter}
+            expanded={isSearching || expandedChapter === chapter.id}
+            onToggle={() => setExpandedChapter(expandedChapter === chapter.id ? null : chapter.id)}
+            canDivide={!!pdfBlob && !!bookRemoteId}
+            onDivide={() => setDividingChapter(chapter)}
+            searchQuery={query}
+          />
+        ))}
+        {filteredChapters.length === 0 && isSearching && (
+          <p className="text-sm text-muted-foreground py-4 text-center">No chapters or sections match your search.</p>
+        )}
+        {divideDialog}
+      </div>
+    )
+  }
   // Nested rendering (groups > chapters > sections)
   return (
     <div className="space-y-2">
