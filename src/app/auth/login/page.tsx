@@ -11,8 +11,10 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get('callbackUrl') ?? '/'
   const errorParam = searchParams.get('error')
+  const registered = searchParams.get('registered') === '1'
+  const prefilledEmail = searchParams.get('email') ?? ''
 
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(prefilledEmail)
   const [password, setPassword] = useState('')
   const [error, setError] = useState(errorParam === 'OAuthAccountNotLinked'
     ? 'This email is already registered. Sign in with your password first, then link Google in settings.'
@@ -50,6 +52,12 @@ function LoginForm() {
           <h1 className="text-3xl font-bold tracking-tight">Nibbler</h1>
           <p className="text-muted-foreground mt-2">Sign in to your account</p>
         </div>
+
+        {registered && !error && (
+          <div role="status" aria-live="polite" className="mb-4 p-3 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-sm">
+            Your account was created — please sign in.
+          </div>
+        )}
 
         {error && (
           <div role="alert" aria-live="assertive" className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">

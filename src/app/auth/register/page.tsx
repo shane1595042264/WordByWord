@@ -53,8 +53,10 @@ export default function RegisterPage() {
       })
 
       if (result?.error) {
-        // Registration succeeded but auto-login failed, redirect to login
-        router.push('/auth/login')
+        // Registration succeeded but auto-login failed — surface the success on the login page
+        // and prefill the email so the user doesn't think the register itself failed.
+        setLoading(false)
+        router.push(`/auth/login?registered=1&email=${encodeURIComponent(email)}`)
       } else {
         router.push('/')
         router.refresh()
