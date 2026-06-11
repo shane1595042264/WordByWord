@@ -948,6 +948,11 @@ class SyncService {
       if (!localBookId) continue
       const local = await db.chapters.get(chapterId)
       if (!local) {
+        // A concurrent writer (other tab, or the vocab-add carve-out racing the
+        // debounced sync) can insert the same id between the get() and the add().
+        // A ConstraintError here is benign — same row, same desired end state.
+        // Swallow it and continue so LAST_SYNCED_KEY can still advance and we
+        // don't get stuck replaying this serverChanges window forever.
         await db.chapters.add({
           id: chapterId,
           bookId: localBookId,
@@ -956,6 +961,9 @@ class SyncService {
           startPage: (sch.startPage as number) ?? 0,
           endPage: (sch.endPage as number) ?? 0,
           updatedAt: Date.now(),
+        }).catch((err: { name?: string }) => {
+          if (err?.name !== 'ConstraintError') throw err
+          console.warn('Skipped duplicate chapter during sync apply:', chapterId, err)
         })
       } else {
         const serverUpdated = new Date(sch.updatedAt as string).getTime()
@@ -981,7 +989,8 @@ class SyncService {
       const localBookId = remoteToLocal.get(remoteBookId)
       const local = await db.sections.get(ss.id as string)
       if (!local && localBookId) {
-        // Create new section from server
+        // Create new section from server. ConstraintError swallowed for the same
+        // concurrent-writer reason as the chapter branch above.
         await db.sections.add({
           id: ss.id as string,
           chapterId: ss.chapterId as string,
@@ -997,6 +1006,9 @@ class SyncService {
           lastPageViewed: (ss.lastPageViewed as number) ?? null,
           scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
           updatedAt: Date.now(),
+        }).catch((err: { name?: string }) => {
+          if (err?.name !== 'ConstraintError') throw err
+          console.warn('Skipped duplicate section during sync apply:', ss.id, err)
         })
       } else if (local) {
         // Update existing section (reading progress merge)
@@ -1022,6 +1034,9 @@ class SyncService {
     for (const sv of serverChanges.vocabulary ?? []) {
       const local = await db.vocabulary.get(sv.id as string)
       if (!local) {
+        // Vocab is the carve-out that bypasses the 30s debounce (see
+        // VocabService.add), making the cross-tab race here the most likely
+        // ConstraintError source. Swallow and continue.
         await db.vocabulary.add({
           id: sv.id as string,
           word: sv.word as string,
@@ -1038,7 +1053,10 @@ class SyncService {
           lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
           createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
           updatedAt: new Date(sv.updatedAt as string).getTime(),
-        } as VocabEntry)
+        } as VocabEntry).catch((err: { name?: string }) => {
+          if (err?.name !== 'ConstraintError') throw err
+          console.warn('Skipped duplicate vocab entry during sync apply:', sv.id, err)
+        })
       } else {
         const serverUpdated = new Date(sv.updatedAt as string).getTime()
         if (serverUpdated > local.updatedAt) {

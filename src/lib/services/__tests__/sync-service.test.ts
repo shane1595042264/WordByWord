@@ -166,3 +166,214 @@ describe('syncService.downloadFromCloud()', () => {
     expect(v?.word).toBe('cloud')
   })
 })
+
+// Regression coverage for KAN-213: applyServerChanges() must swallow Dexie
+// ConstraintError on .add() so a concurrent writer racing the get()/add()
+// window doesn't abort the whole sync, leaving LAST_SYNCED_KEY stuck in a
+// permanent replay loop. We simulate the race by stubbing the precheck get()
+// to return undefined while the real row is already present in the table.
+describe('syncService.applyServerChanges() — duplicate-id tolerance', () => {
+  type ApplyArgs = [
+    {
+      books?: Record<string, unknown>[]
+      chapters?: Record<string, unknown>[]
+      sections?: Record<string, unknown>[]
+      vocabulary?: Record<string, unknown>[]
+    },
+    Map<string, string>,
+  ]
+  const callApply = (args: ApplyArgs) =>
+    (
+      syncService as unknown as {
+        applyServerChanges: (...a: ApplyArgs) => Promise<void>
+      }
+    ).applyServerChanges(...args)
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    const now = Date.now()
+    await db.books.add({
+      id: 'local-book-1',
+      title: 'Book',
+      author: '',
+      totalPages: 10,
+      format: 'pdf',
+      pdfBlob: new Blob(['x']),
+      coverImage: null,
+      structureSource: 'native',
+      processingStatus: 'complete',
+      createdAt: now,
+      updatedAt: now,
+      lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
+      completedAt: null,
+      remoteId: 'remote-book-1',
+      catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('chapter add: ConstraintError on duplicate id resolves and leaves the row count unchanged', async () => {
+    const now = Date.now()
+    await db.chapters.add({
+      id: 'ch-dup',
+      bookId: 'local-book-1',
+      title: 'Existing',
+      order: 0,
+      startPage: 1,
+      endPage: 10,
+      updatedAt: now,
+    } as Parameters<typeof db.chapters.add>[0])
+    // Force the precheck miss to drive the .add() branch even though the row exists.
+    vi.spyOn(db.chapters, 'get').mockResolvedValue(undefined)
+
+    await expect(
+      callApply([
+        {
+          chapters: [
+            {
+              id: 'ch-dup',
+              bookId: 'remote-book-1',
+              title: 'From Server',
+              sortOrder: 0,
+              startPage: 1,
+              endPage: 10,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        },
+        new Map([['local-book-1', 'remote-book-1']]),
+      ]),
+    ).resolves.toBeUndefined()
+    expect(await db.chapters.count()).toBe(1)
+  })
+
+  it('section add: ConstraintError on duplicate id resolves and leaves the row count unchanged', async () => {
+    const now = Date.now()
+    await db.chapters.add({
+      id: 'ch-1',
+      bookId: 'local-book-1',
+      title: 'Ch',
+      order: 0,
+      startPage: 1,
+      endPage: 10,
+      updatedAt: now,
+    } as Parameters<typeof db.chapters.add>[0])
+    await db.sections.add({
+      id: 'sec-dup',
+      chapterId: 'ch-1',
+      bookId: 'local-book-1',
+      title: 'Existing',
+      order: 0,
+      startPage: 1,
+      endPage: 5,
+      isRead: false,
+      readAt: null,
+      lastPageViewed: null,
+      scrollProgress: 0,
+      extractedText: null,
+      richContent: null,
+      updatedAt: now,
+    } as Parameters<typeof db.sections.add>[0])
+    vi.spyOn(db.sections, 'get').mockResolvedValue(undefined)
+
+    await expect(
+      callApply([
+        {
+          sections: [
+            {
+              id: 'sec-dup',
+              chapterId: 'ch-1',
+              bookId: 'remote-book-1',
+              title: 'From Server',
+              sortOrder: 0,
+              startPage: 1,
+              endPage: 5,
+              isRead: false,
+              readAt: null,
+              lastPageViewed: null,
+              scrollProgress: 0,
+              extractedText: null,
+              richContent: null,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        },
+        new Map([['local-book-1', 'remote-book-1']]),
+      ]),
+    ).resolves.toBeUndefined()
+    expect(await db.sections.count()).toBe(1)
+  })
+
+  it('vocabulary add: ConstraintError on duplicate id resolves and leaves the row count unchanged', async () => {
+    const now = Date.now()
+    await db.vocabulary.add({
+      id: 'v-dup',
+      word: 'existing',
+      pronunciation: '',
+      translation: '',
+      targetLanguage: '',
+      contextSentence: '',
+      explanation: null,
+      bookTitle: '',
+      sectionTitle: '',
+      pageNumber: 0,
+      bookId: 'local-book-1',
+      reviewCount: 0,
+      lastReviewedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    } as Parameters<typeof db.vocabulary.add>[0])
+    vi.spyOn(db.vocabulary, 'get').mockResolvedValue(undefined)
+
+    await expect(
+      callApply([
+        {
+          vocabulary: [
+            {
+              id: 'v-dup',
+              word: 'fromServer',
+              bookId: 'remote-book-1',
+              updatedAt: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        new Map([['local-book-1', 'remote-book-1']]),
+      ]),
+    ).resolves.toBeUndefined()
+    expect(await db.vocabulary.count()).toBe(1)
+  })
+
+  it('chapter add: non-ConstraintError still propagates so genuine corruption is not masked', async () => {
+    vi.spyOn(db.chapters, 'get').mockResolvedValue(undefined)
+    const fatal = Object.assign(new Error('disk full'), { name: 'QuotaExceededError' })
+    vi.spyOn(db.chapters, 'add').mockRejectedValue(fatal)
+
+    await expect(
+      callApply([
+        {
+          chapters: [
+            {
+              id: 'ch-x',
+              bookId: 'remote-book-1',
+              title: 't',
+              sortOrder: 0,
+              startPage: 1,
+              endPage: 10,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        },
+        new Map([['local-book-1', 'remote-book-1']]),
+      ]),
+    ).rejects.toBe(fatal)
+  })
+})
