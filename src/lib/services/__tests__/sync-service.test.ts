@@ -352,6 +352,69 @@ describe('syncService.applyServerChanges() — duplicate-id tolerance', () => {
     expect(await db.vocabulary.count()).toBe(1)
   })
 
+  // Regression coverage for KAN-214: the vocab loop in applyServerChanges must
+  // honour the deletedAt tombstone the server returns for soft-deleted rows,
+  // mirroring the chapter/section branches. Without this, a vocab deletion on
+  // Device A silently fails to propagate to Device B until a full bootstrap.
+  it('vocabulary tombstone: deletedAt removes the matching local row and leaves siblings untouched', async () => {
+    const now = Date.now()
+    await db.vocabulary.bulkAdd([
+      {
+        id: 'v-to-delete',
+        word: 'goodbye',
+        pronunciation: '',
+        translation: '',
+        targetLanguage: '',
+        contextSentence: '',
+        explanation: null,
+        bookTitle: '',
+        sectionTitle: '',
+        pageNumber: 0,
+        bookId: 'local-book-1',
+        reviewCount: 0,
+        lastReviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'v-sibling',
+        word: 'hello',
+        pronunciation: '',
+        translation: '',
+        targetLanguage: '',
+        contextSentence: '',
+        explanation: null,
+        bookTitle: '',
+        sectionTitle: '',
+        pageNumber: 0,
+        bookId: 'local-book-1',
+        reviewCount: 0,
+        lastReviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ] as Parameters<typeof db.vocabulary.bulkAdd>[0])
+
+    await callApply([
+      {
+        vocabulary: [
+          {
+            id: 'v-to-delete',
+            word: 'goodbye',
+            bookId: 'remote-book-1',
+            updatedAt: new Date().toISOString(),
+            createdAt: new Date(now).toISOString(),
+            deletedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    ])
+
+    expect(await db.vocabulary.get('v-to-delete')).toBeUndefined()
+    expect(await db.vocabulary.get('v-sibling')).toBeDefined()
+  })
+
   it('chapter add: non-ConstraintError still propagates so genuine corruption is not masked', async () => {
     vi.spyOn(db.chapters, 'get').mockResolvedValue(undefined)
     const fatal = Object.assign(new Error('disk full'), { name: 'QuotaExceededError' })

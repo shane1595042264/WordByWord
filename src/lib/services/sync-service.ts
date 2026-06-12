@@ -1030,8 +1030,12 @@ class SyncService {
       }
     }
 
-    // Update/create vocabulary
+    // Update/create/delete vocabulary
     for (const sv of serverChanges.vocabulary ?? []) {
+      if (sv.deletedAt) {
+        await db.vocabulary.delete(sv.id as string)
+        continue
+      }
       const local = await db.vocabulary.get(sv.id as string)
       if (!local) {
         // Vocab is the carve-out that bypasses the 30s debounce (see
