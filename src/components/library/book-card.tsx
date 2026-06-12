@@ -39,8 +39,14 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
   const [hovered, setHovered] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
+  const [coverError, setCoverError] = useState(false)
   const completedRef = useRef(false)
   const hasLog = !!book.jobId
+
+  // Reset cover error state when the URL changes so sync recoveries re-attempt the load
+  useEffect(() => {
+    setCoverError(false)
+  }, [book.coverImage])
 
   // Trigger refresh when processing completes
   useEffect(() => {
@@ -54,11 +60,12 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
   const coverContent = (
     <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden relative">
-      {book.coverImage ? (
+      {book.coverImage && !coverError ? (
         <img
           src={book.coverImage}
           alt={book.title}
           className={`object-cover w-full h-full transition-all ${isProcessing || isFailed ? 'brightness-[0.3]' : ''}`}
+          onError={() => setCoverError(true)}
         />
       ) : (
         <span className={`text-4xl text-muted-foreground ${isProcessing || isFailed ? 'opacity-30' : ''}`}>📖</span>

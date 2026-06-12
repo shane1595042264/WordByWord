@@ -158,36 +158,60 @@ export default function MarketplacePage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {catalog.map(entry => (
-            <Card key={entry.id}>
-              <CardContent className="p-4 flex flex-col gap-3">
-                <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden">
-                  {entry.coverUrl ? (
-                    <img src={entry.coverUrl} alt={entry.title} className="object-cover w-full h-full" />
-                  ) : (
-                    <span className="text-4xl text-muted-foreground">📖</span>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <h3 className="font-semibold text-sm line-clamp-2">{entry.title}</h3>
-                  {entry.author && <p className="text-xs text-muted-foreground">{entry.author}</p>}
-                  <div className="flex gap-2 text-xs text-muted-foreground">
-                    {entry.totalPages && <span>{entry.totalPages} pages</span>}
-                    <span>{entry.userCount} user(s)</span>
-                  </div>
-                  {entry.isbn && <p className="text-xs text-muted-foreground">ISBN: {entry.isbn}</p>}
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => addToShelf(entry.id)}
-                  disabled={adding === entry.id}
-                >
-                  {adding === entry.id ? 'Adding...' : 'Add to My Shelf'}
-                </Button>
-              </CardContent>
-            </Card>
+            <CatalogCard
+              key={entry.id}
+              entry={entry}
+              adding={adding === entry.id}
+              onAdd={() => addToShelf(entry.id)}
+            />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+interface CatalogCardProps {
+  entry: CatalogEntry
+  adding: boolean
+  onAdd: () => void
+}
+
+function CatalogCard({ entry, adding, onAdd }: CatalogCardProps) {
+  const [coverError, setCoverError] = useState(false)
+
+  useEffect(() => {
+    setCoverError(false)
+  }, [entry.coverUrl])
+
+  return (
+    <Card>
+      <CardContent className="p-4 flex flex-col gap-3">
+        <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden">
+          {entry.coverUrl && !coverError ? (
+            <img
+              src={entry.coverUrl}
+              alt={entry.title}
+              className="object-cover w-full h-full"
+              onError={() => setCoverError(true)}
+            />
+          ) : (
+            <span className="text-4xl text-muted-foreground">📖</span>
+          )}
+        </div>
+        <div className="space-y-1">
+          <h3 className="font-semibold text-sm line-clamp-2">{entry.title}</h3>
+          {entry.author && <p className="text-xs text-muted-foreground">{entry.author}</p>}
+          <div className="flex gap-2 text-xs text-muted-foreground">
+            {entry.totalPages && <span>{entry.totalPages} pages</span>}
+            <span>{entry.userCount} user(s)</span>
+          </div>
+          {entry.isbn && <p className="text-xs text-muted-foreground">ISBN: {entry.isbn}</p>}
+        </div>
+        <Button size="sm" onClick={onAdd} disabled={adding}>
+          {adding ? 'Adding...' : 'Add to My Shelf'}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }

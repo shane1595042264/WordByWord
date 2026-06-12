@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useCallback, useTransition } from 'react'
+import { use, useState, useEffect, useCallback, useTransition } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,12 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   const [saving, setSaving] = useState(false)
   const [generatingCover, setGeneratingCover] = useState(false)
   const [showChapterEditor, setShowChapterEditor] = useState(false)
+  const [coverError, setCoverError] = useState(false)
+
+  // Reset cover error state when the URL changes so sync recoveries re-attempt the load
+  useEffect(() => {
+    setCoverError(false)
+  }, [book?.coverImage])
 
   const startEditing = useCallback(() => {
     if (!book) return
@@ -107,8 +113,15 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
 
       <div className="flex flex-col sm:flex-row gap-6 mb-8 items-center sm:items-start">
         <div className="w-24 h-32 sm:w-32 sm:h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
-          {book.coverImage ? (
-            <img src={book.coverImage} alt={book.title} className="object-cover w-full h-full rounded-lg" />
+          {book.coverImage && !coverError ? (
+            <img
+              src={book.coverImage}
+              alt={book.title}
+              className="object-cover w-full h-full rounded-lg"
+              onError={() => setCoverError(true)}
+            />
+          ) : book.coverImage && coverError ? (
+            <span className="text-5xl">📖</span>
           ) : (
             <div className="flex flex-col items-center gap-2">
               <span className="text-5xl">📖</span>
