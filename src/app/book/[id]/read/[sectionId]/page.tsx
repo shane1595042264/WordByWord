@@ -19,6 +19,7 @@ import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
 import { Button } from '@/components/ui/button'
 import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
 import { NibService } from '@/lib/services/nib-service'
+import { BookRepository } from '@/lib/repositories'
 import type { NibDocument } from '@/lib/nib'
 import type { VimRule } from '@/lib/vim'
 
@@ -281,6 +282,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   // ── Auto-save last-accessed position (for Continue Reading) ──
   const positionRef = useRef({ sectionId, progress: 0, wordIndex: null as number | null })
+  const bookRepoRef = useRef<BookRepository | null>(null)
+  if (bookRepoRef.current === null) bookRepoRef.current = new BookRepository()
 
   useEffect(() => { positionRef.current.sectionId = sectionId }, [sectionId])
   useEffect(() => { positionRef.current.progress = effectiveProgress }, [effectiveProgress])
@@ -290,34 +293,38 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (!bookId || !sectionId) return
     const timer = setTimeout(() => {
-      import('@/lib/repositories').then(({ BookRepository }) => {
-        const repo = new BookRepository()
-        repo.updateLastAccessed(
-          bookId,
-          positionRef.current.sectionId,
-          positionRef.current.progress,
-          positionRef.current.wordIndex,
-        )
-      })
+      bookRepoRef.current?.updateLastAccessed(
+        bookId,
+        positionRef.current.sectionId,
+        positionRef.current.progress,
+        positionRef.current.wordIndex,
+      )
     }, 2000)
     return () => clearTimeout(timer)
   }, [bookId, sectionId, effectiveProgress, selectedWordIndex])
 
-  // Save immediately on page unload (best-effort)
+  // Save immediately on page unload / tab hide (best-effort).
+  // Must be synchronous — the browser does not await async work during these
+  // events, so the IDB put() has to be queued before the handler returns.
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      import('@/lib/repositories').then(({ BookRepository }) => {
-        const repo = new BookRepository()
-        repo.updateLastAccessed(
-          bookId,
-          positionRef.current.sectionId,
-          positionRef.current.progress,
-          positionRef.current.wordIndex,
-        )
-      })
+    if (!bookId) return
+    const flush = () => {
+      bookRepoRef.current?.updateLastAccessed(
+        bookId,
+        positionRef.current.sectionId,
+        positionRef.current.progress,
+        positionRef.current.wordIndex,
+      )
     }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('beforeunload', flush)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [bookId])
 
   // ── Page-level navigation ──
