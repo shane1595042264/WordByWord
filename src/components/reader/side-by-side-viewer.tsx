@@ -157,15 +157,18 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
     }
   }, [syncScroll, nibDocument])
 
-  // Debounced text scroll handler to avoid thrashing
+  // Debounced text scroll handler to avoid thrashing.
+  // Both content-aware sync and progress reporting share the same RAF tick so
+  // the parent reader page only re-renders once per frame while the user scrolls.
   const scrollRafRef = useRef<number | null>(null)
   const debouncedTextScroll = useCallback(() => {
     if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
     scrollRafRef.current = requestAnimationFrame(() => {
       handleTextScroll()
+      handleTextScrollForProgress()
       scrollRafRef.current = null
     })
-  }, [handleTextScroll])
+  }, [handleTextScroll, handleTextScrollForProgress])
 
   // Clean up raf on unmount
   useEffect(() => {
@@ -173,12 +176,6 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
       if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
     }
   }, [])
-
-  // Combined scroll handler: debounced content sync + text progress
-  const combinedTextScroll = useCallback(() => {
-    debouncedTextScroll()
-    handleTextScrollForProgress()
-  }, [debouncedTextScroll, handleTextScrollForProgress])
 
   return (
     <div className="grid grid-cols-2 h-full min-h-0">
@@ -193,7 +190,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
         <div
           ref={textRef}
           className="h-full min-h-0 overflow-auto flex-1"
-          onScroll={combinedTextScroll}
+          onScroll={debouncedTextScroll}
         >
           <div className="p-4">
             {nibDocument ? (
