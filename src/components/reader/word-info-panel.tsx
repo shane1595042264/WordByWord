@@ -41,6 +41,11 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   // Tracks in-flight handleLoadExplanation request so word-change cleanup
   // and unmount can abort the lazy explanation call.
   const explanationControllerRef = useRef<AbortController | null>(null)
+  // Synchronous in-flight guard for handleAddVocab. addedToVocab is React
+  // state and only flips after the awaited svc.add resolves, so re-entries
+  // during the dynamic import + IDB write window otherwise sail through and
+  // create duplicate vocab rows / shanejli KB entries (no DELETE endpoint).
+  const addingVocabRef = useRef(false)
 
   // Track anchor position changes from scrolling (re-render when anchor moves)
   const [anchorPos, setAnchorPos] = useState<{ x: number; y: number } | null>(null)
@@ -318,7 +323,8 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
   // Add to vocabulary
   const handleAddVocab = useCallback(async () => {
-    if (!translation || addedToVocab) return
+    if (!translation || addedToVocab || addingVocabRef.current) return
+    addingVocabRef.current = true
 
     try {
       const { VocabService } = await import('@/lib/services/vocab-service')
@@ -338,6 +344,8 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     } catch (err) {
       toast.error('Failed to save to vocabulary', { duration: 5000 })
       console.error('Failed to add vocab:', err)
+    } finally {
+      addingVocabRef.current = false
     }
   }, [translation, addedToVocab, word, targetLang, explanation, bookTitle, sectionTitle])
 

@@ -177,6 +177,12 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
 
+      // Drop OS auto-repeat events. Browsers re-fire keydown at ~25-30Hz while a
+      // key is held, which turns one-shot actions (Add vocab, toggle view) into
+      // 25 actions per second. If a future shortcut wants to repeat on hold,
+      // it should opt in explicitly rather than the global handler defaulting on.
+      if (e.repeat) return
+
       for (const shortcut of shortcuts.values()) {
         const combo = shortcut.customKeys || shortcut.defaultKeys
         if (matchesEvent(combo, e)) {
