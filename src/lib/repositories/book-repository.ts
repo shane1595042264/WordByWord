@@ -130,9 +130,10 @@ export class BookRepository {
     const book = await db.books.get(id)
     const remoteId = book?.remoteId
 
-    await db.transaction('rw', [db.books, db.chapters, db.sections], async () => {
+    await db.transaction('rw', [db.books, db.chapters, db.sections, db.vocabulary], async () => {
       await db.sections.where('bookId').equals(id).delete()
       await db.chapters.where('bookId').equals(id).delete()
+      await db.vocabulary.where('bookId').equals(id).delete()
       await db.books.delete(id)
     })
 

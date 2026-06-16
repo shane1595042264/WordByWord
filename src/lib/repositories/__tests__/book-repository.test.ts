@@ -39,4 +39,19 @@ describe('BookRepository', () => {
     expect(await db.chapters.where('bookId').equals(book.id).count()).toBe(0)
     expect(await db.sections.where('bookId').equals(book.id).count()).toBe(0)
   })
+
+  it('should delete vocabulary belonging to the deleted book and leave unrelated vocab alone', async () => {
+    const book = await repo.create({ title: 'Vocab Book', author: 'A', totalPages: 10, pdfBlob: new Blob(['a']) })
+    const otherBook = await repo.create({ title: 'Other Book', author: 'B', totalPages: 10, pdfBlob: new Blob(['b']) })
+    const now = Date.now()
+    await db.vocabulary.bulkAdd([
+      { id: 'v1', word: 'foo', pronunciation: '', translation: 't', targetLanguage: 'en', contextSentence: '', explanation: null, bookTitle: 'Vocab Book', sectionTitle: '', pageNumber: 1, bookId: book.id, reviewCount: 0, lastReviewedAt: null, createdAt: now, updatedAt: now },
+      { id: 'v2', word: 'bar', pronunciation: '', translation: 't', targetLanguage: 'en', contextSentence: '', explanation: null, bookTitle: 'Vocab Book', sectionTitle: '', pageNumber: 2, bookId: book.id, reviewCount: 0, lastReviewedAt: null, createdAt: now, updatedAt: now },
+      { id: 'v3', word: 'baz', pronunciation: '', translation: 't', targetLanguage: 'en', contextSentence: '', explanation: null, bookTitle: 'Other Book', sectionTitle: '', pageNumber: 1, bookId: otherBook.id, reviewCount: 0, lastReviewedAt: null, createdAt: now, updatedAt: now },
+    ])
+    await repo.delete(book.id)
+    expect(await db.vocabulary.where('bookId').equals(book.id).count()).toBe(0)
+    expect(await db.vocabulary.where('bookId').equals(otherBook.id).count()).toBe(1)
+    expect((await db.vocabulary.get('v3'))?.word).toBe('baz')
+  })
 })

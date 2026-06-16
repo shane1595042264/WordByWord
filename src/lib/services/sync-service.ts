@@ -1036,6 +1036,15 @@ class SyncService {
         await db.vocabulary.delete(sv.id as string)
         continue
       }
+      // Mirror chapter/section pattern: server sends bookId as the server uuid;
+      // map it to the local uuid so future where('bookId').equals(localId)
+      // queries (e.g. BookRepository.delete cascade) match on this device.
+      // If the parent book was just locally deleted in the same sync cycle,
+      // remoteToLocal won't have it — skip the insert so vocab orphans from
+      // a soft-deleted server book don't resurrect here.
+      const remoteBookId = sv.bookId as string | undefined
+      const localBookId = remoteBookId ? remoteToLocal.get(remoteBookId) : undefined
+      if (remoteBookId && !localBookId) continue
       const local = await db.vocabulary.get(sv.id as string)
       if (!local) {
         // Vocab is the carve-out that bypasses the 30s debounce (see
@@ -1052,7 +1061,7 @@ class SyncService {
           bookTitle: (sv.bookTitle as string) ?? '',
           sectionTitle: (sv.sectionTitle as string) ?? '',
           pageNumber: (sv.page as number) ?? 0,
-          bookId: sv.bookId as string,
+          bookId: localBookId,
           reviewCount: (sv.reviewCount as number) ?? 0,
           lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
           createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
