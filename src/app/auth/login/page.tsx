@@ -5,11 +5,12 @@ import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Suspense } from 'react'
+import { sanitizeCallbackUrl } from '@/lib/auth/safe-redirect'
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/'
+  const callbackUrl = sanitizeCallbackUrl(searchParams.get('callbackUrl'))
   const errorParam = searchParams.get('error')
   const registered = searchParams.get('registered') === '1'
   const prefilledEmail = searchParams.get('email') ?? ''
