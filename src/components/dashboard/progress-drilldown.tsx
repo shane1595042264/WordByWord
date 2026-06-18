@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { HeatmapGrid } from './heatmap-grid'
@@ -15,11 +16,19 @@ interface ProgressDrilldownProps {
 export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
 
   const handleClear = useCallback(() => {
     setSearchQuery('')
     inputRef.current?.focus()
   }, [])
+
+  const handleSectionClick = useCallback(
+    (sectionId: string) => {
+      router.push(`/book/${book.id}/read/${sectionId}`)
+    },
+    [router, book.id]
+  )
 
   // Count matching chapters/sections for search feedback
   const matchCount = useMemo(() => {
@@ -64,7 +73,7 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
 
       <div className="space-y-2">
         <h3 className="text-sm font-medium">Reading Heatmap</h3>
-        <HeatmapGrid sections={book.allSections} />
+        <HeatmapGrid sections={book.allSections} onSectionClick={handleSectionClick} />
       </div>
 
       <div className="space-y-2">
