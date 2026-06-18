@@ -62,7 +62,8 @@ export function CloudSyncSettings() {
       setMessage('Upload complete. Cloud is now in sync with your local data.')
       await refreshStatus()
     } catch (err) {
-      setMessage(`Upload failed: ${err}`)
+      const detail = err instanceof Error ? err.message : String(err)
+      setMessage(`Upload failed — your cloud may be out of sync. (${detail})`)
     } finally {
       setSyncing(false)
     }
@@ -76,7 +77,8 @@ export function CloudSyncSettings() {
       setMessage('Sync complete.')
       await refreshStatus()
     } catch (err) {
-      setMessage(`Sync failed: ${err}`)
+      const detail = err instanceof Error ? err.message : String(err)
+      setMessage(`Sync failed. (${detail})`)
     } finally {
       setSyncing(false)
     }
