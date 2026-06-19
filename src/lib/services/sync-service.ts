@@ -606,39 +606,55 @@ class SyncService {
 
     // Create local books from cloud (parallel, concurrency of 3)
     const { succeeded: booksDownloaded, failed: failedDownloads } = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
-    if (failedDownloads.length > 0) {
-      const n = failedDownloads.length
-      const titles = failedDownloads.slice(0, 3).map(f => `"${f.title}"`).join(', ')
-      const more = n > 3 ? ` and ${n - 3} more` : ''
-      this.log('sync:download-partial', `${n} book(s) failed to download (${titles}${more})`)
-      this.emitStatus('error', `:download partial — ${n} book${n === 1 ? '' : 's'} failed (${titles}${more}) — try Download again`)
-    }
 
     // Download vocabulary (active rows only — server returns soft-deleted vocab
     // so the incremental sync path can mirror tombstones; bootstrap must skip them)
+    let failedVocabCount = 0
     for (const sv of activeVocab) {
-      await db.vocabulary.add({
-        id: sv.id as string,
-        word: sv.word as string,
-        pronunciation: (sv.pronunciation as string) ?? '',
-        translation: (sv.translation as string) ?? '',
-        targetLanguage: (sv.targetLanguage as string) ?? '',
-        contextSentence: (sv.contextSentence as string) ?? '',
-        explanation: (sv.explanation as string) ?? null,
-        bookTitle: (sv.bookTitle as string) ?? '',
-        sectionTitle: (sv.sectionTitle as string) ?? '',
-        pageNumber: (sv.page as number) ?? 0,
-        bookId: sv.bookId as string,
-        reviewCount: (sv.reviewCount as number) ?? 0,
-        lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
-        createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
-        updatedAt: new Date(sv.updatedAt as string).getTime(),
-      } as VocabEntry).catch((err) => {
-        console.warn('Skipped duplicate vocab entry:', sv.word, err)
-      })
+      try {
+        await db.vocabulary.add({
+          id: sv.id as string,
+          word: sv.word as string,
+          pronunciation: (sv.pronunciation as string) ?? '',
+          translation: (sv.translation as string) ?? '',
+          targetLanguage: (sv.targetLanguage as string) ?? '',
+          contextSentence: (sv.contextSentence as string) ?? '',
+          explanation: (sv.explanation as string) ?? null,
+          bookTitle: (sv.bookTitle as string) ?? '',
+          sectionTitle: (sv.sectionTitle as string) ?? '',
+          pageNumber: (sv.page as number) ?? 0,
+          bookId: sv.bookId as string,
+          reviewCount: (sv.reviewCount as number) ?? 0,
+          lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
+          createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
+          updatedAt: new Date(sv.updatedAt as string).getTime(),
+        } as VocabEntry)
+      } catch (err) {
+        failedVocabCount++
+        console.warn('Skipped vocab entry on bootstrap:', sv.word, err)
+      }
     }
 
-    localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+    // Stall LAST_SYNCED_KEY if anything failed — every failed entity has an
+    // updatedAt before result.syncedAt, so advancing the watermark would make
+    // them invisible to future incremental syncs. Mirrors the same guard in
+    // sync() at lines 517-524.
+    if (failedDownloads.length === 0 && failedVocabCount === 0) {
+      localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
+    }
+
+    if (failedDownloads.length > 0 || failedVocabCount > 0) {
+      const n = failedDownloads.length
+      const titles = failedDownloads.slice(0, 3).map(f => `"${f.title}"`).join(', ')
+      const more = n > 3 ? ` and ${n - 3} more` : ''
+      const parts: string[] = []
+      if (n > 0) parts.push(`${n} book${n === 1 ? '' : 's'} failed (${titles}${more})`)
+      if (failedVocabCount > 0) parts.push(`${failedVocabCount} vocab entr${failedVocabCount === 1 ? 'y' : 'ies'} failed`)
+      const detail = parts.join('; ')
+      this.log('sync:download-partial', detail)
+      this.emitStatus('error', `:download partial — ${detail} — try Download again`)
+    }
+
     return { booksDownloaded }
   }
 

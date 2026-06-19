@@ -167,6 +167,125 @@ describe('syncService.downloadFromCloud()', () => {
   })
 })
 
+// Regression coverage for KAN-227: downloadFromCloud() must NOT advance
+// LAST_SYNCED_KEY when any book download or vocab insert failed — otherwise
+// the failed entities (all with updatedAt < syncedAt) become invisible to
+// future incremental syncs.
+const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
+
+describe('syncService.downloadFromCloud() — watermark guard on partial failure', () => {
+  const realFetch = globalThis.fetch
+  const PRIOR_WATERMARK = '2026-01-01T00:00:00.000Z'
+
+  function installMixedFetchMock(opts: {
+    syncBody: unknown
+    /** When set, /books/<id>/download returns this HTTP status. Otherwise rejects. */
+    downloadStatus?: number
+  }) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/sync')) {
+        return new Response(JSON.stringify(opts.syncBody), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes('/books/') && url.endsWith('/summary')) {
+        // Force format=pdf so the bootstrap tries to download the blob.
+        return new Response(JSON.stringify({ catalog: { format: 'pdf', title: 'T', author: 'A' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes('/books/') && url.endsWith('/download')) {
+        // 404 is non-transient → downloadPdfWithRetry rethrows without retrying.
+        return new Response('not found', { status: opts.downloadStatus ?? 404 })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.setItem(LAST_SYNCED_KEY, PRIOR_WATERMARK)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.removeItem(LAST_SYNCED_KEY)
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).token = null
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).tokenExp = 0
+  })
+
+  it('stalls LAST_SYNCED_KEY when a book download fails', async () => {
+    const syncedAt = '2026-06-19T10:00:00.000Z'
+    installMixedFetchMock({
+      syncBody: {
+        syncedAt,
+        serverChanges: {
+          books: [{ id: 'remote-book-1', customTitle: 'Broken Book', totalPages: 5 }],
+          chapters: [],
+          sections: [],
+          vocabulary: [],
+        },
+        failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+      },
+    })
+    const result = await syncService.downloadFromCloud()
+    expect(result.booksDownloaded).toBe(0)
+    expect(localStorage.getItem(LAST_SYNCED_KEY)).toBe(PRIOR_WATERMARK)
+  })
+
+  it('stalls LAST_SYNCED_KEY when a vocab insert fails (duplicate-id collision in payload)', async () => {
+    const syncedAt = '2026-06-19T10:00:00.000Z'
+    installMixedFetchMock({
+      syncBody: {
+        syncedAt,
+        serverChanges: {
+          books: [],
+          chapters: [],
+          sections: [],
+          // Two entries with the same id — the second .add() raises ConstraintError.
+          vocabulary: [
+            { id: 'dup', word: 'a', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt },
+            { id: 'dup', word: 'b', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt },
+          ],
+        },
+        failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+      },
+    })
+    await syncService.downloadFromCloud()
+    expect(await db.vocabulary.count()).toBe(1)
+    expect(localStorage.getItem(LAST_SYNCED_KEY)).toBe(PRIOR_WATERMARK)
+  })
+
+  it('advances LAST_SYNCED_KEY on a fully successful bootstrap', async () => {
+    const syncedAt = '2026-06-19T10:00:00.000Z'
+    installMixedFetchMock({
+      syncBody: {
+        syncedAt,
+        serverChanges: {
+          books: [],
+          chapters: [],
+          sections: [],
+          vocabulary: [{ id: 'v-ok', word: 'ok', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt }],
+        },
+        failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+      },
+    })
+    await syncService.downloadFromCloud()
+    expect(localStorage.getItem(LAST_SYNCED_KEY)).toBe(syncedAt)
+  })
+})
+
 // Regression coverage for KAN-213: applyServerChanges() must swallow Dexie
 // ConstraintError on .add() so a concurrent writer racing the get()/add()
 // window doesn't abort the whole sync, leaving LAST_SYNCED_KEY stuck in a
