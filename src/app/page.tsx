@@ -26,7 +26,10 @@ export default function HomePage() {
   const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [lastSynced, setLastSynced] = useState<string | null>(null)
-  const { isSyncing: backgroundSyncing, progress: syncProgress } = useSyncStatus({ showToasts: true })
+  // SyncProvider owns the sync toasts (it mounts useSyncStatus({ showToasts: true })
+  // once, app-wide). This page only needs the syncing/progress state for its own UI —
+  // enabling toasts here too fired every sync notification twice (duplicate stacked toasts).
+  const { isSyncing: backgroundSyncing, progress: syncProgress } = useSyncStatus()
 
   // Load last synced timestamp and listen for sync completions
   useEffect(() => {
