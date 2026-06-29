@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { RULEBOOK } from '@/lib/vim/rulebook'
 import type { VimRule } from '@/lib/vim/types'
 import type { KeymapOverrides } from '@/lib/services/settings-service'
+import { formatKeyCombo, useIsMac } from '@/lib/keymap-display'
 
 // ─── Global Shortcuts (non-Vim, combo-key shortcuts) ────────────────────────
 
@@ -36,26 +37,10 @@ interface KeymapSettingsProps {
   onChange: (overrides: KeymapOverrides) => void
 }
 
-/** Map a single key-combo part to its display symbol */
-const KEY_SYMBOLS: Record<string, string> = {
-  Ctrl: '⌃',
-  Shift: '⇧',
-  Alt: '⌥',
-  Meta: '⌘',
-  ArrowUp: '↑',
-  ArrowDown: '↓',
-  ArrowLeft: '←',
-  ArrowRight: '→',
-  Escape: 'Esc',
-  Enter: '↵',
-}
-
-/** Display a key nicely */
+/** Display a key nicely — Mac glyphs on macOS, textual modifiers elsewhere */
 function KeyBadge({ keyStr, variant = 'outline' }: { keyStr: string; variant?: 'outline' | 'default' }) {
-  const display = keyStr
-    .split('+')
-    .map(part => KEY_SYMBOLS[part] ?? part)
-    .join('')
+  const isMac = useIsMac()
+  const display = formatKeyCombo(keyStr, { isMac, separator: isMac ? '' : '+' })
   return (
     <Badge variant={variant} className="font-mono text-xs px-2 py-0.5 rounded-md overflow-visible">
       {display}

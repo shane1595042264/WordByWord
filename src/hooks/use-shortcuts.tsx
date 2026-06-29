@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { detectMac, formatKeyCombo } from '@/lib/keymap-display'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,21 +47,6 @@ function parseCombo(combo: string): { ctrl: boolean; shift: boolean; alt: boolea
   }
 }
 
-/** Format a key combo for display (with nice symbols) */
-function formatComboDisplay(combo: string): string {
-  return combo
-    .replace(/ctrl/i, '⌃')
-    .replace(/shift/i, '⇧')
-    .replace(/alt/i, '⌥')
-    .replace(/meta|cmd/i, '⌘')
-    .replace(/\+/g, ' ')
-    .replace(/arrowup/i, '↑')
-    .replace(/arrowdown/i, '↓')
-    .replace(/arrowleft/i, '←')
-    .replace(/arrowright/i, '→')
-    .toUpperCase()
-}
-
 function matchesEvent(combo: string, e: KeyboardEvent): boolean {
   const parsed = parseCombo(combo)
   return (
@@ -103,6 +89,12 @@ const ShortcutContext = createContext<ShortcutContextValue | null>(null)
 export function ShortcutProvider({ children }: { children: ReactNode }) {
   const [shortcuts, setShortcuts] = useState<Map<string, ShortcutAction>>(new Map())
   const [customMappings, setCustomMappings] = useState<Record<string, string>>(loadCustomMappings)
+  // Resolve the platform after mount so server + first client render agree
+  // (both textual); macOS clients re-render with glyphs once this flips.
+  const [isMac, setIsMac] = useState(false)
+  useEffect(() => {
+    setIsMac(detectMac())
+  }, [])
 
   const register = useCallback((shortcut: ShortcutAction) => {
     setShortcuts(prev => {
@@ -129,8 +121,8 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
 
   const getKeysDisplay = useCallback((id: string) => {
     const keys = getKeys(id)
-    return keys ? formatComboDisplay(keys) : undefined
-  }, [getKeys])
+    return keys ? formatKeyCombo(keys, { isMac, upperKeys: true }) : undefined
+  }, [getKeys, isMac])
 
   const reassign = useCallback((id: string, newKeys: string) => {
     setCustomMappings(prev => {
