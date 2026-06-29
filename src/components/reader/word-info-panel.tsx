@@ -7,6 +7,7 @@ import type { NibWord } from '@/lib/nib'
 import type { TranslationResult } from '@/lib/services/translation-service'
 import type { TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
+import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -140,7 +141,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       const s = svc.getSettings()
       setTargetLang(s.targetLanguage)
       setApiKey(s.anthropicApiKey)
-    })
+    }, (err) => reportLazyImportError('word-info-panel settings load', err))
   }, [])
 
   // Check if already in vocab
@@ -218,6 +219,13 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             setExplaining(false)
           }
         }
+      }, (err) => {
+        // The dynamic import itself failed (e.g. stale chunk after a deploy);
+        // clear the spinner that was set before the import so it can't hang.
+        if (cancelled) return
+        setExplanation('Explanation failed: could not load the translation module.')
+        setExplaining(false)
+        reportLazyImportError('image/content explanation import', err)
       })
     } else {
       // Regular word → backend-proxied translation
@@ -238,6 +246,13 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
               setTranslating(false)
             }
           })
+      }, (err) => {
+        // Import rejected (stale chunk after a deploy) — clear the spinner set
+        // before the import so it can't spin forever.
+        if (cancelled) return
+        setTranslationError('Could not load the translation module.')
+        setTranslating(false)
+        reportLazyImportError('word translation import', err)
       })
     }
 
@@ -283,6 +298,14 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             console.error('Sentence translation error:', err)
           }
         })
+    }, (err) => {
+      // Import rejected (stale chunk after a deploy) — clear the spinner set
+      // before the import so it can't spin forever.
+      if (cancelled) return
+      setSentenceTranslation('Translation failed.')
+      setSentenceTranslating(false)
+      toast.error('Sentence translation failed', { duration: 5000 })
+      reportLazyImportError('sentence translation import', err)
     })
 
     return () => {

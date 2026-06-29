@@ -3,6 +3,7 @@
 import { use, useCallback, useMemo, useRef, useState, useEffect, type MutableRefObject } from 'react'
 import { notFound, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
+import { reportLazyImportError, notifyChunkReloadOnce } from '@/lib/lazy-import-error'
 import { useReader } from '@/hooks/use-reader'
 import { useAutoTrack } from '@/hooks/use-auto-track'
 import { useShortcut } from '@/hooks/use-shortcuts'
@@ -86,7 +87,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       const overrides = svc.getSettings().keymapOverrides ?? {}
       setEffectiveRulebook(getEffectiveRulebook(overrides))
       setGlobalKeyOverrides(overrides)
-    })
+    }, (err) => reportLazyImportError('reader keymap load', err))
   }, [])
 
   // ── Vim engine (always enabled for text and side-by-side modes) ──
@@ -546,6 +547,18 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveErrorShownRef = useRef(false)
 
+  // Rejection handler for the lazy `import('@/lib/db/database')` itself failing
+  // (e.g. a stale chunk after a deploy). Mirrors the inner update().catch() so a
+  // failed import doesn't silently drop the reading-position save.
+  const reportPositionSaveImportError = useCallback((err: unknown) => {
+    console.error('Failed to load db module to save reading position:', err)
+    if (!saveErrorShownRef.current) {
+      saveErrorShownRef.current = true
+      toast.warning('Could not save reading position. Your progress may not be preserved.')
+    }
+    notifyChunkReloadOnce(err)
+  }, [])
+
   const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number) => {
     setSectionProgress(scrollPercent)
     setCurrentPage(page)
@@ -565,10 +578,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             toast.warning('Could not save reading position. Your progress may not be preserved.')
           }
         })
-        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
-      })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
+      }, reportPositionSaveImportError)
     }, 500)
-  }, [sectionId])
+  }, [sectionId, reportPositionSaveImportError])
 
   // Clear any pending trailing-debounce write on unmount so it can't fire post-navigation.
   useEffect(() => () => {
@@ -594,10 +607,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             toast.warning('Could not save reading position. Your progress may not be preserved.')
           }
         })
-        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
-      })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
+      }, reportPositionSaveImportError)
     }, 500)
-  }, [sectionId])
+  }, [sectionId, reportPositionSaveImportError])
 
   // Track a flag so the effect can re-trigger once loading completes and the ref mounts
   const [textScrollReady, setTextScrollReady] = useState(false)
@@ -657,9 +670,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           toast.warning('Could not save reading position. Your progress may not be preserved.')
         }
       })
-      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty())
-    })
-  }, [currentPage, sectionId, section])
+      import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
+    }, reportPositionSaveImportError)
+  }, [currentPage, sectionId, section, reportPositionSaveImportError])
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>

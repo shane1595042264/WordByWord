@@ -16,6 +16,7 @@ import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
 import { ProfileSettings } from '@/components/settings/profile-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
+import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 function SettingsContent() {
   const { data: session } = useSession()
@@ -26,6 +27,7 @@ function SettingsContent() {
     : 'profile'
   const isAdmin = (session?.user as any)?.role === 'admin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [loadError, setLoadError] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -34,9 +36,26 @@ function SettingsContent() {
       if (cancelled) return
       const svc = new SettingsService()
       setSettings(svc.getSettings())
+    }, (err) => {
+      // Import rejected (e.g. stale chunk after a deploy) — without this the page
+      // is stuck on 'Loading...' forever because `settings` stays null.
+      if (cancelled) return
+      setLoadError(true)
+      reportLazyImportError('settings page load', err)
     })
     return () => { cancelled = true }
   }, [])
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
+        <p className="text-muted-foreground max-w-md">
+          Could not load your settings. This usually happens after the app updates while a tab was open.
+        </p>
+        <Button onClick={() => window.location.reload()}>Reload</Button>
+      </div>
+    )
+  }
 
   if (!settings) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
