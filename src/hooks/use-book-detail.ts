@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { Book, Chapter, Section } from '@/lib/db/models'
+import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 export interface ChapterWithSections extends Chapter {
   sections: Section[]
@@ -17,31 +18,40 @@ export interface BookDetail extends Book {
 export function useBookDetail(bookId: string) {
   const [book, setBook] = useState<BookDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
-    const { BookRepository, ChapterRepository, SectionRepository } = await import('@/lib/repositories')
-    const bookRepo = new BookRepository()
-    const chapterRepo = new ChapterRepository()
-    const sectionRepo = new SectionRepository()
+    setError(null)
+    try {
+      const { BookRepository, ChapterRepository, SectionRepository } = await import('@/lib/repositories')
+      const bookRepo = new BookRepository()
+      const chapterRepo = new ChapterRepository()
+      const sectionRepo = new SectionRepository()
 
-    const b = await bookRepo.getById(bookId)
-    if (!b) { setLoading(false); return }
+      const b = await bookRepo.getById(bookId)
+      if (!b) { setBook(null); return }
 
-    const chapters = await chapterRepo.getByBook(bookId)
-    const allSections = await sectionRepo.getByBook(bookId)
-    const bookProgress = await sectionRepo.getBookProgress(bookId)
+      const chapters = await chapterRepo.getByBook(bookId)
+      const allSections = await sectionRepo.getByBook(bookId)
+      const bookProgress = await sectionRepo.getBookProgress(bookId)
 
-    const chaptersWithSections: ChapterWithSections[] = await Promise.all(
-      chapters.map(async (ch) => {
-        const sections = await sectionRepo.getByChapter(ch.id)
-        const progress = await sectionRepo.getChapterProgress(ch.id)
-        return { ...ch, sections, progress }
-      })
-    )
+      const chaptersWithSections: ChapterWithSections[] = await Promise.all(
+        chapters.map(async (ch) => {
+          const sections = await sectionRepo.getByChapter(ch.id)
+          const progress = await sectionRepo.getChapterProgress(ch.id)
+          return { ...ch, sections, progress }
+        })
+      )
 
-    setBook({ ...b, chapters: chaptersWithSections, progress: bookProgress, allSections })
-    setLoading(false)
+      setBook({ ...b, chapters: chaptersWithSections, progress: bookProgress, allSections })
+    } catch (err) {
+      // Surfaces a stale-chunk reload prompt after a deploy; always logs.
+      reportLazyImportError('useBookDetail load', err)
+      setError(err instanceof Error ? err.message : 'Failed to load this book')
+    } finally {
+      setLoading(false)
+    }
   }, [bookId])
 
   useEffect(() => { refresh() }, [refresh])
@@ -53,5 +63,5 @@ export function useBookDetail(bookId: string) {
     return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
   }, [refresh])
 
-  return { book, loading, refresh }
+  return { book, loading, error, refresh }
 }

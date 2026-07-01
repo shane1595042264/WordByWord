@@ -13,7 +13,7 @@ import type { Divider } from '@/components/editor/page-strip-editor'
 
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { book, loading, refresh } = useBookDetail(id)
+  const { book, loading, error, refresh } = useBookDetail(id)
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [editAuthor, setEditAuthor] = useState('')
@@ -63,6 +63,19 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-4">
+        <h2 className="text-xl font-semibold">Failed to load book</h2>
+        <p className="text-muted-foreground text-center max-w-md">{error}</p>
+        <div className="flex gap-2">
+          <Button onClick={() => { refresh() }}>Try Again</Button>
+          <Link href="/"><Button variant="outline">Back to Library</Button></Link>
+        </div>
+      </div>
+    )
   }
 
   if (!book) {
