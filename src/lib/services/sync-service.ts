@@ -777,6 +777,10 @@ class SyncService {
       (ch: Record<string, unknown>) => ch.bookId === remoteId && !ch.deletedAt
     )
     for (const sch of serverChapters) {
+      // A row with this server-assigned id may already exist (re-run download,
+      // concurrent tab, or the vocab-add syncNow carve-out racing this download).
+      // A ConstraintError is benign — same row, same desired end state. Swallow it
+      // so one duplicate id doesn't abort the whole book's structure download.
       await db.chapters.add({
         id: sch.id as string,
         bookId: localId,
@@ -785,6 +789,9 @@ class SyncService {
         startPage: (sch.startPage as number) ?? 0,
         endPage: (sch.endPage as number) ?? 0,
         updatedAt: now,
+      }).catch((err: { name?: string }) => {
+        if (err?.name !== 'ConstraintError') throw err
+        console.warn('Skipped duplicate chapter during download:', sch.id, err)
       })
     }
 
@@ -793,6 +800,8 @@ class SyncService {
       (sec: Record<string, unknown>) => sec.bookId === remoteId && !sec.deletedAt
     )
     for (const ss of serverSections) {
+      // ConstraintError swallowed for the same duplicate-id reason as the chapter
+      // loop above — keep the download resilient instead of aborting the book.
       await db.sections.add({
         id: ss.id as string,
         chapterId: ss.chapterId as string,
@@ -808,6 +817,9 @@ class SyncService {
         lastPageViewed: (ss.lastPageViewed as number) ?? null,
         scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
         updatedAt: now,
+      }).catch((err: { name?: string }) => {
+        if (err?.name !== 'ConstraintError') throw err
+        console.warn('Skipped duplicate section during download:', ss.id, err)
       })
     }
 
