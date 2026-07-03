@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { ShortcutButton } from '@/components/ui/shortcut-button'
 import type { NibWord } from '@/lib/nib'
 import type { TranslationResult } from '@/lib/services/translation-service'
-import type { TargetLanguage } from '@/lib/services/settings-service'
+import { SettingsService, type TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
 
@@ -95,9 +95,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   const [addedToVocab, setAddedToVocab] = useState(false)
   const [checkingVocab, setCheckingVocab] = useState(true)
 
-  // Settings
-  const [targetLang, setTargetLang] = useState<TargetLanguage>('zh')
-  const [apiKey, setApiKey] = useState<string | null>(null)
+  // Settings — initialized synchronously from localStorage via SettingsService
+  // (getSettings() is sync and SSR-guarded). Reading these lazily instead of
+  // via an async effect avoids a stale-default render window that used to fire
+  // a redundant, wrong-language translation on every panel open.
+  const [targetLang] = useState<TargetLanguage>(() => new SettingsService().getSettings().targetLanguage)
+  const [apiKey] = useState<string | null>(() => new SettingsService().getSettings().anthropicApiKey)
 
   // ESC key closes panel (works in both vim and non-vim modes)
   useEffect(() => {
@@ -133,16 +136,6 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       document.removeEventListener('mousedown', handleMouseDown)
     }
   }, [onClose, anchorEl])
-
-  // Load settings on mount
-  useEffect(() => {
-    import('@/lib/services/settings-service').then(({ SettingsService }) => {
-      const svc = new SettingsService()
-      const s = svc.getSettings()
-      setTargetLang(s.targetLanguage)
-      setApiKey(s.anthropicApiKey)
-    }, (err) => reportLazyImportError('word-info-panel settings load', err))
-  }, [])
 
   // Check if already in vocab
   useEffect(() => {
@@ -312,7 +305,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       cancelled = true
       controller.abort()
     }
-  }, [word, apiKey, targetLang, panelMode])
+  }, [word, targetLang, panelMode])
 
   // Load explanation lazily (backend-proxied — no key needed)
   const handleLoadExplanation = useCallback(async () => {
