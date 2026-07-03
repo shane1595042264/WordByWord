@@ -1043,8 +1043,13 @@ class SyncService {
         const serverUpdated = new Date(ss.updatedAt as string).getTime()
         if (serverUpdated > local.updatedAt) {
           await db.sections.update(ss.id as string, {
-            isRead: (ss.isRead as boolean) || local.isRead,
-            readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : local.readAt,
+            // Server row is authoritatively newer (gated above), so read-state is
+            // last-write-wins — NOT monotonic. A previous `server || local` OR
+            // meant a newer isRead:false could never win (false||true=true),
+            // stranding the "Mark as Unread" toolbar action across devices (KAN-240).
+            // readAt likewise clears to null when the server cleared it.
+            isRead: ss.isRead as boolean,
+            readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
             scrollProgress: Math.max(
               local.scrollProgress ?? 0,
               ((ss.scrollProgress as number) ?? 0) * 100,

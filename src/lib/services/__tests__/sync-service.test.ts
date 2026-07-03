@@ -558,4 +558,66 @@ describe('syncService.applyServerChanges() — duplicate-id tolerance', () => {
       ]),
     ).rejects.toBe(fatal)
   })
+
+  // Regression coverage for KAN-240: the section-update merge is gated on
+  // serverUpdated > local.updatedAt, so read-state must be last-write-wins.
+  // A prior `isRead: server || local` OR meant a newer isRead:false could never
+  // win (false||true=true), stranding "Mark as Unread" across devices.
+  it('section merge: a newer server isRead:false overrides local isRead:true and clears readAt', async () => {
+    const past = Date.now() - 10_000
+    await db.chapters.add({
+      id: 'ch-unread',
+      bookId: 'local-book-1',
+      title: 'Ch',
+      order: 0,
+      startPage: 1,
+      endPage: 10,
+      updatedAt: past,
+    } as Parameters<typeof db.chapters.add>[0])
+    await db.sections.add({
+      id: 'sec-unread',
+      chapterId: 'ch-unread',
+      bookId: 'local-book-1',
+      title: 'Section',
+      order: 0,
+      startPage: 1,
+      endPage: 5,
+      isRead: true,
+      readAt: past,
+      lastPageViewed: 3,
+      scrollProgress: 100,
+      extractedText: null,
+      richContent: null,
+      updatedAt: past,
+    } as Parameters<typeof db.sections.add>[0])
+
+    await callApply([
+      {
+        sections: [
+          {
+            id: 'sec-unread',
+            chapterId: 'ch-unread',
+            bookId: 'remote-book-1',
+            title: 'Section',
+            sortOrder: 0,
+            startPage: 1,
+            endPage: 5,
+            isRead: false,
+            readAt: null,
+            lastPageViewed: 3,
+            scrollProgress: 1,
+            extractedText: null,
+            richContent: null,
+            // Newer than the local `past` timestamp → server wins.
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    ])
+
+    const merged = await db.sections.get('sec-unread')
+    expect(merged?.isRead).toBe(false)
+    expect(merged?.readAt).toBeNull()
+  })
 })
