@@ -104,6 +104,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
           <span className="text-2xl">&#x26A0;</span>
           <span className="text-xs mt-1 text-center">Processing failed</span>
+          {!editMode && <span className="text-[10px] mt-0.5 text-center opacity-70">Tap to review</span>}
         </div>
       )}
 
@@ -131,9 +132,11 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
           ? selected
             ? 'ring-2 ring-primary shadow-lg scale-[0.97] cursor-pointer'
             : 'hover:ring-1 hover:ring-muted-foreground/30 cursor-pointer'
-          : isProcessing || isFailed
+          : isProcessing
             ? 'opacity-90'
-            : 'hover:shadow-lg cursor-pointer'
+            : isFailed
+              ? 'opacity-90 hover:shadow-lg cursor-pointer'
+              : 'hover:shadow-lg cursor-pointer'
       }`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -279,7 +282,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
   return (
     <>
-      {editMode || isProcessing || isFailed ? cardBody : (
+      {editMode || isProcessing ? cardBody : (
         <Link href={`/book/${book.id}`}>{cardBody}</Link>
       )}
       {showLog && book.jobId && (
