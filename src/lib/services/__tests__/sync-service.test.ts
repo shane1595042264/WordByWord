@@ -167,6 +167,68 @@ describe('syncService.downloadFromCloud()', () => {
   })
 })
 
+// Regression coverage for KAN-245: syncNow() must not silently drop an entity
+// when a sync is already in flight. sync() early-returns while isSyncing, so an
+// immediate syncNow() would no-op AND leave no debounce armed to retry — the
+// vocab add is stranded until an unrelated markDirty() or a page reload.
+// syncNow() must now self-reschedule via the debounce when isSyncing is true.
+describe('syncService.syncNow() — safety net when a sync is already in flight', () => {
+  type Internals = {
+    isSyncing: boolean
+    debounceTimer: ReturnType<typeof setTimeout> | null
+  }
+  const internals = () => syncService as unknown as Internals
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    // Clear any timer the test armed, reset the singleton flags, restore clock.
+    const s = internals()
+    if (s.debounceTimer) clearTimeout(s.debounceTimer)
+    s.debounceTimer = null
+    s.isSyncing = false
+    vi.useRealTimers()
+  })
+
+  it('arms the debounce (instead of a doomed immediate sync) when isSyncing is true', () => {
+    const s = internals()
+    s.isSyncing = true
+    s.debounceTimer = null
+
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    syncService.syncNow()
+
+    // No immediate sync attempt (it would just log 'already syncing' and drop the entity)...
+    expect(syncSpy).not.toHaveBeenCalled()
+    // ...but a debounce timer IS armed as the safety net.
+    expect(s.debounceTimer).not.toBeNull()
+
+    // Once the current sync ends and the debounce fires, sync() runs and pushes the entity.
+    s.isSyncing = false
+    vi.runOnlyPendingTimers()
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    syncSpy.mockRestore()
+  })
+
+  it('pushes immediately (no debounce) when no sync is in flight', () => {
+    const s = internals()
+    s.isSyncing = false
+    s.debounceTimer = null
+
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    syncService.syncNow()
+
+    // Common case unchanged: immediate push, no redundant debounce armed.
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+    expect(s.debounceTimer).toBeNull()
+
+    syncSpy.mockRestore()
+  })
+})
+
 // Regression coverage for KAN-227: downloadFromCloud() must NOT advance
 // LAST_SYNCED_KEY when any book download or vocab insert failed — otherwise
 // the failed entities (all with updatedAt < syncedAt) become invisible to

@@ -139,11 +139,20 @@ class SyncService {
    * Trigger a sync immediately, bypassing the debounce. Use for deliberate
    * user actions (e.g. adding a vocab word) where waiting 30s feels broken.
    *
-   * markDirty() is still called by the caller so that if isSyncing is already
-   * true here, the regular debounce will pick up this entity later as the
-   * safety net.
+   * If a sync is already in flight, an immediate sync() would early-return
+   * (see sync(): 'already syncing') and silently drop this entity — with no
+   * timer left armed to retry it. In that case we fall back to the regular
+   * debounce via markDirty() so the entity is guaranteed to be picked up once
+   * the current sync ends. This makes syncNow() self-rescheduling: callers no
+   * longer have to arm the safety net themselves.
    */
   syncNow(): void {
+    if (this.isSyncing) {
+      // A sync is already running — an immediate sync() would no-op. Arm the
+      // debounce so this entity still gets pushed after the current sync ends.
+      this.markDirty()
+      return
+    }
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     void this.sync()
   }
