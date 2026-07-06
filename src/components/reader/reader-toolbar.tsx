@@ -118,12 +118,19 @@ export function ReaderToolbar({
           <span className="text-sm font-medium truncate max-w-[200px]">{sectionTitle}</span>
           <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut={sk('toggle-read', '⌃ R')}>
             <Badge
+              asChild
               variant={isRead ? 'default' : 'outline'}
               className={`cursor-pointer ${isTogglingRead ? 'pointer-events-none opacity-60' : ''}`}
               aria-busy={isTogglingRead}
-              onClick={handleToggleRead}
             >
-              {isRead ? 'Read' : 'Mark as Read'}
+              <button
+                type="button"
+                onClick={handleToggleRead}
+                aria-pressed={isRead}
+                disabled={isTogglingRead}
+              >
+                {isRead ? 'Read' : 'Mark as Read'}
+              </button>
             </Badge>
           </BlockTooltip>
         </div>
