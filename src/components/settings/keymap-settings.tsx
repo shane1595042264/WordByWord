@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +32,76 @@ export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
   { id: 'open-settings', label: 'Open Settings', defaultKeys: 'Ctrl+,', description: 'Open the settings page' },
   { id: 'open-keymap', label: 'Keyboard Shortcuts', defaultKeys: 'Ctrl+]', description: 'Open the keyboard customization settings' },
 ]
+
+// ─── Conflict detection ─────────────────────────────────────────────────────
+//
+// Dispatch is first-match-wins on both the vim engine (lib/vim/rulebook.ts
+// findRule) and the global shortcut handler (hooks/use-shortcuts.tsx). If a
+// remap binds a combo already used by another action in an overlapping scope,
+// one of them silently stops working. These helpers detect that collision so
+// the UI can warn instead of persisting a dead duplicate.
+
+/** Normalize a combo string for comparison: case-insensitive, trimmed, order-preserving. */
+function normalizeCombo(combo: string): string {
+  return combo
+    .split('+')
+    .map(p => p.trim().toLowerCase())
+    .filter(Boolean)
+    .join('+')
+}
+
+/** The effective combo a vim rule currently resolves to (override wins over default). */
+function effectiveVimCombo(rule: VimRule, overrides: KeymapOverrides): string {
+  const override = overrides[rule.id]
+  if (override) return override
+  const parts: string[] = []
+  if (rule.ctrl) parts.push('Ctrl')
+  if (rule.shift) parts.push('Shift')
+  parts.push(rule.key)
+  return parts.join('+')
+}
+
+/** The effective combo a global shortcut currently resolves to. */
+function effectiveGlobalCombo(shortcut: GlobalShortcutDef, overrides: KeymapOverrides): string {
+  return overrides[shortcut.id] || shortcut.defaultKeys
+}
+
+/**
+ * Resolve whether binding `newKey` to the action `id` would collide with a
+ * different action in an overlapping scope. Vim rules only conflict with other
+ * vim rules that share at least one mode; global shortcuts only conflict with
+ * other global shortcuts. Returns the conflicting entry (for its label) or null.
+ */
+function findRemapConflict(
+  id: string,
+  newKey: string,
+  overrides: KeymapOverrides,
+): { label: string } | null {
+  const target = normalizeCombo(newKey)
+
+  const vimRule = RULEBOOK.find(r => r.id === id)
+  if (vimRule) {
+    const clash = RULEBOOK.find(
+      other =>
+        other.id !== id &&
+        other.modes.some(m => vimRule.modes.includes(m)) &&
+        normalizeCombo(effectiveVimCombo(other, overrides)) === target,
+    )
+    return clash ?? null
+  }
+
+  const shortcut = GLOBAL_SHORTCUTS.find(s => s.id === id)
+  if (shortcut) {
+    const clash = GLOBAL_SHORTCUTS.find(
+      other =>
+        other.id !== id &&
+        normalizeCombo(effectiveGlobalCombo(other, overrides)) === target,
+    )
+    return clash ?? null
+  }
+
+  return null
+}
 
 interface KeymapSettingsProps {
   overrides: KeymapOverrides
@@ -264,6 +335,15 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
   const [search, setSearch] = useState('')
 
   const handleRemap = useCallback((ruleId: string, newKey: string) => {
+    // Block a remap that would silently shadow another action sharing this key.
+    const conflict = findRemapConflict(ruleId, newKey, overrides)
+    if (conflict) {
+      const combo = formatKeyCombo(newKey, { separator: '+' })
+      toast.error(`"${combo}" is already used by "${conflict.label}"`, {
+        description: 'Pick a different key, or reset the other binding first.',
+      })
+      return
+    }
     onChange({ ...overrides, [ruleId]: newKey })
   }, [overrides, onChange])
 
