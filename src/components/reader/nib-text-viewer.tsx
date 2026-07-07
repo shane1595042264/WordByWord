@@ -398,6 +398,18 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     return words
   }, [nibDocument])
 
+  // Reverse map: word object identity -> flat index in allWords.
+  // Lets hot-path lookups (sentence nav, word click) resolve a word's flat
+  // index in O(1) instead of a linear scan of allWords. Keyed on allWords,
+  // which is itself keyed on nibDocument, so it rebuilds only when the doc does.
+  const wordIndexMap = useMemo(() => {
+    const map = new Map<NibWord, number>()
+    for (let i = 0; i < allWords.length; i++) {
+      map.set(allWords[i], i)
+    }
+    return map
+  }, [allWords])
+
   // Build flat sentence list
   const allSentences = useMemo(() => {
     if (!nibDocument) return [] as { text: string; words: NibWord[] }[]
@@ -582,17 +594,13 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         // Highlight ALL words in the sentence
         const indices = new Set<number>()
         for (const w of sent.words) {
-          for (let i = 0; i < allWords.length; i++) {
-            if (allWords[i] === w) { indices.add(i); break }
-          }
+          const idx = wordIndexMap.get(w)
+          if (idx !== undefined) indices.add(idx)
         }
         setHighlightedIndices(indices)
 
         // Move vim cursor to first word of sentence
-        let flatIdx = 0
-        for (let i = 0; i < allWords.length; i++) {
-          if (allWords[i] === firstWord) { flatIdx = i; break }
-        }
+        const flatIdx = wordIndexMap.get(firstWord) ?? 0
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
@@ -812,10 +820,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (!curSent || curSent.words.length === 0) return
 
       // Find flat index of the first word of the current sentence
-      let curFirstIdx = 0
-      for (let i = 0; i < allWords.length; i++) {
-        if (allWords[i] === curSent.words[0]) { curFirstIdx = i; break }
-      }
+      const curFirstIdx = wordIndexMap.get(curSent.words[0]) ?? 0
       const currentSpan = wordSpanRefs.current.get(curFirstIdx)
       if (!currentSpan) return
 
@@ -832,10 +837,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         if (sent.words.length === 0) continue
 
         // Find flat index of first word
-        let firstIdx = -1
-        for (let i = 0; i < allWords.length; i++) {
-          if (allWords[i] === sent.words[0]) { firstIdx = i; break }
-        }
+        const firstIdx = wordIndexMap.get(sent.words[0]) ?? -1
         if (firstIdx < 0) continue
 
         const span = wordSpanRefs.current.get(firstIdx)
@@ -865,17 +867,13 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         // Highlight ALL words in the sentence
         const indices = new Set<number>()
         for (const w of sent.words) {
-          for (let i = 0; i < allWords.length; i++) {
-            if (allWords[i] === w) { indices.add(i); break }
-          }
+          const idx = wordIndexMap.get(w)
+          if (idx !== undefined) indices.add(idx)
         }
         setHighlightedIndices(indices)
 
         // Find flat index of first word and sync cursor
-        let flatIdx = 0
-        for (let i = 0; i < allWords.length; i++) {
-          if (allWords[i] === firstWord) { flatIdx = i; break }
-        }
+        const flatIdx = wordIndexMap.get(firstWord) ?? 0
         setVimCursor(flatIdx)
         const span = wordSpanRefs.current.get(flatIdx)
         if (span) {
@@ -954,7 +952,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         onWordSelect?.(word)
       }
     },
-  }), [allWords, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
+  }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {
@@ -999,11 +997,10 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     setSelectedWord(word)
     setWordAnchorEl(el)
     // Update vim cursor to match clicked word
-    for (let i = 0; i < allWords.length; i++) {
-      if (allWords[i] === word) { setVimCursor(i); break }
-    }
+    const idx = wordIndexMap.get(word)
+    if (idx !== undefined) setVimCursor(idx)
     onWordSelect?.(word)
-  }, [onWordSelect, allWords, setVimCursor])
+  }, [onWordSelect, wordIndexMap, setVimCursor])
 
   const handleClosePanel = useCallback(() => {
     setSelectedWord(null)
