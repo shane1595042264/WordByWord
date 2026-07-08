@@ -91,7 +91,16 @@ export function AdminSettings() {
   }
 
   if (loading) return <p className="text-muted-foreground">Loading users...</p>
-  if (error) return <p className="text-red-500">Error: {error}</p>
+
+  // Initial-load failure: nothing to show yet, so offer a Retry (mirrors marketplace/page.tsx).
+  if (error && users.length === 0) {
+    return (
+      <div className="py-10 text-center space-y-3">
+        <p className="text-destructive text-sm">Error: {error}</p>
+        <Button variant="outline" size="sm" onClick={fetchUsers}>Retry</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -101,6 +110,14 @@ export function AdminSettings() {
           Promote users to admin or demote back to regular user. Admin users get free AI access.
         </p>
       </div>
+
+      {/* Action failure (list is populated): show a dismissible banner, keep the list mounted. */}
+      {error && (
+        <div className="rounded-lg border border-destructive/50 p-3 text-sm flex items-center justify-between gap-3">
+          <span className="text-destructive">Error: {error}</span>
+          <Button variant="ghost" size="sm" onClick={() => setError(null)}>Dismiss</Button>
+        </div>
+      )}
 
       <div className="border rounded-lg divide-y">
         {users.map(user => (
