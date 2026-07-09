@@ -51,13 +51,17 @@ export function SyncStatusBar() {
       }
       type()
 
-      // Auto-hide after completion/error
-      if (newStatus === 'complete' || newStatus === 'error') {
+      // Auto-hide after completion. Errors stay visible until the user
+      // dismisses them or the next syncing/complete event replaces them —
+      // sync failures are actionable and must not vanish before being read.
+      if (newStatus === 'complete') {
         setProgress(null)
         hideTimerRef.current = setTimeout(() => {
           setVisible(false)
           setStatus('idle')
         }, 3000)
+      } else if (newStatus === 'error') {
+        setProgress(null)
       }
     }
 
@@ -68,6 +72,19 @@ export function SyncStatusBar() {
       if (typeTimerRef.current) clearTimeout(typeTimerRef.current)
     }
   }, [])
+
+  const dismiss = () => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+    if (typeTimerRef.current) {
+      clearTimeout(typeTimerRef.current)
+      typeTimerRef.current = null
+    }
+    setVisible(false)
+    setStatus('idle')
+  }
 
   if (!visible) return null
 
@@ -98,6 +115,16 @@ export function SyncStatusBar() {
           {displayText}
           {status === 'syncing' && <span className="animate-blink ml-px">_</span>}
         </span>
+        {status === 'error' && (
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label="Dismiss sync error"
+            className="ml-1 shrink-0 rounded px-1 leading-none text-zinc-500 hover:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+          >
+            ×
+          </button>
+        )}
       </div>
       {progress && progress.total > 0 && (
         <div className="w-48">

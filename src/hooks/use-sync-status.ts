@@ -43,9 +43,12 @@ export function useSyncStatus({ showToasts = false } = {}) {
         setIsSyncing(false)
         setProgress(null)
         if (showToasts) {
+          // Sync failures are actionable ("will retry" / "try Download again")
+          // and must not auto-dismiss before the user reads them.
           toast.error('Sync failed', {
             description: message,
-            duration: 5000,
+            duration: Infinity,
+            closeButton: true,
           })
         }
       }
