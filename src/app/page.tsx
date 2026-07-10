@@ -236,7 +236,7 @@ export default function HomePage() {
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-destructive text-lg font-medium mb-2">Something went wrong</p>
           <p className="text-muted-foreground mb-4">{error}</p>
-          <Button variant="outline" onClick={refresh}>Try Again</Button>
+          <Button variant="outline" onClick={() => refresh()}>Try Again</Button>
         </div>
       ) : (
         <LibraryGrid

@@ -20,8 +20,10 @@ export function useBookDetail(bookId: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    // Background refreshes (e.g. sync-complete) pass silent:true so the
+    // already-rendered dashboard updates in place instead of blanking to Loading...
+    if (!opts?.silent) setLoading(true)
     setError(null)
     try {
       const { BookRepository, ChapterRepository, SectionRepository } = await import('@/lib/repositories')
@@ -58,7 +60,7 @@ export function useBookDetail(bookId: string) {
 
   // Refresh when sync completes (e.g. scrollProgress synced from server)
   useEffect(() => {
-    const onSyncComplete = () => refresh()
+    const onSyncComplete = () => refresh({ silent: true })
     window.addEventListener('nibble:sync-complete', onSyncComplete)
     return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
   }, [refresh])

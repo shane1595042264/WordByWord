@@ -12,8 +12,10 @@ export function useBooks() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    // Background refreshes (e.g. sync-complete) pass silent:true so the
+    // already-rendered grid updates in place instead of flashing to skeletons.
+    if (!opts?.silent) setLoading(true)
     setError(null)
     try {
       const { BookRepository, SectionRepository } = await import('@/lib/repositories')
@@ -39,7 +41,7 @@ export function useBooks() {
 
   // Re-fetch books from IndexedDB whenever a cloud sync completes
   useEffect(() => {
-    const onSyncComplete = () => { refresh() }
+    const onSyncComplete = () => { refresh({ silent: true }) }
     window.addEventListener('nibble:sync-complete', onSyncComplete)
     return () => window.removeEventListener('nibble:sync-complete', onSyncComplete)
   }, [refresh])
