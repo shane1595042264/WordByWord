@@ -139,6 +139,7 @@ export function ReaderToolbar({
           <BlockTooltip label="Toggle Element Labels" shortcut={sk('toggle-indicators', '⌃ I')} hint="Show/hide paragraph, header, section indicators">
             <button
               onClick={onToggleIndicators}
+              aria-pressed={!!showIndicators}
               className={`px-3 py-1 text-xs border rounded-md transition-colors ${
                 showIndicators
                   ? 'bg-amber-500/20 text-amber-600 border-amber-500/30'
@@ -153,13 +154,14 @@ export function ReaderToolbar({
             <BlockTooltip label={showLineNumbers ? 'Hide Line Numbers' : 'Show Line Numbers'} shortcut={sk('toggle-line-numbers', '⌃⇧ L')} hint="Relative line numbers gutter">
               <button
                 onClick={onLineNumbersToggle}
+                aria-pressed={!!showLineNumbers}
                 className={`px-3 py-1 text-xs border rounded-md transition-colors font-mono ${
                   showLineNumbers
                     ? 'bg-violet-500/20 text-violet-500 border-violet-500/30'
                     : 'hover:bg-muted'
                 }`}
               >
-                {showLineNumbers ? '# Lines' : '# Lines'}
+                {showLineNumbers ? '# Lines On' : '# Lines Off'}
               </button>
             </BlockTooltip>
           )}
@@ -173,6 +175,7 @@ export function ReaderToolbar({
                   <BlockTooltip key={mode} label={mode} shortcut={sk(shortcutIdMap[mode], fallbackMap[mode])}>
                     <button
                       onClick={() => onViewModeChange(mode)}
+                      aria-pressed={viewMode === mode}
                       className={`px-3 py-1 text-xs capitalize ${
                         viewMode === mode ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
                       }`}
@@ -190,6 +193,7 @@ export function ReaderToolbar({
               <BlockTooltip label="Scroll Mode" shortcut={sk('reading-mode-scroll', '⌃ S')}>
                 <button
                   onClick={() => onReadingModeChange('scroll')}
+                  aria-pressed={readingMode === 'scroll'}
                   className={`px-3 py-1 text-xs ${
                     readingMode === 'scroll' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
                   }`}
@@ -200,6 +204,7 @@ export function ReaderToolbar({
               <BlockTooltip label="Flip Mode" shortcut={sk('reading-mode-flip', '⌃ F')}>
                 <button
                   onClick={() => onReadingModeChange('flip')}
+                  aria-pressed={readingMode === 'flip'}
                   className={`px-3 py-1 text-xs ${
                     readingMode === 'flip' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
                   }`}
@@ -214,6 +219,7 @@ export function ReaderToolbar({
             <BlockTooltip label={syncScroll ? 'Disable Sync Scroll' : 'Enable Sync Scroll'}>
               <button
                 onClick={() => onSyncScrollChange?.(!syncScroll)}
+                aria-pressed={!!syncScroll}
                 className={`px-3 py-1 text-xs border rounded-md transition-colors ${
                   syncScroll
                     ? 'bg-blue-500/20 text-blue-600 border-blue-500/30'
