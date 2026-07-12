@@ -50,6 +50,7 @@ export function SectionSidebar({ bookId, sections, currentSectionId, collapsed, 
           <Link
             key={section.id}
             href={`/book/${bookId}/read/${section.id}`}
+            aria-current={section.id === currentSectionId ? 'page' : undefined}
             className={`flex items-center gap-2 py-2 px-3 rounded text-sm transition-colors ${
               section.id === currentSectionId
                 ? 'bg-primary text-primary-foreground'
@@ -58,7 +59,8 @@ export function SectionSidebar({ bookId, sections, currentSectionId, collapsed, 
           >
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
               section.isRead ? 'bg-green-500' : 'bg-muted-foreground/30'
-            }`} />
+            }`} aria-hidden="true" />
+            <span className="sr-only">{section.isRead ? 'Read: ' : 'Unread: '}</span>
             <span className="truncate">{section.title}</span>
           </Link>
         ))}
