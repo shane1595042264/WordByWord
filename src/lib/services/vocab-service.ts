@@ -57,7 +57,11 @@ export class VocabService {
 
   /** Update the explanation for a vocab entry */
   async updateExplanation(id: string, explanation: string): Promise<void> {
-    await db.vocabulary.update(id, { explanation })
+    // Bump updatedAt so the dirty-window watermark in sync-service picks this
+    // edit up, then push immediately — mirrors add(). Without both, an updated
+    // explanation would never leave the device.
+    await db.vocabulary.update(id, { explanation, updatedAt: Date.now() })
+    syncService.syncNow()
   }
 
   /** Mark a vocab entry as reviewed */

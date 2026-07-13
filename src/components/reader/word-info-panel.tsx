@@ -47,6 +47,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   // during the dynamic import + IDB write window otherwise sail through and
   // create duplicate vocab rows / shanejli KB entries (no DELETE endpoint).
   const addingVocabRef = useRef(false)
+  // Holds the IDB id returned by svc.add() for a word saved this session, so an
+  // AI explanation loaded *after* the add (add-then-explain order) can be
+  // written back onto the saved entry instead of being silently discarded.
+  const addedVocabIdRef = useRef<string | null>(null)
 
   // Track anchor position changes from scrolling (re-render when anchor moves)
   const [anchorPos, setAnchorPos] = useState<{ x: number; y: number } | null>(null)
@@ -141,6 +145,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   useEffect(() => {
     let cancelled = false
     setCheckingVocab(true)
+    // New word on the reused panel instance — drop any prior word's saved id so
+    // a late explanation load can't be written onto the previous entry.
+    addedVocabIdRef.current = null
     // Treat any rejection (IDB transient error, schema mismatch, chunk-load
     // failure) as unknown-state → leave the button usable; the add path has
     // its own error toast.
@@ -328,7 +335,22 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         targetLang,
         controller.signal,
       )
-      if (!controller.signal.aborted) setExplanation(result.explanation)
+      if (!controller.signal.aborted) {
+        setExplanation(result.explanation)
+        // Add-then-explain order: the entry was already saved with an empty
+        // explanation. Write the freshly loaded AI text back onto it so it
+        // persists across reloads and syncs cross-device. (Explain-then-add
+        // needs nothing — svc.add() saves the populated explanation directly.)
+        const savedId = addedVocabIdRef.current
+        if (savedId) {
+          try {
+            const { VocabService } = await import('@/lib/services/vocab-service')
+            await new VocabService().updateExplanation(savedId, result.explanation)
+          } catch (persistErr) {
+            console.error('Failed to persist explanation to saved vocab entry:', persistErr)
+          }
+        }
+      }
     } catch (err: any) {
       if (err?.name === 'AbortError') return
       if (!controller.signal.aborted) setExplanation('Failed to load explanation.')
@@ -345,7 +367,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     try {
       const { VocabService } = await import('@/lib/services/vocab-service')
       const svc = new VocabService()
-      await svc.add({
+      const id = await svc.add({
         word: word.text,
         pronunciation: translation.pronunciation,
         translation: translation.translation,
@@ -356,6 +378,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         sectionTitle: sectionTitle ?? '',
         pageNumber: word.page.pageNumber,
       })
+      addedVocabIdRef.current = id
       setAddedToVocab(true)
     } catch (err) {
       toast.error('Failed to save to vocabulary', { duration: 5000 })
