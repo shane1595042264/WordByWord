@@ -253,6 +253,12 @@ class SyncService {
       throw new Error(errorMsg)
     }
     const data = await res.json()
+    // Defense in depth: a 200 with a missing book/catalogEntry (e.g. a failed server-side
+    // restore that slipped past res.ok) would otherwise throw an uncaught TypeError on
+    // data.book.id with no user-facing error. Surface it as a normal upload failure instead.
+    if (!data?.book?.id || !data?.catalogEntry?.id) {
+      throw new Error('Upload failed — the server returned an unexpected response. Please try again.')
+    }
     return {
       remoteId: data.book.id,
       catalogId: data.catalogEntry.id,
