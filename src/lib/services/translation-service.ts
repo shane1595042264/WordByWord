@@ -41,8 +41,30 @@ function getLangLabel(code: TargetLanguage): string {
 export class TranslationService {
   private apiKey: string
 
+  /**
+   * Default request deadline for every interactive translation/explanation
+   * fetch. Without it, a stalled upstream (Anthropic slow, nibble-api
+   * overloaded, network black-hole) leaves the word/sentence panel spinner
+   * running forever — callers only abort on unmount. AI generation is slower
+   * than the backend's 10s KB budget, so we allow more headroom.
+   */
+  private static readonly DEFAULT_TIMEOUT_MS = 25_000
+
   constructor(apiKey?: string | null) {
     this.apiKey = apiKey ?? ''
+  }
+
+  /**
+   * Combine the caller-supplied signal (used to abort on unmount / word
+   * change) with a deadline. AbortSignal.any lets BOTH fire: the caller's
+   * unmount abort still short-circuits, and the timeout bounds the request
+   * when no one is watching. The timeout rejects with a DOMException named
+   * `TimeoutError` (not `AbortError`), so callers that early-return only on
+   * AbortError correctly surface the timeout as an error.
+   */
+  private withDeadline(signal?: AbortSignal, timeoutMs = TranslationService.DEFAULT_TIMEOUT_MS): AbortSignal {
+    const timeout = AbortSignal.timeout(timeoutMs)
+    return signal ? AbortSignal.any([signal, timeout]) : timeout
   }
 
   private async getToken(): Promise<string> {
@@ -59,12 +81,22 @@ export class TranslationService {
 
   private async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const token = await this.getToken()
-    const res = await fetch(`${this.getApiUrl()}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
-      signal,
-    })
+    let res: Response
+    try {
+      res = await fetch(`${this.getApiUrl()}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: this.withDeadline(signal),
+      })
+    } catch (err) {
+      // The deadline fired (TimeoutError) rather than an unmount abort
+      // (AbortError). Rethrow with a clearer message; callers surface it.
+      if ((err as Error)?.name === 'TimeoutError') {
+        throw new Error('Translation timed out — try again.')
+      }
+      throw err
+    }
     if (!res.ok) {
       const text = await res.text()
       throw new Error(`Translation API error (${res.status}): ${text.slice(0, 200)}`)
@@ -173,7 +205,12 @@ export class TranslationService {
           ],
         }],
       }),
-      signal,
+      signal: this.withDeadline(signal),
+    }).catch((err) => {
+      if ((err as Error)?.name === 'TimeoutError') {
+        throw new Error('Figure explanation timed out — try again.')
+      }
+      throw err
     })
     if (!res.ok) {
       const errorText = await res.text()
