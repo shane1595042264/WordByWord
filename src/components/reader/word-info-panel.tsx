@@ -521,10 +521,6 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                 <p className="text-base text-foreground/90 leading-relaxed">
                   {sentenceTranslation}
                 </p>
-              ) : !apiKey ? (
-                <p className="text-xs text-muted-foreground/60">
-                  Set your Anthropic API key in Settings to enable translation.
-                </p>
               ) : null}
             </>
           ) : (
@@ -566,10 +562,6 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                   <p className="text-base text-foreground/90 leading-snug">
                     {translation.translation}
                   </p>
-                </div>
-              ) : !apiKey ? (
-                <div className="mt-2 mb-2 text-xs text-muted-foreground/60">
-                  Set your Anthropic API key in Settings to enable translation.
                 </div>
               ) : null}
 
