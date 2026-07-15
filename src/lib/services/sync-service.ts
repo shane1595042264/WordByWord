@@ -269,7 +269,7 @@ class SyncService {
 
   // ── Download PDF from cloud ──────────────────────────────────
 
-  private async downloadPdf(remoteBookId: string): Promise<Blob> {
+  private async downloadPdf(remoteBookId: string, signal?: AbortSignal): Promise<Blob> {
     const token = await this.getToken()
     if (!token) {
       throw new PdfDownloadError('no auth token', null, false)
@@ -278,6 +278,7 @@ class SyncService {
     try {
       res = await fetch(`${this.getApiUrl()}/books/${remoteBookId}/download`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       })
     } catch (err) {
       // AbortError must propagate so destroy()-driven cancels don't get retried.
@@ -295,12 +296,14 @@ class SyncService {
     return await res.blob()
   }
 
-  private async downloadPdfWithRetry(remoteBookId: string): Promise<Blob> {
+  private async downloadPdfWithRetry(remoteBookId: string, signal?: AbortSignal): Promise<Blob> {
     const backoffsMs = [1000, 3000, 8000]
     let lastErr: unknown
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+      // Bail before doing any work if the sync was already destroyed.
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       try {
-        return await this.downloadPdf(remoteBookId)
+        return await this.downloadPdf(remoteBookId, signal)
       } catch (err) {
         lastErr = err
         if (err instanceof DOMException && err.name === 'AbortError') throw err
@@ -310,7 +313,15 @@ class SyncService {
           'sync:download-retry',
           `${remoteBookId}: attempt ${attempt + 1} failed (${err instanceof Error ? err.message : String(err)}); retrying in ${backoffsMs[attempt]}ms`,
         )
-        await new Promise(r => setTimeout(r, backoffsMs[attempt]))
+        // Abortable backoff — a destroy() during the wait rejects immediately
+        // instead of sleeping through the full 1s/3s/8s.
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, backoffsMs[attempt])
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(new DOMException('Aborted', 'AbortError'))
+          }, { once: true })
+        })
       }
     }
     throw lastErr
@@ -491,7 +502,7 @@ class SyncService {
         }
 
         // 2. Download cloud-only books (parallel, concurrency of 3)
-        const dlResult = await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token)
+        const dlResult = await this.downloadBooksWithProgress(cloudOnlyBooks, result.serverChanges, token, signal)
         failedDownloads = dlResult.failed
       }
 
@@ -679,6 +690,7 @@ class SyncService {
     books: Record<string, unknown>[],
     serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
     token: string,
+    signal?: AbortSignal,
   ): Promise<{ succeeded: number; failed: Array<{ remoteId: string; title: string }> }> {
     const total = books.length
     if (total === 0) return { succeeded: 0, failed: [] }
@@ -697,7 +709,7 @@ class SyncService {
         batch.map(async (sb) => {
           const remoteId = sb.id as string
           this.log('sync:download', `"${sb.customTitle || remoteId}"`)
-          await this.createLocalBookFromServer(sb, serverChanges, token)
+          await this.createLocalBookFromServer(sb, serverChanges, token, signal)
         }),
       )
 
@@ -725,6 +737,7 @@ class SyncService {
     sb: Record<string, unknown>,
     serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
     token: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const remoteId = sb.id as string
 
@@ -737,6 +750,7 @@ class SyncService {
     try {
       const summaryRes = await fetch(`${this.getApiUrl()}/books/${remoteId}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       })
       if (summaryRes.ok) {
         const summary = await summaryRes.json()
@@ -752,7 +766,7 @@ class SyncService {
     let pdfBlob: Blob | undefined
     let coverImage: string | null = catalogCoverUrl
     if (format === 'pdf') {
-      pdfBlob = await this.downloadPdfWithRetry(remoteId)
+      pdfBlob = await this.downloadPdfWithRetry(remoteId, signal)
       if (!coverImage) {
         try {
           const { PDFService } = await import('./pdf-service')
@@ -761,6 +775,13 @@ class SyncService {
         } catch { /* no cover, that's fine */ }
       }
     }
+
+    // Final guard before touching IndexedDB: if the sync was destroyed while the
+    // summary/blob fetches were in flight (and an AbortError was swallowed by the
+    // summary try/catch, or the book is an EPUB with no blob download), do NOT
+    // write this book — a post-destroy write can leak the prior user's book into
+    // the next session after clearLocalSyncState().
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
     const localId = uuid()
     const now = Date.now()

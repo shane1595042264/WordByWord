@@ -683,3 +683,108 @@ describe('syncService.applyServerChanges() — duplicate-id tolerance', () => {
     expect(merged?.readAt).toBeNull()
   })
 })
+
+// Regression coverage for KAN-263: the cloud-book download chain must honour the
+// AbortSignal from sync()'s abortController so a destroy()/sign-out mid-pull
+// cancels in-flight downloads instead of running to completion and writing a
+// book into IndexedDB after the local sync state was cleared.
+describe('sync download chain — AbortSignal propagation (KAN-263)', () => {
+  const realFetch = globalThis.fetch
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).token = null
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).tokenExp = 0
+    vi.restoreAllMocks()
+  })
+
+  it('downloadPdfWithRetry rejects with AbortError and issues no fetch when the signal is already aborted', async () => {
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    const ac = new AbortController()
+    ac.abort()
+
+    await expect(
+      (syncService as unknown as {
+        downloadPdfWithRetry: (id: string, signal?: AbortSignal) => Promise<Blob>
+      }).downloadPdfWithRetry('remote-book-1', ac.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    // Aborted before any work — not even the /download (or token) fetch is issued.
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('createLocalBookFromServer writes no book to IDB when the sync is destroyed mid-download', async () => {
+    // The controller aborts as the /summary fetch is issued (simulating destroy()
+    // firing during the pull). fetch honours the aborted signal like the real API.
+    const ac = new AbortController()
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      // Destroy fires now; a signal-honouring fetch throws AbortError.
+      ac.abort()
+      if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+
+    const sb = { id: 'remote-book-1', customTitle: 'Racing Book', totalPages: 5 }
+    await expect(
+      (syncService as unknown as {
+        createLocalBookFromServer: (
+          sb: Record<string, unknown>,
+          serverChanges: unknown,
+          token: string,
+          signal?: AbortSignal,
+        ) => Promise<string>
+      }).createLocalBookFromServer(sb, { chapters: [], sections: [] }, 'fake.jwt.token', ac.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    // The book (and its structure) must NOT have landed in IndexedDB.
+    expect(await db.books.count()).toBe(0)
+    expect(await db.chapters.count()).toBe(0)
+    expect(await db.sections.count()).toBe(0)
+  })
+
+  it('an undefined signal (downloadFromCloud path) leaves the download chain uncancellable — behavior unchanged', async () => {
+    // Sanity guard for the optional-param contract: no signal => no aborted check
+    // ever short-circuits, so a normal download proceeds and writes the book.
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/summary')) {
+        // format=epub so no blob download is attempted (keeps the test PDF-free).
+        return new Response(JSON.stringify({ catalog: { format: 'epub', title: 'T', author: 'A' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+
+    const sb = { id: 'remote-book-1', customTitle: 'Normal Book', totalPages: 5 }
+    await (syncService as unknown as {
+      createLocalBookFromServer: (
+        sb: Record<string, unknown>,
+        serverChanges: unknown,
+        token: string,
+        signal?: AbortSignal,
+      ) => Promise<string>
+    }).createLocalBookFromServer(sb, { chapters: [], sections: [] }, 'fake.jwt.token' /* no signal */)
+
+    expect(await db.books.count()).toBe(1)
+  })
+})
