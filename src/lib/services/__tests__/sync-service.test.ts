@@ -596,6 +596,115 @@ describe('syncService.applyServerChanges() — duplicate-id tolerance', () => {
     expect(await db.vocabulary.get('v-sibling')).toBeDefined()
   })
 
+  // Regression coverage for KAN-264: the vocab UPDATE branch is gated on
+  // serverUpdated > local.updatedAt, so an authoritatively newer server row must
+  // merge its content fields (explanation, translation, etc.) — not just
+  // reviewCount/lastReviewedAt. Previously every content edit made on another
+  // device (e.g. an AI explanation) was silently dropped on pull.
+  it('vocab merge: a newer server row lands its content fields (explanation/translation), not just review metadata', async () => {
+    const past = Date.now() - 10_000
+    await db.vocabulary.add({
+      id: 'v-content',
+      word: 'palabra',
+      pronunciation: '',
+      translation: '',
+      targetLanguage: '',
+      contextSentence: '',
+      explanation: null,
+      bookTitle: '',
+      sectionTitle: '',
+      pageNumber: 0,
+      bookId: 'local-book-1',
+      reviewCount: 2,
+      lastReviewedAt: null,
+      createdAt: past,
+      updatedAt: past,
+    } as Parameters<typeof db.vocabulary.add>[0])
+
+    await callApply([
+      {
+        vocabulary: [
+          {
+            id: 'v-content',
+            word: 'palabra',
+            pronunciation: 'pa-LA-bra',
+            translation: 'word',
+            targetLanguage: 'en',
+            contextSentence: 'una palabra nueva',
+            explanation: 'Spanish for "word".',
+            bookTitle: 'Mi Libro',
+            sectionTitle: 'Capitulo 1',
+            page: 42,
+            bookId: 'remote-book-1',
+            reviewCount: 1,
+            lastReviewedAt: null,
+            createdAt: new Date(past).toISOString(),
+            // Newer than the local `past` timestamp → server wins.
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    ])
+
+    const merged = await db.vocabulary.get('v-content')
+    expect(merged?.explanation).toBe('Spanish for "word".')
+    expect(merged?.translation).toBe('word')
+    expect(merged?.pronunciation).toBe('pa-LA-bra')
+    expect(merged?.contextSentence).toBe('una palabra nueva')
+    expect(merged?.targetLanguage).toBe('en')
+    expect(merged?.bookTitle).toBe('Mi Libro')
+    expect(merged?.sectionTitle).toBe('Capitulo 1')
+    expect(merged?.pageNumber).toBe(42)
+    // reviewCount stays monotonic (Math.max), not overwritten by the lower server value.
+    expect(merged?.reviewCount).toBe(2)
+  })
+
+  it('vocab merge: a NOT-newer server row leaves local content untouched', async () => {
+    const now = Date.now()
+    await db.vocabulary.add({
+      id: 'v-stale',
+      word: 'palabra',
+      pronunciation: 'local-pron',
+      translation: 'local-translation',
+      targetLanguage: 'en',
+      contextSentence: 'local context',
+      explanation: 'local explanation',
+      bookTitle: 'Local Book',
+      sectionTitle: 'Local Section',
+      pageNumber: 7,
+      bookId: 'local-book-1',
+      reviewCount: 3,
+      lastReviewedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    } as Parameters<typeof db.vocabulary.add>[0])
+
+    await callApply([
+      {
+        vocabulary: [
+          {
+            id: 'v-stale',
+            word: 'palabra',
+            translation: 'server-translation',
+            explanation: 'server explanation',
+            bookId: 'remote-book-1',
+            reviewCount: 1,
+            createdAt: new Date(now).toISOString(),
+            // Older than local → server must NOT win.
+            updatedAt: new Date(now - 5_000).toISOString(),
+          },
+        ],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    ])
+
+    const untouched = await db.vocabulary.get('v-stale')
+    expect(untouched?.translation).toBe('local-translation')
+    expect(untouched?.explanation).toBe('local explanation')
+    expect(untouched?.updatedAt).toBe(now)
+  })
+
   it('chapter add: non-ConstraintError still propagates so genuine corruption is not masked', async () => {
     vi.spyOn(db.chapters, 'get').mockResolvedValue(undefined)
     const fatal = Object.assign(new Error('disk full'), { name: 'QuotaExceededError' })

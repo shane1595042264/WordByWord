@@ -1142,7 +1142,24 @@ class SyncService {
       } else {
         const serverUpdated = new Date(sv.updatedAt as string).getTime()
         if (serverUpdated > local.updatedAt) {
+          // Server row is authoritatively newer (gated above), so content fields
+          // are last-write-wins — same rationale as the sections merge (KAN-240).
+          // Previously only reviewCount/lastReviewedAt were merged, so any content
+          // edited on another device (translation, and especially the AI
+          // `explanation` KAN-258 pushes) was silently dropped on pull (KAN-264).
+          // Map the same fields the INSERT branch above populates. reviewCount
+          // stays monotonic via Math.max; bookId is left as the already-remapped
+          // local value (the remoteToLocal skip caveat is handled above).
           await db.vocabulary.update(sv.id as string, {
+            word: (sv.word as string) || local.word,
+            pronunciation: (sv.pronunciation as string) ?? local.pronunciation,
+            translation: (sv.translation as string) ?? local.translation,
+            targetLanguage: (sv.targetLanguage as string) ?? local.targetLanguage,
+            contextSentence: (sv.contextSentence as string) ?? local.contextSentence,
+            explanation: (sv.explanation as string) ?? local.explanation,
+            bookTitle: (sv.bookTitle as string) ?? local.bookTitle,
+            sectionTitle: (sv.sectionTitle as string) ?? local.sectionTitle,
+            pageNumber: (sv.page as number) ?? local.pageNumber,
             reviewCount: Math.max(local.reviewCount ?? 0, (sv.reviewCount as number) ?? 0),
             lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : local.lastReviewedAt,
             updatedAt: serverUpdated,
