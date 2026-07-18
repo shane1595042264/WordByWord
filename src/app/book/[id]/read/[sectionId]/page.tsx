@@ -333,6 +333,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const endPage = section?.endPage ?? 1
 
   const [currentPage, setCurrentPage] = useState(startPage)
+  // Tracks which section currentPage has been reconciled for. The persist effect
+  // below uses this to avoid writing a stale currentPage (belonging to the section
+  // we just navigated away from) into a freshly-navigated section's row.
+  const [reconciledSectionId, setReconciledSectionId] = useState<string | null>(null)
 
   // Reset page/progress when section changes, resume from lastPageViewed if available
   useEffect(() => {
@@ -345,6 +349,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         : section.startPage
       setCurrentPage(validPage)
       setSectionProgress(section.scrollProgress ?? 0)
+      // Mark currentPage as now belonging to this section, gating the persist effect.
+      setReconciledSectionId(section.id)
     }
   }, [section?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -658,9 +664,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useShortcut('prev-page', 'Previous Page', globalKeyOverrides['prev-page'] || 'Ctrl+ArrowLeft', goToPrevPage)
   useShortcut('next-page', 'Next Page', globalKeyOverrides['next-page'] || 'Ctrl+ArrowRight', goToNextPage)
 
-  // Persist currentPage to DB
+  // Persist currentPage to DB.
+  // Only write once currentPage has been reconciled for the section currently in the
+  // route. During a section A->B navigation there are render passes where sectionId is
+  // already B but currentPage still holds A's page (the reconcile effect's setCurrentPage
+  // is async, and the loaded `section` object briefly still refers to A). Writing then
+  // would clobber B's lastPageViewed with A's page and mark B dirty on every nav — and,
+  // if it lost the race with loadData, reset B's saved position to its start page.
+  // Depend on section?.id (not the whole object) so section-object churn from
+  // refreshReadStatus/setSection no longer triggers redundant writes + markDirty.
   useEffect(() => {
-    if (!section) return
+    const loadedId = section?.id
+    if (!loadedId || loadedId !== sectionId) return
+    if (reconciledSectionId !== sectionId) return
     import('@/lib/db/database').then(({ db }) => {
       const now = Date.now()
       db.sections.update(sectionId, { lastPageViewed: currentPage, updatedAt: now }).catch((err) => {
@@ -672,7 +688,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       })
       import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
     }, reportPositionSaveImportError)
-  }, [currentPage, sectionId, section, reportPositionSaveImportError])
+  }, [currentPage, sectionId, section?.id, reconciledSectionId, reportPositionSaveImportError])
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
