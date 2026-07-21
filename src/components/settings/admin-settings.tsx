@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +28,8 @@ async function getToken(): Promise<string | null> {
 }
 
 export function AdminSettings() {
+  const { data: session } = useSession()
+  const currentEmail = session?.user?.email ?? null
   const [users, setUsers] = useState<BackendUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -68,7 +71,12 @@ export function AdminSettings() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ role: newRole }),
       })
-      if (!backendRes.ok) throw new Error('Backend update failed')
+      if (!backendRes.ok) {
+        // Surface the backend's reason (e.g. last-admin / self-demotion guard,
+        // shape { error: { message } }) instead of a generic failure string.
+        const detail = await backendRes.json().catch(() => null)
+        throw new Error(detail?.error?.message || `Backend update failed (${backendRes.status})`)
+      }
 
       // 2. Sync to frontend SQLite (auth.db)
       const syncRes = await fetch('/api/admin/update-role', {
@@ -120,7 +128,14 @@ export function AdminSettings() {
       )}
 
       <div className="border rounded-lg divide-y">
-        {users.map(user => (
+        {users.map(user => {
+          // Own-row self-demotion is blocked server-side; disable it here too so
+          // the admin can't lock themselves out with a misclick.
+          const isSelfDemote =
+            user.authRole === 'admin' &&
+            currentEmail != null &&
+            user.email === currentEmail
+          return (
           <div key={user.id} className="flex items-center justify-between px-4 py-3">
             <div>
               <p className="font-medium text-sm">{user.email}</p>
@@ -137,7 +152,8 @@ export function AdminSettings() {
               <Button
                 size="sm"
                 variant={user.authRole === 'admin' ? 'outline' : 'default'}
-                disabled={actionLoading === user.id}
+                disabled={actionLoading === user.id || isSelfDemote}
+                title={isSelfDemote ? 'You cannot demote your own admin account' : undefined}
                 onClick={() => toggleRole(user)}
               >
                 {actionLoading === user.id
@@ -146,7 +162,8 @@ export function AdminSettings() {
               </Button>
             </div>
           </div>
-        ))}
+          )
+        })}
         {users.length === 0 && (
           <p className="px-4 py-6 text-center text-muted-foreground text-sm">No users found</p>
         )}
