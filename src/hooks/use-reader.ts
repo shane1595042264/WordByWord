@@ -17,6 +17,11 @@ export function useReader(bookId: string, sectionId: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const initialLoadDone = useRef(false)
+  // Monotonically increasing id per loadData invocation. Rapid section
+  // navigation re-runs loadData on the same mounted component; a slower earlier
+  // load must not overwrite the newer one. Each invocation captures its id and
+  // only commits state while it is still the latest.
+  const loadRequestId = useRef(0)
 
   // Wrap setters to also persist to settings
   const setViewMode = useCallback((mode: ViewMode) => {
@@ -45,6 +50,8 @@ export function useReader(bookId: string, sectionId: string) {
 
   // Full load — only on initial mount or section change
   const loadData = useCallback(async () => {
+    const requestId = ++loadRequestId.current
+    const isStale = () => requestId !== loadRequestId.current
     setLoading(true)
     setError(null)
     try {
@@ -71,6 +78,9 @@ export function useReader(bookId: string, sectionId: string) {
         const ch = await db.chapters.get(s.chapterId)
         const siblings = await sectionRepo.getByChapter(s.chapterId)
         const allSections = await sectionRepo.getByBook(bookId)
+        // A newer load has superseded this one — drop its results so the
+        // reader never renders a stale section over the current URL/sidebar.
+        if (isStale()) return
         setBook(b)
         setSection(s)
         setChapter(ch ?? null)
@@ -79,14 +89,20 @@ export function useReader(bookId: string, sectionId: string) {
         await bookRepo.updateLastRead(bookId)
       }
     } catch (err) {
+      if (isStale()) return
       console.error('Failed to load reader data:', err)
       setError(err instanceof Error ? err.message : 'Failed to load this section')
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
   }, [bookId, sectionId])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    loadData()
+    // Invalidate any in-flight load when the section changes or the component
+    // unmounts, so a slower earlier load can't commit after this effect re-runs.
+    return () => { loadRequestId.current++ }
+  }, [loadData])
 
   // Lightweight refresh — just update section read status + sidebar dots
   const refreshReadStatus = useCallback(async () => {
