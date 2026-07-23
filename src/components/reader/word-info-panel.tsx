@@ -491,10 +491,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
             <span className="text-[9px] text-muted-foreground/40 font-mono mx-2">pinned</span>
           )}
           <button
+            type="button"
+            aria-label="Close"
             className="text-muted-foreground/60 hover:text-foreground text-xs leading-none p-0.5 -mr-1"
             onClick={onClose}
           >
-            ✕
+            <span aria-hidden="true">✕</span>
           </button>
         </div>
 
