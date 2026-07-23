@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { Book } from '@/lib/db/models'
+import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 export interface BookWithProgress extends Book {
   progress: { read: number; total: number; percentage: number }
@@ -30,7 +31,8 @@ export function useBooks() {
       )
       setBooks(withProgress)
     } catch (err) {
-      console.error('Failed to load books:', err)
+      // Surfaces a stale-chunk reload prompt after a deploy; always logs.
+      reportLazyImportError('useBooks load', err)
       setError(err instanceof Error ? err.message : 'Failed to load your library')
     } finally {
       setLoading(false)
