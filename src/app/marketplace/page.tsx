@@ -22,6 +22,8 @@ interface CatalogEntry {
   createdAt: string
 }
 
+const PAGE_SIZE = 20
+
 export default function MarketplacePage() {
   const { data: session } = useSession()
   const router = useRouter()
@@ -29,12 +31,17 @@ export default function MarketplacePage() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [adding, setAdding] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const searchRef = useRef(search)
   useEffect(() => { searchRef.current = search }, [search])
+  // Page is read inside fetchCatalog via a ref so the callback stays stable and
+  // never fetches a stale page after setPage.
+  const pageRef = useRef(1)
   const abortRef = useRef<AbortController | null>(null)
 
   // Redirect non-admins
@@ -61,8 +68,12 @@ export default function MarketplacePage() {
       const { token } = await tokenRes.json()
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
       const currentSearch = searchRef.current
-      const searchParam = currentSearch ? `?search=${encodeURIComponent(currentSearch)}` : ''
-      const res = await fetch(`${apiUrl}/admin/catalog${searchParam}`, {
+      const params = new URLSearchParams({
+        page: String(pageRef.current),
+        limit: String(PAGE_SIZE),
+      })
+      if (currentSearch) params.set('search', currentSearch)
+      const res = await fetch(`${apiUrl}/admin/catalog?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
         signal,
       })
@@ -72,6 +83,7 @@ export default function MarketplacePage() {
       }
       const data = await res.json()
       setCatalog(data.data || [])
+      setTotal(typeof data.total === 'number' ? data.total : 0)
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return
       setError('Could not connect to the server. Please check your connection and try again.')
@@ -88,6 +100,22 @@ export default function MarketplacePage() {
   }, [isAdmin, fetchCatalog])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Run a fresh search from page 1 (Search button / Enter). Keeps pageRef and
+  // page state in sync before the fetch reads pageRef.
+  const runSearch = useCallback(() => {
+    pageRef.current = 1
+    setPage(1)
+    fetchCatalog()
+  }, [fetchCatalog])
+
+  const goToPage = useCallback((next: number) => {
+    pageRef.current = next
+    setPage(next)
+    fetchCatalog()
+  }, [fetchCatalog])
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const addToShelf = async (catalogId: string) => {
     setAdding(catalogId)
@@ -137,9 +165,9 @@ export default function MarketplacePage() {
           placeholder="Search by title..."
           value={search}
           onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && fetchCatalog()}
+          onKeyDown={e => e.key === 'Enter' && runSearch()}
         />
-        <Button onClick={fetchCatalog}>Search</Button>
+        <Button onClick={runSearch}>Search</Button>
       </div>
 
       {message && (
@@ -156,16 +184,41 @@ export default function MarketplacePage() {
       ) : catalog.length === 0 ? (
         <div className="text-muted-foreground py-10 text-center">No books in catalog</div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {catalog.map(entry => (
-            <CatalogCard
-              key={entry.id}
-              entry={entry}
-              adding={adding === entry.id}
-              onAdd={() => addToShelf(entry.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {catalog.map(entry => (
+              <CatalogCard
+                key={entry.id}
+                entry={entry}
+                adding={adding === entry.id}
+                onAdd={() => addToShelf(entry.id)}
+              />
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-4 mt-6">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => goToPage(page - 1)}
+              >
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => goToPage(page + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
