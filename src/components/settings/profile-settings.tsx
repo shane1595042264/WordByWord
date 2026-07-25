@@ -351,6 +351,13 @@ function PasswordSection({
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
+        if (res.status === 429) {
+          const retryAfter = Number(res.headers.get('Retry-After'))
+          if (Number.isFinite(retryAfter) && retryAfter > 0) {
+            const minutes = Math.max(1, Math.ceil(retryAfter / 60))
+            throw new Error(`Too many attempts. Try again in ~${minutes} minute${minutes === 1 ? '' : 's'}.`)
+          }
+        }
         throw new Error(data?.error?.message ?? 'Failed to update password')
       }
       setCurrentPassword('')
