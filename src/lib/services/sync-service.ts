@@ -5,6 +5,8 @@ import type { Book, Chapter, Section, VocabEntry } from '../db/models'
 const SYNC_DEBOUNCE_MS = 30_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
 const SYNC_LOG_KEY = 'nibble_syncLog'
+const PENDING_VOCAB_DELETES_KEY = 'nibble_pendingVocabDeletes'
+const MAX_PENDING_VOCAB_DELETES = 200
 
 export interface CloudStatus {
   bookCount: number
@@ -128,6 +130,118 @@ class SyncService {
     } catch { return [] }
   }
 
+  // ── Pending vocab deletes ─────────────────────────────────────
+  //
+  // A vocab delete is the one mutation that cannot ride the normal dirty-window
+  // push: once the local row is gone there is nothing left for sync() to send.
+  // The backend delete is a SOFT delete, so a DELETE that never lands leaves the
+  // server row ACTIVE and the next full download resurrects the word (KAN-283).
+  // Failed deletes are therefore parked in localStorage and re-issued on every
+  // sync tick until the backend settles them.
+
+  private readPendingVocabDeletes(): string[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PENDING_VOCAB_DELETES_KEY) || '[]')
+      return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  private writePendingVocabDeletes(ids: string[]): void {
+    try {
+      if (ids.length === 0) {
+        localStorage.removeItem(PENDING_VOCAB_DELETES_KEY)
+        return
+      }
+      // Keep the newest ids if the queue ever runs away (sustained offline +
+      // bulk deletes) so localStorage cannot grow without bound.
+      localStorage.setItem(PENDING_VOCAB_DELETES_KEY, JSON.stringify(ids.slice(-MAX_PENDING_VOCAB_DELETES)))
+    } catch { /* ignore */ }
+  }
+
+  /** Vocab ids whose backend soft-delete has not landed yet. */
+  getPendingVocabDeletes(): string[] {
+    return this.readPendingVocabDeletes()
+  }
+
+  private queueVocabDelete(id: string): void {
+    const ids = this.readPendingVocabDeletes()
+    if (ids.includes(id)) return
+    ids.push(id)
+    this.writePendingVocabDeletes(ids)
+    this.log('vocab:delete-queued', `${id} — backend delete failed, will retry next sync`)
+  }
+
+  private unqueueVocabDelete(id: string): void {
+    const ids = this.readPendingVocabDeletes()
+    const next = ids.filter(x => x !== id)
+    if (next.length !== ids.length) this.writePendingVocabDeletes(next)
+  }
+
+  /**
+   * Issue the backend soft-delete for one vocab id.
+   * Returns true when the server state is settled — 2xx, or 404 meaning the row
+   * is already gone (or belongs to another user, which the backend reports as
+   * notFound). Returns false for anything retryable: 5xx, network, abort.
+   */
+  private async deleteVocabOnServer(id: string, token: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.getApiUrl()}/vocabulary/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      })
+      if (res.ok || res.status === 404) return true
+      // Stale JWT — drop the cached token so the next tick fetches a fresh one.
+      if (res.status === 401) this.token = null
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Soft-delete a vocab entry on the backend. Removing the local IndexedDB row
+   * is the caller's job — this makes only the SERVER side durable: on any
+   * failure the id is parked and retried on every later sync tick, so a delete
+   * issued while offline or with an expired session still lands instead of
+   * being silently reversed by the next download-from-cloud (KAN-283).
+   */
+  async deleteVocabRemote(id: string): Promise<boolean> {
+    const token = await this.getToken()
+    if (!token) {
+      this.queueVocabDelete(id)
+      return false
+    }
+    if (await this.deleteVocabOnServer(id, token)) {
+      this.unqueueVocabDelete(id)
+      return true
+    }
+    this.queueVocabDelete(id)
+    return false
+  }
+
+  /**
+   * Re-issue every parked vocab delete. Runs at the head of a sync tick so an
+   * id that settles here is already tombstoned by the time the POST /sync pull
+   * runs — otherwise the still-active server row gets re-added locally.
+   */
+  private async drainVocabDeletes(token: string, signal?: AbortSignal): Promise<void> {
+    const pending = this.readPendingVocabDeletes()
+    if (pending.length === 0) return
+    const remaining: string[] = []
+    for (const id of pending) {
+      if (!(await this.deleteVocabOnServer(id, token, signal))) remaining.push(id)
+    }
+    this.writePendingVocabDeletes(remaining)
+    const settled = pending.length - remaining.length
+    this.log(
+      'vocab:delete-drain',
+      `${settled}/${pending.length} pending delete${pending.length === 1 ? '' : 's'} settled${remaining.length ? `, ${remaining.length} still queued` : ''}`,
+    )
+  }
+
   // ── Dirty trigger ────────────────────────────────────────────
 
   markDirty() {
@@ -217,6 +331,12 @@ class SyncService {
   /**
    * Drop the local sync watermark and rolling log. Called on sign-out so a
    * different user on the same browser profile starts from a clean slate.
+   *
+   * PENDING_VOCAB_DELETES_KEY is deliberately NOT cleared: dropping it would
+   * reintroduce the silent-loss path KAN-283 fixed (sign out before the retry
+   * lands and the delete is gone for good). A stale id drained under a different
+   * user's token just 404s — the backend scopes lookups by userId — and a 404
+   * counts as settled, so it self-cleans without touching their data.
    */
   clearLocalSyncState(): void {
     localStorage.removeItem(LAST_SYNCED_KEY)
@@ -356,6 +476,11 @@ class SyncService {
 
       this.log('sync:start', isInitSync ? 'full sync (init)' : 'incremental')
       this.emitStatus('syncing', isInitSync ? ':sync --full' : ':sync')
+
+      // Retry parked vocab deletes BEFORE the pull below, so any that settle are
+      // already tombstoned in this cycle's serverChanges instead of coming back
+      // as active rows (KAN-283). No-ops when the queue is empty.
+      await this.drainVocabDeletes(token, signal)
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(sinceMs).toArray(),
@@ -595,6 +720,10 @@ class SyncService {
     const token = await this.getToken()
     if (!token) return { booksDownloaded: 0 }
 
+    // This bootstrap is the loudest resurrection path (it re-adds every active
+    // server vocab row), so settle any parked deletes first (KAN-283).
+    await this.drainVocabDeletes(token)
+
     // Fetch + parse + shape-validate BEFORE touching local IDB. If any of
     // (network, non-2xx, parse, malformed payload) fails we throw with the
     // user's library completely untouched — no recovery path needed.
@@ -619,7 +748,12 @@ class SyncService {
       throw new Error('Sync failed: malformed server response')
     }
     const activeBooks = (serverBooks as Record<string, unknown>[]).filter((sb) => !sb.deletedAt)
-    const activeVocab = (serverVocab as Record<string, unknown>[]).filter((sv) => !sv.deletedAt)
+    // Deletes still queued after the drain above (offline / server down) would
+    // otherwise be re-downloaded as active rows — hold them out until they land.
+    const stillPendingDeletes = new Set(this.readPendingVocabDeletes())
+    const activeVocab = (serverVocab as Record<string, unknown>[]).filter(
+      (sv) => !sv.deletedAt && !stillPendingDeletes.has(sv.id as string),
+    )
 
     // Past this point, the cloud payload is valid — commit to replacing local
     // data. Wipe atomically so the four tables can't end up half-cleared.
@@ -1100,11 +1234,16 @@ class SyncService {
     }
 
     // Update/create/delete vocabulary
+    // A delete whose backend call has not settled yet leaves the server row
+    // ACTIVE, so re-adding it below is exactly the resurrection KAN-283
+    // describes. Skip those ids until drainVocabDeletes() clears them.
+    const pendingVocabDeletes = new Set(this.readPendingVocabDeletes())
     for (const sv of serverChanges.vocabulary ?? []) {
       if (sv.deletedAt) {
         await db.vocabulary.delete(sv.id as string)
         continue
       }
+      if (pendingVocabDeletes.has(sv.id as string)) continue
       // Mirror chapter/section pattern: server sends bookId as the server uuid;
       // map it to the local uuid so future where('bookId').equals(localId)
       // queries (e.g. BookRepository.delete cascade) match on this device.

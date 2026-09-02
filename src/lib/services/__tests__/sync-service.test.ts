@@ -897,3 +897,244 @@ describe('sync download chain — AbortSignal propagation (KAN-263)', () => {
     expect(await db.books.count()).toBe(1)
   })
 })
+
+// Regression coverage for KAN-283: VocabService.delete() used to fire-and-forget
+// DELETE /vocabulary/:id — an expired session returned early and every other
+// failure was a console.warn. Because the backend delete is a SOFT delete, a
+// dropped call left the server row ACTIVE, so the next download-from-cloud (or
+// an incremental pull) re-added the word the user had deleted. Failed deletes
+// must now be parked and retried until the backend settles them.
+describe('vocab delete durability — pending-delete queue (KAN-283)', () => {
+  const PENDING_KEY = 'nibble_pendingVocabDeletes'
+  const realFetch = globalThis.fetch
+
+  /**
+   * Records every DELETE /vocabulary/:id issued and replies with `deleteStatus`.
+   *
+   * `syncBody` is a factory rather than a literal so the /sync response can
+   * reflect the deletes that have actually landed — the real backend soft-delete
+   * means a settled id comes back carrying `deletedAt`. That statefulness is
+   * what makes the ordering assertion meaningful: if the drain did not run
+   * before the pull, the row would still be active and would resurrect.
+   */
+  function installVocabFetchMock(opts: {
+    deleteStatus: number | 'reject'
+    tokenStatus?: number
+    syncBody?: (settled: Set<string>) => unknown
+  }) {
+    const deleteCalls: string[] = []
+    const settled = new Set<string>()
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        const status = opts.tokenStatus ?? 200
+        return new Response(status === 200 ? JSON.stringify({ token: 'fake.jwt.token' }) : '', {
+          status,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (init?.method === 'DELETE' && url.includes('/vocabulary/')) {
+        const id = url.split('/vocabulary/')[1]
+        deleteCalls.push(id)
+        if (opts.deleteStatus === 'reject') throw new Error('offline')
+        if (opts.deleteStatus >= 200 && opts.deleteStatus < 300) settled.add(id)
+        return new Response('', { status: opts.deleteStatus })
+      }
+      if (url.endsWith('/sync')) {
+        return new Response(JSON.stringify(opts.syncBody?.(settled) ?? {}), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+    return deleteCalls
+  }
+
+  const addLocalVocab = async (id: string) =>
+    db.vocabulary.add({
+      id,
+      word: 'doomed',
+      pronunciation: '',
+      translation: 't',
+      targetLanguage: 'es',
+      contextSentence: 's',
+      explanation: null,
+      bookTitle: '',
+      sectionTitle: '',
+      pageNumber: 1,
+      bookId: undefined,
+      reviewCount: 0,
+      lastReviewedAt: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Parameters<typeof db.vocabulary.add>[0])
+
+  const pending = (): string[] => JSON.parse(localStorage.getItem(PENDING_KEY) || '[]')
+
+  beforeEach(async () => {
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).token = null
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).tokenExp = 0
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).token = null
+    ;(syncService as unknown as { token: string | null; tokenExp: number }).tokenExp = 0
+  })
+
+  it('parks the id when the backend DELETE fails, and still drops the local row', async () => {
+    const { VocabService } = await import('../vocab-service')
+    await addLocalVocab('v-fail')
+    const calls = installVocabFetchMock({ deleteStatus: 500 })
+
+    await new VocabService().delete('v-fail')
+
+    expect(calls).toEqual(['v-fail'])
+    // Local delete is unconditional — the user wants it gone here.
+    expect(await db.vocabulary.get('v-fail')).toBeUndefined()
+    // ...but the server side is NOT settled, so it must be queued for retry.
+    expect(pending()).toEqual(['v-fail'])
+  })
+
+  it('parks the id when the session is expired — the old silent early-return is gone', async () => {
+    const { VocabService } = await import('../vocab-service')
+    await addLocalVocab('v-noauth')
+    const calls = installVocabFetchMock({ deleteStatus: 200, tokenStatus: 401 })
+
+    await new VocabService().delete('v-noauth')
+
+    // Previously the method returned at `if (!tokenRes.ok) return` and the
+    // backend was NEVER contacted, with nothing recorded to retry.
+    expect(calls).toEqual([])
+    expect(pending()).toEqual(['v-noauth'])
+  })
+
+  it('parks the id when the network throws (offline)', async () => {
+    const { VocabService } = await import('../vocab-service')
+    await addLocalVocab('v-offline')
+    installVocabFetchMock({ deleteStatus: 'reject' })
+
+    await expect(new VocabService().delete('v-offline')).resolves.toBeUndefined()
+
+    expect(pending()).toEqual(['v-offline'])
+  })
+
+  it('queues nothing when the DELETE succeeds', async () => {
+    const { VocabService } = await import('../vocab-service')
+    await addLocalVocab('v-ok')
+    const calls = installVocabFetchMock({ deleteStatus: 200 })
+
+    await new VocabService().delete('v-ok')
+
+    expect(calls).toEqual(['v-ok'])
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+  })
+
+  it('treats 404 as settled — the row is already gone (or not ours)', async () => {
+    const { VocabService } = await import('../vocab-service')
+    await addLocalVocab('v-404')
+    installVocabFetchMock({ deleteStatus: 404 })
+
+    await new VocabService().delete('v-404')
+
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+  })
+
+  it('downloadFromCloud() re-issues the parked DELETE and does not resurrect the word', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['v-parked']))
+    const syncedAt = new Date().toISOString()
+    // Until the DELETE lands the server reports the row as ACTIVE — that is the
+    // resurrection payload. Once it lands the row carries deletedAt instead.
+    const calls = installVocabFetchMock({
+      deleteStatus: 200,
+      syncBody: (settled) => ({
+        syncedAt,
+        serverChanges: {
+          books: [],
+          chapters: [],
+          sections: [],
+          vocabulary: [
+            {
+              id: 'v-parked',
+              word: 'doomed',
+              updatedAt: syncedAt,
+              createdAt: syncedAt,
+              deletedAt: settled.has('v-parked') ? syncedAt : null,
+            },
+          ],
+        },
+        failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+      }),
+    })
+
+    await syncService.downloadFromCloud()
+
+    // The drain ran BEFORE the pull, so the pull already saw the tombstone...
+    expect(calls).toEqual(['v-parked'])
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    // ...and the word did not come back.
+    expect(await db.vocabulary.get('v-parked')).toBeUndefined()
+  })
+
+  it('downloadFromCloud() still withholds the word when the retry fails again', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['v-parked']))
+    const syncedAt = new Date().toISOString()
+    installVocabFetchMock({
+      deleteStatus: 500,
+      // Retry fails, so the server row is never tombstoned and stays active.
+      syncBody: () => ({
+        syncedAt,
+        serverChanges: {
+          books: [],
+          chapters: [],
+          sections: [],
+          vocabulary: [{ id: 'v-parked', word: 'doomed', updatedAt: syncedAt, createdAt: syncedAt }],
+        },
+        failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+      }),
+    })
+
+    await syncService.downloadFromCloud()
+
+    // Delete is still unsettled, so it stays queued and the row is held out of
+    // the bootstrap rather than reappearing mid-retry.
+    expect(pending()).toEqual(['v-parked'])
+    expect(await db.vocabulary.get('v-parked')).toBeUndefined()
+  })
+
+  it('applyServerChanges() skips re-adding a vocab row whose delete is still pending', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['v-pending']))
+    const now = new Date().toISOString()
+    await (
+      syncService as unknown as {
+        applyServerChanges: (
+          c: { vocabulary?: Record<string, unknown>[] },
+          m: Map<string, string>,
+        ) => Promise<void>
+      }
+    ).applyServerChanges(
+      { vocabulary: [{ id: 'v-pending', word: 'doomed', updatedAt: now, createdAt: now }] },
+      new Map(),
+    )
+
+    expect(await db.vocabulary.get('v-pending')).toBeUndefined()
+  })
+
+  it('caps the queue so localStorage cannot grow without bound', () => {
+    const svc = syncService as unknown as { writePendingVocabDeletes: (ids: string[]) => void }
+    const ids = Array.from({ length: 250 }, (_, i) => `v-${i}`)
+    svc.writePendingVocabDeletes(ids)
+
+    const stored = pending()
+    expect(stored).toHaveLength(200)
+    // Oldest are dropped, newest retained.
+    expect(stored[0]).toBe('v-50')
+    expect(stored[199]).toBe('v-249')
+  })
+})

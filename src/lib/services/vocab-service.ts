@@ -75,26 +75,18 @@ export class VocabService {
     }
   }
 
-  /** Delete a vocab entry — local IDB + backend soft-delete */
+  /** Delete a vocab entry — local IDB + durable backend soft-delete */
   async delete(id: string): Promise<void> {
     await db.vocabulary.delete(id)
 
-    // Delete from backend too — vocab IDs are shared client/server, no remoteId lookup needed.
-    try {
-      const tokenRes = await fetch('/api/auth/token')
-      if (!tokenRes.ok) return
-      const { token } = await tokenRes.json()
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
-      const res = await fetch(`${apiUrl}/vocabulary/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok && res.status !== 404) {
-        console.warn(`Failed to delete vocab from backend: ${res.status}`)
-      }
-    } catch {
-      console.warn('Failed to delete vocab from backend')
-    }
+    // The local row is dropped unconditionally — the user wants it gone here.
+    // Making the SERVER side stick is syncService's job: this used to be a
+    // fire-and-forget DELETE that returned early on an expired session and
+    // console.warn'd every other failure, so a transient failure left the
+    // server row active and the next download-from-cloud resurrected the word.
+    // deleteVocabRemote() parks failures and retries them on every sync tick
+    // until the backend settles (KAN-283). It never throws.
+    await syncService.deleteVocabRemote(id)
   }
 
   /** Get total count */
