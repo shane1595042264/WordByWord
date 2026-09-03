@@ -21,9 +21,58 @@ interface ChapterAccordionProps {
 }
 
 interface ChapterGroup {
+  // Stable identity for React keys and expansion state. Titles are NOT unique --
+  // two standalone chapters can legitimately share one -- so never key on title.
+  key: string
   title: string
   chapters: ChapterWithSections[]
   progress: { read: number; total: number; percentage: number }
+}
+
+// Group chapters by their prefix (Part > Chapter structure)
+// "Part 1 > Chapter 2" -> group "Part 1", child "Chapter 2"
+// "Preface" (no >) -> standalone group
+//
+// Prefixed chapters sharing a prefix accumulate into one group. Standalone chapters
+// are keyed by chapter id instead of title, so a repeated flat title -- or a flat
+// title equal to another chapter's prefix -- can no longer overwrite an existing
+// entry and silently drop chapters.
+export function buildChapterGroups(chapters: ChapterWithSections[]): ChapterGroup[] {
+  const groupMap = new Map<string, { title: string; chapters: ChapterWithSections[] }>()
+
+  for (const ch of chapters) {
+    const sepIdx = ch.title.indexOf(' > ')
+    if (sepIdx > 0) {
+      const groupTitle = ch.title.substring(0, sepIdx)
+      const key = `p:${groupTitle}`
+      const entry = groupMap.get(key) || { title: groupTitle, chapters: [] }
+      // Create a copy with the shortened title
+      entry.chapters.push({
+        ...ch,
+        title: ch.title.substring(sepIdx + 3), // strip "Part 1 > " prefix
+      })
+      groupMap.set(key, entry)
+    } else {
+      // Standalone chapter (no >)
+      groupMap.set(`s:${ch.id}`, { title: ch.title, chapters: [ch] })
+    }
+  }
+
+  const result: ChapterGroup[] = []
+  for (const [key, entry] of groupMap) {
+    const chs = entry.chapters
+    const read = chs.reduce((sum, c) => sum + c.progress.read, 0)
+    const total = chs.reduce((sum, c) => sum + c.progress.total, 0)
+    // Weight each chapter's percentage by its section count for accurate partial progress
+    const weightedSum = chs.reduce((sum, c) => sum + c.progress.percentage * c.progress.total, 0)
+    result.push({
+      key,
+      title: entry.title,
+      chapters: chs,
+      progress: { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 },
+    })
+  }
+  return result
 }
 
 export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, bookUpdatedAt, totalBookPages, searchQuery }: ChapterAccordionProps) {
@@ -33,46 +82,12 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
 
   const query = (searchQuery || '').trim().toLowerCase()
   const isSearching = query.length > 0
-  // Group chapters by their prefix (Part > Chapter structure)
-  // "Part 1 > Chapter 2" → group "Part 1", child "Chapter 2"
-  // "Preface" (no >) → standalone group
-  const groups = useMemo(() => {
-    const groupMap = new Map<string, ChapterWithSections[]>()
+  const groups = useMemo(() => buildChapterGroups(chapters), [chapters])
 
-    for (const ch of chapters) {
-      const sepIdx = ch.title.indexOf(' > ')
-      if (sepIdx > 0) {
-        const groupTitle = ch.title.substring(0, sepIdx)
-        const existing = groupMap.get(groupTitle) || []
-        // Create a copy with the shortened title
-        existing.push({
-          ...ch,
-          title: ch.title.substring(sepIdx + 3), // strip "Part 1 > " prefix
-        })
-        groupMap.set(groupTitle, existing)
-      } else {
-        // Standalone chapter (no >)
-        groupMap.set(ch.title, [ch])
-      }
-    }
-
-    const result: ChapterGroup[] = []
-    for (const [title, chs] of groupMap) {
-      const read = chs.reduce((sum, c) => sum + c.progress.read, 0)
-      const total = chs.reduce((sum, c) => sum + c.progress.total, 0)
-      // Weight each chapter's percentage by its section count for accurate partial progress
-      const weightedSum = chs.reduce((sum, c) => sum + c.progress.percentage * c.progress.total, 0)
-      result.push({
-        title,
-        chapters: chs,
-        progress: { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 },
-      })
-    }
-    return result
-  }, [chapters])
-
-  // If no nesting needed (no > in any title), render flat like before
-  const hasNesting = groups.some(g => g.chapters.length > 1 || g.chapters[0]?.title !== g.title)
+  // If no nesting needed (no > in any title), render flat like before. Read this off
+  // the titles rather than off group shape: grouping no longer collapses repeated flat
+  // titles, and a book of same-titled standalone chapters must stay on the flat path.
+  const hasNesting = chapters.some(ch => ch.title.indexOf(' > ') > 0)
   const handleSaveSections = useCallback(async (chapter: ChapterWithSections, dividers: Divider[]) => {
     if (!bookRemoteId || !totalBookPages) return
     const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
@@ -222,13 +237,13 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
     <div className="space-y-2">
       {divideDialog}
       {filteredGroups.map(group => {
-        const isGroupExpanded = isSearching || expandedGroup === group.title
+        const isGroupExpanded = isSearching || expandedGroup === group.key
         const isSingleChapter = group.chapters.length === 1 && group.chapters[0].title === group.title
 
         if (isSingleChapter) {
           // Standalone chapter — render flat
           return (
-            <FlatChapter key={group.title} bookId={bookId} chapter={group.chapters[0]}
+            <FlatChapter key={group.key} bookId={bookId} chapter={group.chapters[0]}
               expanded={isSearching || expandedChapter === group.chapters[0].id}
               onToggle={() => setExpandedChapter(expandedChapter === group.chapters[0].id ? null : group.chapters[0].id)}
               canDivide={!!pdfBlob && !!bookRemoteId}
@@ -239,10 +254,10 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
         }
 
         return (
-          <div key={group.title} className="border rounded-lg">
+          <div key={group.key} className="border rounded-lg">
             {/* Group header */}
             <button
-              onClick={() => setExpandedGroup(isGroupExpanded ? null : group.title)}
+              onClick={() => setExpandedGroup(isGroupExpanded ? null : group.key)}
               className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
             >
               <div className="flex items-center gap-3">
