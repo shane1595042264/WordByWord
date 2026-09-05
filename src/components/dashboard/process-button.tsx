@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { toast } from 'sonner'
 
 interface ProcessButtonProps {
   bookId: string
@@ -42,7 +43,9 @@ export function ProcessButton({ bookId, totalChapters, onComplete }: ProcessButt
       })
       onComplete()
     } catch (err: any) {
-      setError(err.message ?? 'Processing failed')
+      const message = err?.message ?? 'Processing failed'
+      setError(message)
+      toast.error(message, { duration: 6000 })
     } finally {
       inFlightRef.current = false
       setProcessing(false)

@@ -166,7 +166,7 @@ export class BookProcessingService {
     const chapter = await db.chapters.get(chapterId)
     if (!chapter) throw new Error('Chapter not found')
 
-    await db.books.update(bookId, { processingStatus: 'processing' })
+    await db.books.update(bookId, { processingStatus: 'processing', updatedAt: Date.now() })
 
     const pageImages: string[] = []
     const pageTexts: string[] = []
@@ -230,25 +230,40 @@ export class BookProcessingService {
   ): Promise<void> {
     const chapters = await db.chapters.where('bookId').equals(bookId).sortBy('order')
 
-    if (priorityChapterId) {
-      const priorityChapter = chapters.find(c => c.id === priorityChapterId)
-      if (priorityChapter) {
-        await this.processChapterWithAI(bookId, priorityChapter.id)
-        onProgress?.(1, chapters.length)
+    try {
+      if (priorityChapterId) {
+        const priorityChapter = chapters.find(c => c.id === priorityChapterId)
+        if (priorityChapter) {
+          await this.processChapterWithAI(bookId, priorityChapter.id)
+          onProgress?.(1, chapters.length)
+        }
       }
-    }
 
-    let processed = priorityChapterId ? 1 : 0
-    for (const chapter of chapters) {
-      if (chapter.id === priorityChapterId) continue
-      const existingSections = await db.sections.where('chapterId').equals(chapter.id).count()
-      if (existingSections > 0) { processed++; continue }
-      await this.processChapterWithAI(bookId, chapter.id)
-      processed++
-      onProgress?.(processed, chapters.length)
-    }
+      let processed = priorityChapterId ? 1 : 0
+      for (const chapter of chapters) {
+        if (chapter.id === priorityChapterId) continue
+        const existingSections = await db.sections.where('chapterId').equals(chapter.id).count()
+        if (existingSections > 0) { processed++; continue }
+        await this.processChapterWithAI(bookId, chapter.id)
+        processed++
+        onProgress?.(processed, chapters.length)
+      }
 
-    await db.books.update(bookId, { processingStatus: 'complete' })
+      await db.books.update(bookId, { processingStatus: 'complete', updatedAt: Date.now() })
+    } catch (err) {
+      // processChapterWithAI flips the book to 'processing' before doing any work.
+      // Without this reset a single failure (Anthropic 429, network drop, bad page,
+      // EPUB source) leaves the row on 'processing' forever, which hides the library
+      // card's link wrapper and strands the book with no way back. 'error' is a
+      // terminal state the card renders as "Processing failed / Tap to review" and
+      // still links through to /book/[id], where the retry button lives.
+      try {
+        await db.books.update(bookId, { processingStatus: 'error', updatedAt: Date.now() })
+      } catch (resetErr) {
+        console.error('[processing] failed to reset processingStatus after error:', resetErr)
+      }
+      throw err
+    }
   }
 
   /**
