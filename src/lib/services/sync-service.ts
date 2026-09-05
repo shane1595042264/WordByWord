@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import { db } from '../db/database'
 import type { Book, Chapter, Section, VocabEntry } from '../db/models'
+import { SettingsService, type SyncedSettings } from './settings-service'
 
 const SYNC_DEBOUNCE_MS = 30_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
@@ -341,6 +342,32 @@ class SyncService {
   clearLocalSyncState(): void {
     localStorage.removeItem(LAST_SYNCED_KEY)
     localStorage.removeItem(SYNC_LOG_KEY)
+    // bbb-settings itself survives sign-out, so without this a second user on
+    // the same browser would look "dirty" and push the previous user's
+    // preferences into their account. Cleared = pull theirs instead (KAN-288).
+    try {
+      new SettingsService().clearSyncMarkers()
+    } catch (err) {
+      console.warn('[sync] could not clear settings sync markers', err)
+    }
+  }
+
+  // ── Settings push (KAN-288) ──────────────────────────────────
+  //
+  // The blob is only sent when this device holds an unpushed change; see the
+  // conflict rule documented in settings-service. Reading settings must never
+  // be able to fail a sync, so a corrupt store degrades to "push nothing".
+
+  private settingsToPush(): { marker: number; settings: SyncedSettings } | null {
+    try {
+      const svc = new SettingsService()
+      if (!svc.hasPendingSettingsPush()) return null
+      // Read the marker BEFORE the request so an edit made mid-flight stays dirty.
+      return { marker: svc.getSettingsUpdatedAt(), settings: svc.getSyncPayload() }
+    } catch (err) {
+      console.warn('[sync] could not read settings for push', err)
+      return null
+    }
   }
 
   // ── Book upload ──────────────────────────────────────────────
@@ -521,6 +548,8 @@ class SyncService {
         this.emitStatus('syncing', ':pull server changes')
       }
 
+      const pendingSettings = this.settingsToPush()
+
       const res = await fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
         headers: {
@@ -534,7 +563,7 @@ class SyncService {
             chapters: syncChapters,
             sections: syncSections,
             vocabulary: syncVocab,
-            settings: null,
+            settings: pendingSettings?.settings ?? null,
             exerciseProgress: [],
           },
         }),
@@ -561,6 +590,17 @@ class SyncService {
       }
 
       const result = await res.json()
+
+      // The push landed. Clear the settings dirty flag at the marker captured
+      // before the request, so an edit made mid-flight is still pushed next tick.
+      // The backend logs-and-continues on a bad settings blob rather than
+      // reporting it in failedEntities, so a server-side rejection is only
+      // recovered by the next local edit — acceptable for a single-row blob.
+      if (pendingSettings) {
+        new SettingsService().markSettingsSynced(pendingSettings.marker)
+        this.log('sync:settings-push', 'pushed local settings to cloud')
+      }
+
       const serverBooks = (result.serverChanges.books ?? []) as Record<string, unknown>[]
 
       // Detect what the server has
@@ -584,7 +624,6 @@ class SyncService {
 
       if (hasConflict && this.conflictResolver) {
         // Check settings for warn preference
-        const { SettingsService } = await import('./settings-service')
         const settings = new SettingsService().getSettings()
         if (settings.warnBeforeSync) {
           resolution = await this.conflictResolver({
@@ -733,6 +772,10 @@ class SyncService {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
+      // settings stays null on purpose: this path wipes local books/chapters/
+      // sections/vocab in favour of the cloud, so pushing local settings up
+      // first would invert its own cloud-wins contract. The pulled row is
+      // force-applied below instead (KAN-288).
       body: JSON.stringify({
         lastSyncedAt: '1970-01-01T00:00:00.000Z',
         changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: null, exerciseProgress: [] },
@@ -793,6 +836,18 @@ class SyncService {
         failedVocabCount++
         console.warn('Skipped vocab entry on bootstrap:', sv.word, err)
       }
+    }
+
+    // Restore preferences too — "Download from Cloud" is the new-device path,
+    // and settings are exactly what silently reset before KAN-288. Forced past
+    // the dirty check because the cloud is authoritative here. Guarded so a
+    // malformed settings row can't fail a download that already succeeded.
+    try {
+      if (new SettingsService().applyServerSettings(result?.serverChanges?.settings, { force: true })) {
+        this.log('sync:settings-pull', 'restored settings from cloud')
+      }
+    } catch (err) {
+      console.warn('[sync] could not restore settings from cloud', err)
     }
 
     // Stall LAST_SYNCED_KEY if anything failed — every failed entity has an
@@ -1003,6 +1058,9 @@ class SyncService {
     if (!token) return
     const lastSyncedAt = localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z'
     try {
+      // A preference changed inside the 30s debounce window would otherwise die
+      // with the tab — this is its last chance to reach the cloud (KAN-288).
+      const pendingSettings = this.settingsToPush()
       fetch(`${this.getApiUrl()}/sync`, {
         method: 'POST',
         headers: {
@@ -1011,10 +1069,12 @@ class SyncService {
         },
         body: JSON.stringify({
           lastSyncedAt,
-          changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: null, exerciseProgress: [] },
+          changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: pendingSettings?.settings ?? null, exerciseProgress: [] },
         }),
         keepalive: true,
       })
+      // Fire-and-forget: the response never arrives before unload, so the dirty
+      // flag is left set. Worst case the next session re-pushes identical values.
     } catch {
       // best effort
     }
@@ -1095,6 +1155,7 @@ class SyncService {
       chapters?: Record<string, unknown>[]
       sections?: Record<string, unknown>[]
       vocabulary?: Record<string, unknown>[]
+      settings?: Record<string, unknown> | null
     },
     bookRemoteIdMap: Map<string, string>,
   ) {
@@ -1305,6 +1366,18 @@ class SyncService {
           })
         }
       }
+    }
+
+    // Settings — a single blob with no per-id, so it gets its own try/catch:
+    // a malformed server row must not abort the entity merges above (which is
+    // also why this runs last). Writes localStorage only, no reload — see
+    // SettingsService.applyServerSettings for the conflict rule (KAN-288).
+    try {
+      if (new SettingsService().applyServerSettings(serverChanges.settings)) {
+        this.log('sync:settings-pull', 'applied settings from cloud')
+      }
+    } catch (err) {
+      console.warn('[sync] could not apply settings from server', err)
     }
   }
 }
