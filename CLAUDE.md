@@ -29,7 +29,9 @@ The user's vocab lives in https://shanejli.com's knowledge base, not just in Ind
 
 ### Local-first is still the rule for everything else
 
-Books, chapters, sections, reading progress, settings — all IndexedDB. The backend is for sync + AI + auth, not as the primary store.
+Books, chapters, sections, reading progress — all IndexedDB; settings live in localStorage. The backend is for sync + AI + auth, not as the primary store.
+
+Since 2026-09-05 six settings also sync through `POST /api/sync` (KAN-288) — localStorage is still the read path, the cloud is just a mirror. See NorthStar Section 0 for the conflict rule before touching `SettingsService`.
 
 ## Tech stack
 

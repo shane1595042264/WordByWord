@@ -4,6 +4,13 @@ const SETTINGS_UPDATED_AT_KEY = 'bbb-settings-updatedAt'
 /** Value of SETTINGS_UPDATED_AT_KEY at the last successful push/pull. */
 const SETTINGS_SYNCED_AT_KEY = 'bbb-settings-syncedAt'
 
+/**
+ * Fired when a pull overwrote local settings. A mounted settings form holds a
+ * state snapshot taken at mount, so without this its next Save would push the
+ * pre-pull values straight back over what just arrived from another device.
+ */
+export const SETTINGS_SYNCED_EVENT = 'bbb-settings-synced'
+
 /** Map of rule id → custom key string (e.g. { 'normal:j': 'ArrowDown' }) */
 export type KeymapOverrides = Record<string, string>
 
@@ -250,6 +257,7 @@ export class SettingsService {
         console.warn('[settings-service] could not persist settings pulled from server', err)
         return false
       }
+      try { window.dispatchEvent(new Event(SETTINGS_SYNCED_EVENT)) } catch { /* ignore */ }
     }
     this.markSettingsSynced(this.getSettingsUpdatedAt())
     return changed

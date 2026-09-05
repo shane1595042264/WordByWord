@@ -15,7 +15,7 @@ import { AdminSettings } from '@/components/settings/admin-settings'
 import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
 import { ProfileSettings } from '@/components/settings/profile-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
-import { TARGET_LANGUAGES } from '@/lib/services/settings-service'
+import { TARGET_LANGUAGES, SETTINGS_SYNCED_EVENT } from '@/lib/services/settings-service'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 function SettingsContent() {
@@ -29,6 +29,14 @@ function SettingsContent() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [saved, setSaved] = useState(false)
+  // Tracks edits made in this form that Save hasn't persisted yet.
+  const [unsavedEdits, setUnsavedEdits] = useState(false)
+
+  /** Every form control writes through here so a pull can tell whether it is safe to adopt. */
+  const editSettings = (next: AppSettings) => {
+    setUnsavedEdits(true)
+    setSettings(next)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -45,6 +53,22 @@ function SettingsContent() {
     })
     return () => { cancelled = true }
   }, [])
+
+  // A sync pulled newer settings from another device. This form's state is a
+  // snapshot from mount, so adopt the pulled values — but only when the user has
+  // no unsaved edits here, otherwise their in-progress change would vanish
+  // mid-edit. An unsaved edit wins and gets pushed on Save, matching the same
+  // dirty-wins rule the sync layer uses (KAN-288).
+  useEffect(() => {
+    if (unsavedEdits) return
+    const onSynced = () => {
+      import('@/lib/services/settings-service').then(({ SettingsService }) => {
+        setSettings(new SettingsService().getSettings())
+      }, (err) => reportLazyImportError('settings page sync refresh', err))
+    }
+    window.addEventListener(SETTINGS_SYNCED_EVENT, onSynced)
+    return () => window.removeEventListener(SETTINGS_SYNCED_EVENT, onSynced)
+  }, [unsavedEdits])
 
   if (loadError) {
     return (
@@ -66,6 +90,7 @@ function SettingsContent() {
     const svc = new SettingsService()
     try {
       svc.updateSettings(settings)
+      setUnsavedEdits(false)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {
@@ -105,7 +130,7 @@ function SettingsContent() {
                 type="password"
                 placeholder="sk-ant-..."
                 value={settings.anthropicApiKey ?? ''}
-                onChange={e => setSettings({ ...settings, anthropicApiKey: e.target.value || null })}
+                onChange={e => editSettings({ ...settings, anthropicApiKey: e.target.value || null })}
               />
               <p className="text-xs text-muted-foreground">
                 Required for AI-powered section splitting. Your key stays in your browser.
@@ -120,7 +145,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.trackingMode === 'timer'}
-                  onClick={() => setSettings({ ...settings, trackingMode: 'timer' })}
+                  onClick={() => editSettings({ ...settings, trackingMode: 'timer' })}
                 >
                   Timer
                 </Button>
@@ -129,7 +154,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.trackingMode === 'endofpage'}
-                  onClick={() => setSettings({ ...settings, trackingMode: 'endofpage' })}
+                  onClick={() => editSettings({ ...settings, trackingMode: 'endofpage' })}
                 >
                   End of Page
                 </Button>
@@ -145,7 +170,7 @@ function SettingsContent() {
                 <Slider
                   aria-labelledby="auto-read-threshold-label"
                   value={[settings.autoReadThresholdSeconds]}
-                  onValueChange={([v]) => setSettings({ ...settings, autoReadThresholdSeconds: v })}
+                  onValueChange={([v]) => editSettings({ ...settings, autoReadThresholdSeconds: v })}
                   min={1}
                   max={30}
                   step={1}
@@ -166,7 +191,7 @@ function SettingsContent() {
                     size="sm"
                     role="radio"
                     aria-checked={settings.defaultViewMode === mode}
-                    onClick={() => setSettings({ ...settings, defaultViewMode: mode })}
+                    onClick={() => editSettings({ ...settings, defaultViewMode: mode })}
                     className="capitalize"
                   >
                     {mode}
@@ -181,7 +206,7 @@ function SettingsContent() {
                 id="target-language"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={settings.targetLanguage}
-                onChange={e => setSettings({ ...settings, targetLanguage: e.target.value as any })}
+                onChange={e => editSettings({ ...settings, targetLanguage: e.target.value as any })}
               >
                 {TARGET_LANGUAGES.map(lang => (
                   <option key={lang.code} value={lang.code}>
@@ -202,7 +227,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.readingMode === 'scroll'}
-                  onClick={() => setSettings({ ...settings, readingMode: 'scroll' })}
+                  onClick={() => editSettings({ ...settings, readingMode: 'scroll' })}
                 >
                   Scroll
                 </Button>
@@ -211,7 +236,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.readingMode === 'flip'}
-                  onClick={() => setSettings({ ...settings, readingMode: 'flip' })}
+                  onClick={() => editSettings({ ...settings, readingMode: 'flip' })}
                 >
                   Flip
                 </Button>
@@ -229,7 +254,7 @@ function SettingsContent() {
                   role="switch"
                   aria-checked={settings.warnBeforeSync}
                   aria-labelledby="warn-before-sync-label"
-                  onClick={() => setSettings({ ...settings, warnBeforeSync: !settings.warnBeforeSync })}
+                  onClick={() => editSettings({ ...settings, warnBeforeSync: !settings.warnBeforeSync })}
                   className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
                     settings.warnBeforeSync ? 'bg-primary' : 'bg-muted'
                   }`}

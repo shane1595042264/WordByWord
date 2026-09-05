@@ -8,6 +8,19 @@
 
 Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
 
+### 2026-09-05 — Settings now sync to the cloud (they used to be localStorage-only)
+
+`bbb-settings` was a purely device-local blob: every sync push hardcoded `settings: null` and the pull discarded `serverChanges.settings`, so prod's `user_settings` table held 0 rows for 22 users and every preference plus all keymap overrides reset on a new device (KAN-288). Six settings now round-trip through `POST /api/sync`: `autoReadThresholdSeconds`, `defaultViewMode`, `readingMode`, `trackingMode`, `targetLanguage`, `keymapOverrides`.
+
+- localStorage is still the read path and still local-first — settings are read once on mount, exactly as before. The cloud is a mirror, not the source of truth.
+- `anthropicApiKey` and `warnBeforeSync` deliberately stay device-local. The key is a secret and the warn flag is a per-device UX choice; neither has a server column. **Don't add them to `SYNCED_SETTING_KEYS`.**
+- Conflict rule lives in `SettingsService` (`src/lib/services/settings-service.ts`): two device-local markers, `bbb-settings-updatedAt` (bumped on a local edit) and `bbb-settings-syncedAt` (set when a push lands). Push only when dirty, apply a pulled row only when clean. No client/server clock is ever compared. **Don't "simplify" this into pushing settings on every sync tick** — that lets a stale device clobber newer settings on every poll.
+- `downloadFromCloud()` intentionally still sends `settings: null` and force-applies the pulled row instead: it wipes local books/chapters/sections/vocab in favour of the cloud, so pushing local settings up first would invert its own cloud-wins contract.
+- A pull dispatches `SETTINGS_SYNCED_EVENT`; the settings page adopts the new values only when the user has no unsaved edits in the form. Applying a pulled change must never force a reload — that would yank the UI mid-reading.
+- Sign-out clears both markers (via `syncService.clearLocalSyncState()`) because `bbb-settings` itself survives sign-out. Without that, a second user on the same browser would push the first user's preferences into their own account.
+
+**Why the change:** cloud sync already restored books, chapters, sections and vocabulary on a new device. Settings were the one entity that silently reset, and hand-configured keymap overrides were the most expensive thing to lose.
+
 ### 2026-05-16 — Vocab is now part of an external knowledge base, not local-first
 
 Vocab capture used to be a fully local-first feature (IndexedDB + nibble-api `vocabulary` table). It now writes through to a separate personal-website knowledge base at https://shanejli.com — that is the user-facing source of truth for vocab.

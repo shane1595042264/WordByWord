@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { SettingsService, SYNCED_SETTING_KEYS } from '../settings-service'
+import { SettingsService, SYNCED_SETTING_KEYS, SETTINGS_SYNCED_EVENT } from '../settings-service'
 
 // Coverage for KAN-288: settings never reached the cloud in either direction.
 // These tests pin the conflict rule — push only when dirty, pull only when
@@ -164,6 +164,17 @@ describe('SettingsService cloud sync (KAN-288)', () => {
       expect(svc.applyServerSettings(undefined)).toBe(false)
       expect(svc.applyServerSettings([] as unknown as Record<string, unknown>)).toBe(false)
       expect(localStorage.getItem(SETTINGS_KEY)).toBeNull()
+    })
+
+    it('announces the pull so a mounted settings form can drop its stale snapshot', () => {
+      const seen = vi.fn()
+      window.addEventListener(SETTINGS_SYNCED_EVENT, seen)
+      svc.applyServerSettings(serverRow())
+      expect(seen).toHaveBeenCalledTimes(1)
+      // Second identical pull changes nothing, so no event.
+      svc.applyServerSettings(serverRow())
+      expect(seen).toHaveBeenCalledTimes(1)
+      window.removeEventListener(SETTINGS_SYNCED_EVENT, seen)
     })
 
     it('reports no change when the server row already matches local', () => {
