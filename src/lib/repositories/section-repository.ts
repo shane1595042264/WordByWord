@@ -45,7 +45,26 @@ export class SectionRepository {
   }
 
   async markAsUnread(id: string): Promise<void> {
-    await db.sections.update(id, { isRead: false, readAt: null, updatedAt: Date.now() })
+    // Mirror markAsRead: serialize the section + book writes so an un-mark can't
+    // interleave with a concurrent markAsRead and leave the book flagged complete
+    // while one of its sections is unread. Clearing completedAt is what keeps the
+    // library "Complete" badge honest and lets the :37 guard above fire the
+    // completion celebration again the next time the book is finished.
+    await db.transaction('rw', [db.sections, db.books], async () => {
+      const now = Date.now()
+      await db.sections.update(id, { isRead: false, readAt: null, updatedAt: now })
+
+      const section = await db.sections.get(id)
+      if (!section) return
+
+      // Skip the book write entirely when it was never complete — avoids a
+      // needless IDB write and spurious sync churn on the common path.
+      const book = await db.books.get(section.bookId)
+      if (!book || !book.completedAt) return
+
+      await db.books.update(section.bookId, { completedAt: null, updatedAt: now })
+    })
+
     syncService.markDirty()
   }
 

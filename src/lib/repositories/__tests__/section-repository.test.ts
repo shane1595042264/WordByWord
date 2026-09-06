@@ -85,4 +85,82 @@ describe('SectionRepository', () => {
     const both = await db.sections.where('bookId').equals(bookId).toArray()
     expect(both.every(s => s.isRead)).toBe(true)
   })
+
+  /** Seed a book with `count` unread sections. */
+  const seedBook = async (bookId: string, count: number): Promise<void> => {
+    const book: Book = {
+      id: bookId,
+      title: 'Unmark Test',
+      author: 'A',
+      totalPages: 10,
+      pdfBlob: new Blob(['x']),
+      coverImage: null,
+      structureSource: 'native',
+      processingStatus: 'pending',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
+      completedAt: null,
+    }
+    await db.books.add(book)
+    await db.sections.bulkAdd(
+      Array.from({ length: count }, (_, i) => ({
+        id: `${bookId}-s${i + 1}`, chapterId: 'ch1', bookId, title: `S${i + 1}`,
+        order: i + 1, startPage: i * 5 + 1, endPage: (i + 1) * 5, extractedText: null,
+        isRead: false, readAt: null, lastPageViewed: null, scrollProgress: null,
+        updatedAt: Date.now(),
+      }))
+    )
+  }
+
+  it('should clear book.completedAt when a section of a completed book is un-marked', async () => {
+    const bookId = 'b-unmark'
+    await seedBook(bookId, 2)
+    const beforeUpdatedAt = (await db.books.get(bookId))!.updatedAt
+
+    expect(await repo.markAsRead(`${bookId}-s1`)).toBe(false)
+    expect(await repo.markAsRead(`${bookId}-s2`)).toBe(true)
+    expect(typeof (await db.books.get(bookId))?.completedAt).toBe('number')
+
+    await repo.markAsUnread(`${bookId}-s2`)
+
+    const after = await db.books.get(bookId)
+    expect(after?.completedAt).toBeNull()
+    expect(after!.updatedAt).toBeGreaterThanOrEqual(beforeUpdatedAt)
+    expect((await db.sections.get(`${bookId}-s2`))?.isRead).toBe(false)
+  })
+
+  it('should let the completion celebration fire again after an un-mark (markAsRead returns true)', async () => {
+    const bookId = 'b-recelebrate'
+    await seedBook(bookId, 2)
+
+    await repo.markAsRead(`${bookId}-s1`)
+    expect(await repo.markAsRead(`${bookId}-s2`)).toBe(true)
+
+    await repo.markAsUnread(`${bookId}-s2`)
+
+    // Before the fix this returned false: the stale completedAt tripped the guard.
+    expect(await repo.markAsRead(`${bookId}-s2`)).toBe(true)
+    expect(typeof (await db.books.get(bookId))?.completedAt).toBe('number')
+  })
+
+  it('should be a no-op on the book when un-marking a section of a never-completed book', async () => {
+    const bookId = 'b-never-complete'
+    await seedBook(bookId, 2)
+
+    await repo.markAsRead(`${bookId}-s1`)
+    expect((await db.books.get(bookId))?.completedAt).toBeNull()
+
+    await expect(repo.markAsUnread(`${bookId}-s1`)).resolves.toBeUndefined()
+
+    expect((await db.books.get(bookId))?.completedAt).toBeNull()
+    expect((await db.sections.get(`${bookId}-s1`))?.isRead).toBe(false)
+  })
+
+  it('should not throw when un-marking a section id that does not exist', async () => {
+    await expect(repo.markAsUnread('missing-section')).resolves.toBeUndefined()
+  })
 })
