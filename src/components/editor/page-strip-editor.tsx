@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PageThumbnail } from './page-thumbnail'
+import type { PdfPageRenderer } from '@/lib/services/pdf-service'
 
 export interface Divider {
   page: number
@@ -42,7 +43,29 @@ export function PageStripEditor({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [tocError, setTocError] = useState<string | null>(null)
   const [hoverGap, setHoverGap] = useState<number | null>(null)
+  const [renderer, setRenderer] = useState<PdfPageRenderer | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
+
+  // One parsed pdf.js document shared by every thumbnail in the strip. Without
+  // this each tile parses the whole PDF itself, which a long book cannot
+  // survive. Dynamically imported for the same reason the rest of this file
+  // defers pdf.js: it must never load during SSR.
+  useEffect(() => {
+    let instance: PdfPageRenderer | null = null
+    let cancelled = false
+
+    import('@/lib/services/pdf-service').then(({ PdfPageRenderer }) => {
+      if (cancelled) return
+      instance = new PdfPageRenderer(pdfBlob)
+      setRenderer(instance)
+    })
+
+    return () => {
+      cancelled = true
+      instance?.destroy()
+      setRenderer(null)
+    }
+  }, [pdfBlob])
 
   const sortedDividers = [...dividers].sort((a, b) => a.page - b.page)
   const dividerPages = new Set(sortedDividers.map(d => d.page))
@@ -266,7 +289,7 @@ export function PageStripEditor({
 
               {/* Page thumbnail */}
               <PageThumbnail
-                pdfBlob={pdfBlob}
+                renderer={renderer}
                 pageNumber={page}
                 width={90}
                 selected={tocSelectMode && selectedTocPages.has(page)}

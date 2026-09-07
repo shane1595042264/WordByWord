@@ -364,3 +364,92 @@ export class PDFService {
     }
   }
 }
+
+/**
+ * Renders many pages of a SINGLE PDF blob to thumbnails while parsing that PDF
+ * only once.
+ *
+ * PDFService.renderPageToImage is a one-shot helper: it copies the blob's bytes
+ * and parses a whole pdf.js document per call, then destroys it. That is fine
+ * for the cover-image paths that call it once, but the page-strip editor needs
+ * one thumbnail per page of the book — on a 520-page textbook that shape means
+ * 520 concurrent ArrayBuffer copies and 520 document parses, which locks the
+ * tab up. This class shares one parsed document across every page and bounds
+ * how many renders run at once.
+ *
+ * The owner MUST call destroy() when it is done; the shared document stays
+ * alive until then.
+ */
+export class PdfPageRenderer {
+  private docPromise: Promise<pdfjs.PDFDocumentProxy> | null = null
+  private destroyed = false
+  private active = 0
+  private waiting: Array<() => void> = []
+
+  constructor(
+    private readonly blob: Blob,
+    private readonly maxConcurrent: number = 3,
+  ) {}
+
+  async renderPage(pageNumber: number, scale: number = 0.5): Promise<string> {
+    await this.acquire()
+    try {
+      if (this.destroyed) throw new Error('PdfPageRenderer was destroyed')
+      const doc = await this.getDoc()
+      if (this.destroyed) throw new Error('PdfPageRenderer was destroyed')
+
+      const page = await doc.getPage(pageNumber)
+      try {
+        const viewport = page.getViewport({ scale })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const ctx = canvas.getContext('2d')!
+        await page.render({ canvasContext: ctx, viewport, canvas } as unknown as import('pdfjs-dist/types/src/display/api').RenderParameters).promise
+        return canvas.toDataURL('image/png')
+      } finally {
+        // Release the page's decoded resources — without this a long book
+        // accumulates every page it has ever shown.
+        page.cleanup()
+      }
+    } finally {
+      this.release()
+    }
+  }
+
+  destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
+    // Wake anything queued so it can observe `destroyed` and bail out.
+    for (const wake of this.waiting.splice(0)) wake()
+    this.docPromise?.then(doc => doc.destroy()).catch(() => {})
+  }
+
+  private getDoc(): Promise<pdfjs.PDFDocumentProxy> {
+    if (this.destroyed) return Promise.reject(new Error('PdfPageRenderer was destroyed'))
+    if (!this.docPromise) {
+      this.docPromise = this.blob
+        .arrayBuffer()
+        .then(arrayBuffer => pdfjs.getDocument({ data: arrayBuffer }).promise)
+    }
+    return this.docPromise
+  }
+
+  private acquire(): Promise<void> {
+    if (this.active < this.maxConcurrent) {
+      this.active++
+      return Promise.resolve()
+    }
+    return new Promise<void>(resolve => {
+      this.waiting.push(() => {
+        this.active++
+        resolve()
+      })
+    })
+  }
+
+  private release(): void {
+    this.active--
+    this.waiting.shift()?.()
+  }
+}
