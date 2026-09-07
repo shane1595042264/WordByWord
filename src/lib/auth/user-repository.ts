@@ -224,6 +224,15 @@ export class UserRepository {
     return rows.map(rowToUser)
   }
 
+  /** Count admin users. Backs the last-admin demotion guard. */
+  async countAdmins(): Promise<number> {
+    const sql = getDb()
+    const rows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM users WHERE auth_role = 'admin'
+    `
+    return Number(rows[0]?.count ?? 0)
+  }
+
   /** Update user role (admin) */
   async updateRole(userId: string, role: 'admin' | 'user'): Promise<void> {
     const sql = getDb()

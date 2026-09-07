@@ -18,6 +18,12 @@ const LOGIN_PER_IP_WINDOW_MS = 60 * 1000
 const LOGIN_PER_EMAIL_MAX = 10
 const LOGIN_PER_EMAIL_WINDOW_MS = 60 * 1000
 
+// How long a `role` claim may stand before the jwt callback re-reads it from
+// the DB. Without this the sign-in snapshot lasts the whole session lifetime
+// (30 days by default), so a demoted admin keeps the admin surface — and the
+// escalation path it exposes — until they manually sign out.
+const ROLE_REFRESH_INTERVAL_MS = 60 * 1000
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Credentials({
@@ -170,6 +176,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.id = user.id
         token.role = (user as Record<string, unknown>).role ?? 'user'
         token.picture = user.image ?? null
+        // Fresh by definition — don't re-query on the very next callback.
+        token.roleCheckedAt = Date.now()
       }
       // Handle session updates (e.g. profile changes from settings page)
       if (trigger === 'update' && updateData) {
@@ -178,6 +186,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
         if ((updateData as Record<string, unknown>).image !== undefined) {
           token.picture = (updateData as Record<string, unknown>).image as string
+        }
+      }
+
+      // Re-read the role from the DB on a short TTL so a demotion (or a
+      // promotion) takes effect without the user signing out.
+      const checkedAt = typeof token.roleCheckedAt === 'number' ? token.roleCheckedAt : 0
+      if (token.id && Date.now() - checkedAt >= ROLE_REFRESH_INTERVAL_MS) {
+        try {
+          const fresh = await userRepo.getById(token.id as string)
+          // A missing row means the account is gone — drop to the least
+          // privileged role rather than leaving a stale `admin` claim alive.
+          token.role = fresh ? fresh.role : 'user'
+          token.roleCheckedAt = Date.now()
+        } catch (err: unknown) {
+          // Keep the current claim and retry on the next callback: a transient
+          // DB failure must not demote every live session at once.
+          console.error('[auth] role refresh failed for user %s: %s', token.id, err)
         }
       }
       return token
