@@ -66,6 +66,10 @@ export function ProcessingLogDialog({ jobId, bookTitle, open, onClose, isLive = 
         })
         if (!res.ok) {
           if (cancelled) return
+          // A 429 is transient — the window drains on its own. Keep the interval
+          // alive and pick the logs back up on the next tick rather than killing
+          // the pane for the rest of the job (KAN-293).
+          if (res.status === 429) return
           setFetchError(res.status === 401 ? 'session_expired' : 'fetch_failed')
           stopPolling()
           return
