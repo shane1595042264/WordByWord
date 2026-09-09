@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PageThumbnail } from './page-thumbnail'
@@ -43,8 +43,13 @@ export function PageStripEditor({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [tocError, setTocError] = useState<string | null>(null)
   const [hoverGap, setHoverGap] = useState<number | null>(null)
+  const [focusGap, setFocusGap] = useState<number | null>(null)
+  // Page of a divider that was just added from the keyboard and should receive
+  // focus once it renders. See the gap button's onClick for why this is needed.
+  const [focusDividerPage, setFocusDividerPage] = useState<number | null>(null)
   const [renderer, setRenderer] = useState<PdfPageRenderer | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
+  const expectedCountId = useId()
 
   // One parsed pdf.js document shared by every thumbnail in the strip. Without
   // this each tile parses the whole PDF itself, which a long book cannot
@@ -66,6 +71,18 @@ export function PageStripEditor({
       setRenderer(null)
     }
   }, [pdfBlob])
+
+  // Activating a gap replaces it with a divider bar, so the button that was
+  // focused unmounts and focus falls back to <body>. On a long strip that would
+  // mean tabbing through every tile again to place a second divider, so hand
+  // focus to the new divider's title field instead.
+  useEffect(() => {
+    if (focusDividerPage === null) return
+    stripRef.current
+      ?.querySelector<HTMLInputElement>(`[data-divider-title="${focusDividerPage}"]`)
+      ?.focus()
+    setFocusDividerPage(null)
+  }, [focusDividerPage, dividers])
 
   const sortedDividers = [...dividers].sort((a, b) => a.page - b.page)
   const dividerPages = new Set(sortedDividers.map(d => d.page))
@@ -184,8 +201,11 @@ export function PageStripEditor({
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Expected count:</span>
+          <label htmlFor={expectedCountId} className="text-sm text-muted-foreground">
+            Expected count:
+          </label>
           <Input
+            id={expectedCountId}
             type="number"
             value={expectedCount}
             onChange={e => setExpectedCount(e.target.value)}
@@ -244,6 +264,7 @@ export function PageStripEditor({
           const isFirstPage = page === startPage
           const showGapBefore = !isFirstPage && !hasDivider
           const isHoveredGap = hoverGap === page
+          const isFocusedGap = focusGap === page
 
           return (
             <div key={page} className="flex items-end flex-shrink-0">
@@ -255,14 +276,19 @@ export function PageStripEditor({
                       type="text"
                       value={divider.title}
                       onChange={e => updateDividerTitle(page, e.target.value)}
-                      className="text-xs bg-transparent border-b border-blue-400 outline-none w-24 text-center text-blue-600"
+                      className="text-xs bg-transparent border-b border-blue-400 outline-none w-24 text-center text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm"
                       onClick={e => e.stopPropagation()}
+                      data-divider-title={page}
+                      aria-label={`${labelForLevel} title for the ${level} starting at page ${page}`}
                     />
                     <button
                       type="button"
-                      className="text-xs text-red-400 hover:text-red-600"
+                      className="text-xs text-red-400 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 rounded-sm px-0.5"
                       onClick={() => removeDivider(page)}
-                      title="Remove divider"
+                      // The literal "x" text content would otherwise name every
+                      // one of these buttons identically.
+                      aria-label={`Remove ${level} divider before page ${page}`}
+                      title={`Remove ${level} divider before page ${page}`}
                     >
                       x
                     </button>
@@ -271,20 +297,35 @@ export function PageStripEditor({
                 </div>
               )}
 
-              {/* Gap between pages (add divider on click) */}
+              {/* Gap between pages (add divider on click or Enter/Space) */}
               {showGapBefore && (
-                <div
-                  className="flex items-center justify-center cursor-pointer mx-0.5 flex-shrink-0 transition-colors"
+                <button
+                  type="button"
+                  className="flex items-center justify-center cursor-pointer mx-0.5 flex-shrink-0 transition-colors rounded focus-visible:ring-2 focus-visible:ring-blue-500"
                   style={{ width: 16, height: 140 }}
                   onMouseEnter={() => setHoverGap(page)}
                   onMouseLeave={() => setHoverGap(null)}
-                  onClick={() => addDivider(page - 1)}
+                  onFocus={() => setFocusGap(page)}
+                  onBlur={() => setFocusGap(null)}
+                  onClick={e => {
+                    addDivider(page - 1)
+                    // This button unmounts on the next render, and React fires no
+                    // blur for that, so the focus flag has to be cleared here or a
+                    // gap that reappears after its divider is removed would show a
+                    // stuck "+".
+                    setFocusGap(null)
+                    // detail === 0 means the click came from Enter/Space rather
+                    // than a pointer, so this button is about to unmount from
+                    // under the keyboard user's focus.
+                    if (e.detail === 0) setFocusDividerPage(page)
+                  }}
+                  aria-label={`Add ${level} divider before page ${page}`}
                   title={`Add ${level} divider before page ${page}`}
                 >
-                  {isHoveredGap && (
+                  {(isHoveredGap || isFocusedGap) && (
                     <span className="text-muted-foreground text-lg leading-none">+</span>
                   )}
-                </div>
+                </button>
               )}
 
               {/* Page thumbnail */}
@@ -292,6 +333,7 @@ export function PageStripEditor({
                 renderer={renderer}
                 pageNumber={page}
                 width={90}
+                selectable={tocSelectMode}
                 selected={tocSelectMode && selectedTocPages.has(page)}
                 onClick={() => handlePageClick(page)}
               />

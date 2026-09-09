@@ -8,11 +8,13 @@ interface PageThumbnailProps {
   renderer: PdfPageRenderer | null
   pageNumber: number
   width?: number
+  /** True while the strip is in TOC-select mode, i.e. the tile acts as a toggle. */
+  selectable?: boolean
   selected?: boolean
   onClick?: () => void
 }
 
-export function PageThumbnail({ renderer, pageNumber, width = 100, selected, onClick }: PageThumbnailProps) {
+export function PageThumbnail({ renderer, pageNumber, width = 100, selectable, selected, onClick }: PageThumbnailProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   // Only pages that have been scrolled near are worth rendering — a book strip
@@ -63,6 +65,11 @@ export function PageThumbnail({ renderer, pageNumber, width = 100, selected, onC
       ref={buttonRef}
       type="button"
       onClick={onClick}
+      // Without an explicit name the tile announces as "Page 5 5" once rendered
+      // and "5 5" while it is still a placeholder. aria-pressed is only meaningful
+      // in TOC-select mode — outside it the tile is not a toggle.
+      aria-label={`Page ${pageNumber}`}
+      aria-pressed={selectable ? !!selected : undefined}
       className={`flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer transition-all ${
         selected ? 'ring-2 ring-blue-500 rounded-md' : ''
       }`}
