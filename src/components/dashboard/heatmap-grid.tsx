@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Section } from '@/lib/db/models'
 
@@ -8,7 +9,10 @@ interface HeatmapGridProps {
   onSectionClick?: (sectionId: string) => void
 }
 
-export function HeatmapGrid({ sections, onSectionClick }: HeatmapGridProps) {
+// Memoized: one Radix Tooltip per section adds up (657 on the largest book), and
+// typing in the sibling search box re-renders this subtree for no reason. Both props
+// are referentially stable unless the book data actually reloads.
+export const HeatmapGrid = memo(function HeatmapGrid({ sections, onSectionClick }: HeatmapGridProps) {
   return (
     <TooltipProvider>
       <div className="flex flex-wrap gap-1">
@@ -36,4 +40,4 @@ export function HeatmapGrid({ sections, onSectionClick }: HeatmapGridProps) {
       </div>
     </TooltipProvider>
   )
-}
+})

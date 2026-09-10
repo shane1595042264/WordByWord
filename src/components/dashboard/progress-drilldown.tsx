@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback, useRef } from 'react'
+import { useState, useMemo, useCallback, useRef, useDeferredValue } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -15,6 +15,9 @@ interface ProgressDrilldownProps {
 
 export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps) {
   const [searchQuery, setSearchQuery] = useState('')
+  // The input stays bound to searchQuery so typing is instant; the expensive filtered
+  // chapter tree and match count read the deferred value and catch up at lower priority.
+  const deferredQuery = useDeferredValue(searchQuery)
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
@@ -32,8 +35,8 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
 
   // Count matching chapters/sections for search feedback
   const matchCount = useMemo(() => {
-    if (!searchQuery.trim()) return null
-    const q = searchQuery.trim().toLowerCase()
+    if (!deferredQuery.trim()) return null
+    const q = deferredQuery.trim().toLowerCase()
     let chapters = 0
     let sections = 0
     for (const ch of book.chapters) {
@@ -45,7 +48,7 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
       }
     }
     return { chapters, sections }
-  }, [searchQuery, book.chapters])
+  }, [deferredQuery, book.chapters])
 
   return (
     <div className="space-y-6">
@@ -140,7 +143,7 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
           bookRemoteId={book.remoteId}
           bookUpdatedAt={book.updatedAt}
           totalBookPages={book.totalPages}
-          searchQuery={searchQuery}
+          searchQuery={deferredQuery}
         />
       </div>
     </div>
