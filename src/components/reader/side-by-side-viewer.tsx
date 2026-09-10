@@ -106,55 +106,51 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
    * and scroll the PDF to that page.
    *
    * Instead of matching scroll ratios (which is inaccurate because text
-   * and PDF have different content heights), we find the actual word
-   * elements in the DOM and check which NibDocument page they belong to.
+   * and PDF have different content heights), we locate the NibPage wrapper
+   * that spans the "currently reading" line.
+   *
+   * We measure the per-page wrappers rather than the word spans: page
+   * granularity is all scrollToPage needs, and the wrappers are plain
+   * block-flow elements so their rect.top is monotonically increasing and
+   * can be binary-searched. Word spans cannot — LaTeX groups render their
+   * hit targets in an absolutely-positioned overlay (nib-text-viewer.tsx),
+   * which breaks document-order monotonicity. Scanning every word span was
+   * also O(words-in-section) layout reads per scroll frame, which is tens of
+   * thousands on the largest sections.
    */
   const handleTextScroll = useCallback(() => {
     if (!syncScroll || !nibDocument) return
     const textEl = textRef.current
     if (!textEl) return
 
-    // Find word spans in the visible viewport area
-    // We check word spans near the top of the scroll container to determine
-    // which page the user is currently reading
     const containerRect = textEl.getBoundingClientRect()
-    // Target: the word span nearest to 1/3 from the top of the viewport
-    // (top-third gives a good "currently reading" position)
+    // Target: 1/3 from the top of the viewport ("currently reading" position)
     const targetY = containerRect.top + containerRect.height * 0.33
 
-    // Query word spans in the text pane
-    const wordSpans = textEl.querySelectorAll<HTMLSpanElement>('[data-word-index]')
-    let closestSpan: HTMLSpanElement | null = null
-    let closestDist = Infinity
+    const pageEls = textEl.querySelectorAll<HTMLElement>('[data-nib-page]')
+    if (pageEls.length === 0) return
 
-    for (const span of wordSpans) {
-      const rect = span.getBoundingClientRect()
-      // Only consider spans that are within the visible area
-      if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) continue
-      const dist = Math.abs(rect.top - targetY)
-      if (dist < closestDist) {
-        closestDist = dist
-        closestSpan = span
+    // Binary-search for the last page that starts at or before targetY, i.e.
+    // the page containing the reading line. Defaults to the first page when
+    // targetY sits above it (scrolled to the very top).
+    let lo = 0
+    let hi = pageEls.length - 1
+    let foundIdx = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (pageEls[mid].getBoundingClientRect().top <= targetY) {
+        foundIdx = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
       }
     }
 
-    if (!closestSpan) return
-    const wordIndex = parseInt(closestSpan.dataset.wordIndex ?? '0', 10)
-
-    // Find which NibPage this word belongs to
-    let cumWords = 0
-    for (const page of nibDocument.pages) {
-      const pageWordCount = page.allWords.length
-      if (wordIndex < cumWords + pageWordCount) {
-        const pageNum = page.pageNumber
-        if (pageNum !== lastSyncedPageRef.current) {
-          lastSyncedPageRef.current = pageNum
-          pdfViewerRef.current?.scrollToPage(pageNum, 'smooth')
-        }
-        return
-      }
-      cumWords += pageWordCount
-    }
+    const pageNum = parseInt(pageEls[foundIdx].dataset.nibPage ?? '', 10)
+    if (!Number.isFinite(pageNum)) return
+    if (pageNum === lastSyncedPageRef.current) return
+    lastSyncedPageRef.current = pageNum
+    pdfViewerRef.current?.scrollToPage(pageNum, 'smooth')
   }, [syncScroll, nibDocument])
 
   // Debounced text scroll handler to avoid thrashing.

@@ -1036,7 +1036,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         </div>
 
         {nibDocument.pages.map((page) => (
-          <div key={page.pageNumber} className="mb-6">
+          <div key={page.pageNumber} data-nib-page={page.pageNumber} className="mb-6">
             {/* Page header (detected from PDF — only shown in indicators mode) */}
             {showIndicators && page.header && (
               <div className="mb-3">
