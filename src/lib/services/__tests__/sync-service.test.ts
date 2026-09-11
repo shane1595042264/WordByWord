@@ -1138,3 +1138,119 @@ describe('vocab delete durability — pending-delete queue (KAN-283)', () => {
     expect(stored[199]).toBe('v-249')
   })
 })
+
+// Mirrors SYNC_MAX_WAIT_MS in sync-service.ts (not exported).
+const SYNC_MAX_WAIT_MS_TEST = 120_000
+
+// Regression coverage for KAN-298: markDirty() was a plain resetting debounce
+// with no max-wait cap, so a reader who scrolls at least once every 30s re-armed
+// it forever and sync() was never reached for the whole session. The oldest
+// unpushed write must now have a hard ceiling (SYNC_MAX_WAIT_MS = 120s).
+describe('syncService.markDirty() — max-wait cap under continuous activity (KAN-298)', () => {
+  type Internals = {
+    isSyncing: boolean
+    debounceTimer: ReturnType<typeof setTimeout> | null
+    firstDirtyAt: number | null
+  }
+  const internals = () => syncService as unknown as Internals
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    const s = internals()
+    s.isSyncing = false
+    s.debounceTimer = null
+    s.firstDirtyAt = null
+  })
+
+  afterEach(() => {
+    const s = internals()
+    if (s.debounceTimer) clearTimeout(s.debounceTimer)
+    s.debounceTimer = null
+    s.firstDirtyAt = null
+    s.isSyncing = false
+    vi.useRealTimers()
+  })
+
+  it('fires sync() within the cap when markDirty() is called every 5s for 3 minutes', () => {
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+
+    let firedBeforeCap = 0
+    // 5s cadence — well inside the 30s debounce, which is what starved sync().
+    for (let elapsed = 0; elapsed < 180_000; elapsed += 5_000) {
+      syncService.markDirty()
+      vi.advanceTimersByTime(5_000)
+      if (elapsed + 5_000 <= 120_000) firedBeforeCap = syncSpy.mock.calls.length
+    }
+
+    // Pre-fix this was 0: every call cleared the previous timer, so 3 minutes of
+    // continuous scrolling produced no sync at all.
+    expect(firedBeforeCap).toBeGreaterThanOrEqual(1)
+    expect(syncSpy.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+    // ...but the cap must not turn every write into a request: 3 minutes of
+    // activity is a handful of pushes, not one per markDirty() (36 calls).
+    expect(syncSpy.mock.calls.length).toBeLessThanOrEqual(4)
+
+    syncSpy.mockRestore()
+  })
+
+  it('leaves the idle case untouched — one edit still syncs at 30s, not later', () => {
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+
+    syncService.markDirty()
+    vi.advanceTimersByTime(29_999)
+    expect(syncSpy).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    syncSpy.mockRestore()
+  })
+
+  it('does not fire the cap while a sync is in flight — it arms the debounce instead', () => {
+    const s = internals()
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+
+    // Open the dirty window, then push past the cap with a sync already running.
+    syncService.markDirty()
+    vi.advanceTimersByTime(SYNC_MAX_WAIT_MS_TEST + 10_000)
+    syncSpy.mockClear()
+    s.isSyncing = true
+    if (s.debounceTimer) clearTimeout(s.debounceTimer)
+    s.debounceTimer = null
+
+    syncService.markDirty()
+
+    // An immediate sync() would early-return on 'already syncing' and strand the
+    // entity with nothing armed (the KAN-245 failure mode).
+    expect(syncSpy).not.toHaveBeenCalled()
+    expect(s.debounceTimer).not.toBeNull()
+
+    s.isSyncing = false
+    vi.runOnlyPendingTimers()
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    syncSpy.mockRestore()
+  })
+
+  it('restarts the window instead of retrying on every write when sync() never commits', () => {
+    // sync() early-returns (e.g. no token) without clearing firstDirtyAt. If the
+    // cap branch did not restart the window, every subsequent markDirty() would
+    // re-attempt — a request per scroll tick for a logged-out user.
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+
+    syncService.markDirty()
+    vi.advanceTimersByTime(SYNC_MAX_WAIT_MS_TEST)
+    syncSpy.mockClear()           // ignore the debounce that fired en route
+    syncService.markDirty()       // cap fires
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    // firstDirtyAt restarted, so the next few writes ride the debounce, not the cap.
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(500)
+      syncService.markDirty()
+    }
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    syncSpy.mockRestore()
+  })
+})

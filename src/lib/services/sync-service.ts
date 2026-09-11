@@ -4,6 +4,13 @@ import type { Book, Chapter, Section, VocabEntry } from '../db/models'
 import { SettingsService, type SyncedSettings } from './settings-service'
 
 const SYNC_DEBOUNCE_MS = 30_000
+/**
+ * Hard ceiling on how long the OLDEST unpushed write may sit in the debounce.
+ * SYNC_DEBOUNCE_MS alone is a resetting trailing debounce: a reader who scrolls
+ * at least once every 30s re-arms it forever and the session never syncs
+ * (KAN-298). The cap bounds staleness without penalising idle users.
+ */
+const SYNC_MAX_WAIT_MS = 120_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
 const SYNC_LOG_KEY = 'nibble_syncLog'
 const PENDING_VOCAB_DELETES_KEY = 'nibble_pendingVocabDeletes'
@@ -39,6 +46,8 @@ type ConflictResolver = (conflict: SyncConflict) => Promise<'cloud' | 'local' | 
 
 class SyncService {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
+  /** Timestamp of the first dirty write since the last committed sync (KAN-298). */
+  private firstDirtyAt: number | null = null
   private isSyncing = false
   private token: string | null = null
   private tokenExp = 0
@@ -71,6 +80,26 @@ class SyncService {
     window.addEventListener('beforeunload', onBeforeUnload)
     this.cleanupFns.push(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
+    // flushSync() runs inside beforeunload and so must be synchronous — it cannot
+    // await the IndexedDB reads needed to build the entity arrays, which is why it
+    // only carries the settings blob. visibilitychange gives us an async window to
+    // run the real sync() path, and it is the only reliable signal on mobile where
+    // beforeunload frequently never fires at all (KAN-298).
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden') return
+      // firstDirtyAt is cleared the moment a sync commits, so a tab-switch with
+      // nothing pending costs no request.
+      if (this.firstDirtyAt === null) return
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer)
+        this.debounceTimer = null
+      }
+      this.log('sync:visibility', 'tab hidden with pending changes — flushing')
+      void this.sync()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    this.cleanupFns.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+
     // Full sync on init — always sync from epoch on first load to catch all changes
     this.hasInitSynced = false
     this.syncWithRetry()
@@ -100,6 +129,8 @@ class SyncService {
 
   destroy() {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    this.debounceTimer = null
+    this.firstDirtyAt = null
     // Abort any in-flight sync fetch to prevent stale responses from overwriting newer data
     if (this.abortController) {
       this.abortController.abort()
@@ -247,7 +278,31 @@ class SyncService {
 
   markDirty() {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
-    this.debounceTimer = setTimeout(() => this.sync(), SYNC_DEBOUNCE_MS)
+    const now = Date.now()
+    if (this.firstDirtyAt === null) this.firstDirtyAt = now
+    const elapsed = now - this.firstDirtyAt
+
+    // Past the cap: push now rather than re-arming. Skipped while a sync is in
+    // flight — sync() early-returns on 'already syncing', which would drop this
+    // entity with no timer left to retry it (the KAN-245 failure mode); we fall
+    // through and arm the normal debounce as the safety net instead.
+    if (elapsed >= SYNC_MAX_WAIT_MS && !this.isSyncing) {
+      // Restart the window even though sync() may early-return (e.g. no token),
+      // so a sync that never commits can't be re-attempted on every write.
+      this.firstDirtyAt = now
+      this.debounceTimer = null
+      void this.sync()
+      return
+    }
+
+    // Clamp the delay to the remaining budget so repeated calls converge on
+    // firstDirtyAt + SYNC_MAX_WAIT_MS instead of overshooting it.
+    const remaining = SYNC_MAX_WAIT_MS - elapsed
+    const delay = remaining > 0 ? Math.min(SYNC_DEBOUNCE_MS, remaining) : SYNC_DEBOUNCE_MS
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null
+      void this.sync()
+    }, delay)
   }
 
   /**
@@ -488,6 +543,10 @@ class SyncService {
     }
 
     this.isSyncing = true
+    // A sync is committed — open a fresh max-wait window. Writes that land while
+    // this request is in flight may not be in its payload, so they deserve a new
+    // budget rather than inheriting the elapsed one (KAN-298).
+    this.firstDirtyAt = null
     // Create an AbortController so destroy() can cancel this in-flight sync
     this.abortController = new AbortController()
     const { signal } = this.abortController
