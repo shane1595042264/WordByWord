@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, type RefObject } from 'react'
 
+/** How long to let content render before the first fits/bottom check. */
+const INITIAL_CHECK_DELAY_MS = 1500
+/** Poll interval while the scroll container still has nothing rendered in it. */
+const RENDER_WAIT_INTERVAL_MS = 500
+/** Give up waiting after ~30s so we don't poll forever on a broken render. */
+const MAX_RENDER_WAIT_ATTEMPTS = 60
+
 export function useAutoTrack(
   sectionId: string,
   isRead: boolean,
@@ -13,6 +20,15 @@ export function useAutoTrack(
   viewMode?: string,
   /** Optional separate scroll container for PDF mode */
   pdfScrollRef?: RefObject<HTMLDivElement | null>,
+  /**
+   * Whether the content for the current view mode has actually rendered.
+   * Pass `false` while a skeleton, an error panel or an empty state is on
+   * screen — a container showing one of those doesn't overflow either, and
+   * without this the "fits without scroll" shortcut would mark the section
+   * read even though there was nothing to read. Defaults to `true` so callers
+   * that can't determine readiness keep the previous behaviour.
+   */
+  contentReady: boolean = true,
 ) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollCleanupRef = useRef<(() => void) | null>(null)
@@ -37,6 +53,47 @@ export function useAutoTrack(
 
       const isTextMode = viewMode === 'text'
 
+      /**
+       * Has the container actually got rendered section content in it?
+       *
+       * `maxScroll < 10` on its own means "this pane doesn't overflow", which
+       * is equally true of a skeleton, a "no extractable text layer" empty
+       * state, a parse-error panel, and a PDF container whose pages haven't
+       * been appended yet. Only the fits-without-scroll shortcut consults
+       * this — scrolling to the bottom is a genuine read signal either way.
+       */
+      const hasRenderedContent = (container: HTMLElement) => {
+        if (!contentReady) return false
+        // PDFViewer builds its scroll container imperatively and appends one
+        // [data-page-num] wrapper per page, so an empty container means pdf.js
+        // hasn't rendered anything yet.
+        if (viewMode === 'pdf') return container.querySelector('[data-page-num]') !== null
+        return true
+      }
+
+      /**
+       * Run the initial fits/bottom check once content has had a chance to
+       * render. If the container is still empty we retry instead of firing
+       * (and instead of giving up for good — a slow PDF that fits without
+       * scrolling should still auto-mark once its pages appear).
+       */
+      const scheduleInitialCheck = (container: HTMLElement, check: () => void) => {
+        let attempts = 0
+        const run = () => {
+          if (cancelled) return
+          if (!hasRenderedContent(container)) {
+            // `contentReady` is a hook input — the effect re-runs when it
+            // flips, so only the DOM-driven wait needs polling here.
+            if (!contentReady || attempts >= MAX_RENDER_WAIT_ATTEMPTS) return
+            attempts++
+            timerRef.current = setTimeout(run, RENDER_WAIT_INTERVAL_MS)
+            return
+          }
+          check()
+        }
+        timerRef.current = setTimeout(run, INITIAL_CHECK_DELAY_MS)
+      }
+
       // In text mode, ALWAYS use scroll-based tracking regardless of settings
       if (isTextMode) {
         // Wait for the text scroll container to be available
@@ -53,6 +110,10 @@ export function useAutoTrack(
             const { scrollTop, scrollHeight, clientHeight } = container
             const maxScroll = scrollHeight - clientHeight
             if (maxScroll < 10) {
+              // Nothing rendered yet (or nothing renderable at all) — don't
+              // treat "doesn't overflow" as "read", and stay attached so a
+              // later check can still mark it.
+              if (!hasRenderedContent(container)) return
               markRead('text-fits-without-scroll')
               container.removeEventListener('scroll', handleScroll)
               return
@@ -65,9 +126,7 @@ export function useAutoTrack(
 
           container.addEventListener('scroll', handleScroll)
           // Delay initial check to let content fully render
-          setTimeout(() => {
-            if (!cancelled) handleScroll()
-          }, 1500)
+          scheduleInitialCheck(container, handleScroll)
           scrollCleanupRef.current = () => container.removeEventListener('scroll', handleScroll)
         }
 
@@ -90,6 +149,7 @@ export function useAutoTrack(
             const { scrollTop, scrollHeight, clientHeight } = container
             const maxScroll = scrollHeight - clientHeight
             if (maxScroll < 10) {
+              if (!hasRenderedContent(container)) return
               markRead('pdf-endofpage-fits')
               container.removeEventListener('scroll', handleScroll)
               return
@@ -102,9 +162,7 @@ export function useAutoTrack(
 
           container.addEventListener('scroll', handleScroll)
           // Delay initial check to let content fully render
-          setTimeout(() => {
-            if (!cancelled) handleScroll()
-          }, 1500)
+          scheduleInitialCheck(container, handleScroll)
           scrollCleanupRef.current = () => container.removeEventListener('scroll', handleScroll)
         }
 
@@ -125,5 +183,5 @@ export function useAutoTrack(
       scrollCleanupRef.current?.()
       scrollCleanupRef.current = null
     }
-  }, [sectionId, isRead, onMarkedRead, scrollContainerRef, textScrollRef, viewMode, pdfScrollRef])
+  }, [sectionId, isRead, onMarkedRead, scrollContainerRef, textScrollRef, viewMode, pdfScrollRef, contentReady])
 }

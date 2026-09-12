@@ -546,8 +546,27 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (bookJustCompleted) setShowCelebration(true)
   }, [refreshReadStatus])
 
+  // Whether the text pane is showing real section content rather than a
+  // skeleton, the parse-error panel or the "no extractable text layer" empty
+  // state. Mirrors the branch order of the text pane's JSX below — all of
+  // those states are shorter than the viewport, so without this auto-track
+  // would mark the section read 1.5s after mount with nothing on screen.
+  const textContentReady = useMemo(() => {
+    if (!section) return false
+    if (/^(table of )?contents$/i.test(section.title) && sectionText) return true  // TocViewer
+    if (nibDocument) return true                                                   // NibTextViewer
+    if (parseError && !sectionText) return false                                   // extraction-failed panel
+    if (!parseError && (sectionText || section.richContent)) return false          // NibTextViewerSkeleton
+    return !!sectionText                                                           // TextViewer (empty state when null)
+  }, [section, sectionText, nibDocument, parseError])
+
+  // The text pane is what actually renders for 'text' mode and for books with
+  // no PDF at all; other modes render their own viewer, so readiness there is
+  // determined inside the hook.
+  const autoTrackContentReady = viewMode === 'text' || !book?.pdfBlob ? textContentReady : true
+
   // Only track after loading completes to ensure scroll containers are mounted
-  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef)
+  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef, autoTrackContentReady)
 
   // ── Scroll progress persistence (debounced; shared by PDF and text modes) ──
   const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
