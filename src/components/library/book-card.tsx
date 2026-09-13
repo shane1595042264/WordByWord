@@ -31,6 +31,26 @@ const STAGE_LABELS: Record<string, string> = {
   complete: 'Complete!',
 }
 
+const RETRY_FALLBACK_MESSAGE = 'Failed to retry processing'
+
+/**
+ * The API emits two error shapes: `{ error: 'string' }` from the route's own
+ * c.json() branches and `{ error: { code, message, status } }` from AppError via
+ * the global handler. Read whichever one came back so the user sees the real
+ * reason (e.g. a retry that collided with an in-flight job for the same file).
+ */
+async function retryErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    const err = body?.error
+    if (typeof err === 'string' && err) return err
+    if (typeof err?.message === 'string' && err.message) return err.message
+  } catch {
+    // Non-JSON body (proxy/gateway error page) — fall through to the generic message.
+  }
+  return RETRY_FALLBACK_MESSAGE
+}
+
 export function BookCard({ book, editMode, selected, onToggleSelect, onProcessingComplete }: BookCardProps) {
   const isProcessing = book.processingStatus === 'processing'
   const isFailed = book.processingStatus === 'error'
@@ -261,10 +281,14 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                     if (res.ok) {
                       onProcessingComplete?.() // refresh to show new processing state
                     } else {
-                      toast.error('Failed to retry processing', { duration: 5000 })
+                      // A retry can lose to another user already processing the
+                      // same (content-addressed) file. The server explains that
+                      // in the body — a generic toast would leave the user
+                      // thinking the book is permanently broken (KAN-302).
+                      toast.error(await retryErrorMessage(res), { duration: 5000 })
                     }
                   } catch (err) {
-                    toast.error('Failed to retry processing', { duration: 5000 })
+                    toast.error(RETRY_FALLBACK_MESSAGE, { duration: 5000 })
                     console.error('Retry processing error:', err)
                   } finally {
                     setIsRetrying(false)
