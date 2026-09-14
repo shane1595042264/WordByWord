@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { RULEBOOK } from '@/lib/vim/rulebook'
 import type { VimRule } from '@/lib/vim/types'
 import type { KeymapOverrides } from '@/lib/services/settings-service'
-import { formatKeyCombo, useIsMac } from '@/lib/keymap-display'
+import { formatKeyCombo, isUnbindableCombo, useIsMac } from '@/lib/keymap-display'
 
 // ─── Global Shortcuts (non-Vim, combo-key shortcuts) ────────────────────────
 
@@ -148,6 +148,21 @@ function KeymapRow({
     if (!recording) return
 
     const handler = (e: KeyboardEvent) => {
+      // Escape hatches first — before preventDefault(), or the recorder becomes
+      // a keyboard trap: the only two keys that get a user out of it would be
+      // swallowed and bound instead. Neither is ever a recordable binding.
+      if (e.key === 'Tab') {
+        // Let Tab through untouched so focus actually moves; the blur listener
+        // below closes the recorder once it does.
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setRecording(false)
+        return
+      }
+
       e.preventDefault()
       e.stopPropagation()
 
@@ -200,10 +215,17 @@ function KeymapRow({
 
       {/* Current key */}
       <div className="shrink-0 flex items-center gap-2">
+        {/* Persistent live region: it has to exist before the text lands, or a
+            screen reader never announces that recording started. */}
+        <span className="sr-only" role="status" aria-live="polite">
+          {recording ? `Recording new key for ${rule.label}. Press a key, or press Escape to cancel.` : ''}
+        </span>
+
         {recording ? (
           <button
             ref={recordRef}
             autoFocus
+            aria-label={`Recording new key for ${rule.label}. Press a key, or press Escape to cancel.`}
             className="px-3 py-1 text-xs border-2 border-amber-500 rounded-md bg-amber-500/10 text-amber-400 animate-pulse font-mono"
           >
             Press a key...
@@ -211,6 +233,7 @@ function KeymapRow({
         ) : (
           <button
             onClick={() => setRecording(true)}
+            aria-label={`Remap ${rule.label}, currently ${currentKey}`}
             className="cursor-pointer hover:ring-2 hover:ring-primary/30 rounded transition-all"
             title="Click to remap"
           >
@@ -221,7 +244,8 @@ function KeymapRow({
         {isCustom && (
           <button
             onClick={() => onReset(rule.id)}
-            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label={`Reset ${rule.label} to default (${defaultKey})`}
+            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
             title={`Reset to default (${defaultKey})`}
           >
             ↺
@@ -254,6 +278,21 @@ function GlobalShortcutRow({
     if (!recording) return
 
     const handler = (e: KeyboardEvent) => {
+      // Escape hatches first — before preventDefault(), or the recorder becomes
+      // a keyboard trap: the only two keys that get a user out of it would be
+      // swallowed and bound instead. Neither is ever a recordable binding.
+      if (e.key === 'Tab') {
+        // Let Tab through untouched so focus actually moves; the blur listener
+        // below closes the recorder once it does.
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setRecording(false)
+        return
+      }
+
       e.preventDefault()
       e.stopPropagation()
 
@@ -299,10 +338,17 @@ function GlobalShortcutRow({
 
       {/* Current key */}
       <div className="shrink-0 flex items-center gap-2">
+        {/* Persistent live region: it has to exist before the text lands, or a
+            screen reader never announces that recording started. */}
+        <span className="sr-only" role="status" aria-live="polite">
+          {recording ? `Recording new key combo for ${shortcut.label}. Press a key combo, or press Escape to cancel.` : ''}
+        </span>
+
         {recording ? (
           <button
             ref={recordRef}
             autoFocus
+            aria-label={`Recording new key combo for ${shortcut.label}. Press a key combo, or press Escape to cancel.`}
             className="px-3 py-1 text-xs border-2 border-amber-500 rounded-md bg-amber-500/10 text-amber-400 animate-pulse font-mono"
           >
             Press a key combo...
@@ -310,6 +356,7 @@ function GlobalShortcutRow({
         ) : (
           <button
             onClick={() => setRecording(true)}
+            aria-label={`Remap ${shortcut.label}, currently ${currentKeys}`}
             className="cursor-pointer hover:ring-2 hover:ring-primary/30 rounded transition-all"
             title="Click to remap"
           >
@@ -320,7 +367,8 @@ function GlobalShortcutRow({
         {isCustom && (
           <button
             onClick={() => onReset(shortcut.id)}
-            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label={`Reset ${shortcut.label} to default (${shortcut.defaultKeys})`}
+            className="text-xs text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
             title={`Reset to default (${shortcut.defaultKeys})`}
           >
             ↺
@@ -335,6 +383,15 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
   const [search, setSearch] = useState('')
 
   const handleRemap = useCallback((ruleId: string, newKey: string) => {
+    // Defence in depth: the recorders never emit a bare Tab/Escape, but any
+    // other route into this callback must not be able to persist one either.
+    if (isUnbindableCombo(newKey)) {
+      toast.error(`"${formatKeyCombo(newKey, { separator: '+' })}" can't be used as a shortcut`, {
+        description: 'Tab moves focus and Escape cancels — both stay reserved for keyboard navigation.',
+      })
+      return
+    }
+
     // Block a remap that would silently shadow another action sharing this key.
     const conflict = findRemapConflict(ruleId, newKey, overrides)
     if (conflict) {
@@ -408,7 +465,7 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Click any key badge to remap it. Press the new key to confirm. Changes apply immediately.
+        Click any key badge to remap it. Press the new key to confirm, or press Escape to cancel. Changes apply immediately.
       </p>
 
       {filteredGlobal.length > 0 && (

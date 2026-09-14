@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from 'react'
-import { detectMac, formatKeyCombo } from '@/lib/keymap-display'
+import { detectMac, formatKeyCombo, isUnbindableCombo } from '@/lib/keymap-display'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -177,6 +177,12 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
 
       for (const shortcut of shortcuts.values()) {
         const combo = shortcut.customKeys || shortcut.defaultKeys
+        // Ignore a bare Tab/Escape binding. The recorder can no longer produce
+        // one, but anybody who persisted one before that guard shipped would
+        // otherwise stay locked out: firing it preventDefaults every Tab press
+        // app-wide, which kills the focus movement needed to reach the reset
+        // control. Ignoring it here lets them recover on their next page load.
+        if (isUnbindableCombo(combo)) continue
         if (matchesEvent(combo, e)) {
           e.preventDefault()
           e.stopPropagation()

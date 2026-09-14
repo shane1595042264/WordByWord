@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatKeyCombo } from '../keymap-display'
+import { formatKeyCombo, isUnbindableCombo } from '../keymap-display'
 
 describe('formatKeyCombo', () => {
   describe('non-Mac (Windows/Linux) — textual modifiers', () => {
@@ -63,5 +63,33 @@ describe('formatKeyCombo', () => {
     it('trims whitespace and drops empty parts', () => {
       expect(formatKeyCombo(' Ctrl + i ', { isMac: false })).toBe('Ctrl+i')
     })
+  })
+})
+
+describe('isUnbindableCombo', () => {
+  it('rejects a bare Tab — the only way a keyboard user moves focus', () => {
+    expect(isUnbindableCombo('Tab')).toBe(true)
+  })
+
+  it('rejects a bare Escape — the universal cancel key', () => {
+    expect(isUnbindableCombo('Escape')).toBe(true)
+  })
+
+  it('is case-insensitive and tolerates surrounding whitespace', () => {
+    expect(isUnbindableCombo(' tab ')).toBe(true)
+    expect(isUnbindableCombo('ESCAPE')).toBe(true)
+  })
+
+  it('allows modified forms — only the bare key is load-bearing', () => {
+    expect(isUnbindableCombo('Ctrl+Tab')).toBe(false)
+    expect(isUnbindableCombo('Shift+Escape')).toBe(false)
+    expect(isUnbindableCombo('Ctrl+Shift+Tab')).toBe(false)
+  })
+
+  it('leaves ordinary bindings alone', () => {
+    expect(isUnbindableCombo('Ctrl+,')).toBe(false)
+    expect(isUnbindableCombo('Shift+d')).toBe(false)
+    expect(isUnbindableCombo('j')).toBe(false)
+    expect(isUnbindableCombo('')).toBe(false)
   })
 })

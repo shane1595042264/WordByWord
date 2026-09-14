@@ -45,6 +45,26 @@ const UNIVERSAL_KEYS: Record<string, string> = {
 }
 
 /**
+ * Keys that must never become a binding on their own. Tab is the only way a
+ * keyboard user moves focus, and Escape is the universal "get me out of here";
+ * binding either one to an app action takes away the escape hatch from the
+ * very users who depend on it (WCAG 2.1.2, No Keyboard Trap). Modified forms
+ * like Ctrl+Tab or Shift+Escape are still fair game — only the bare key is
+ * load-bearing for navigation.
+ */
+const UNBINDABLE_KEYS = ['tab', 'escape']
+
+/**
+ * True when `combo` is a bare Tab or Escape (no modifiers). Used both to refuse
+ * such a binding at record time and to ignore one that was persisted before
+ * this guard existed, so an already-trapped user recovers on next load.
+ */
+export function isUnbindableCombo(combo: string): boolean {
+  const parts = combo.split('+').map(p => p.trim().toLowerCase()).filter(Boolean)
+  return parts.length === 1 && UNBINDABLE_KEYS.includes(parts[0])
+}
+
+/**
  * Detect macOS in an SSR-safe way. Returns `false` on the server (no navigator)
  * so server-rendered HTML always uses the textual modifiers and matches the
  * first client render on every platform — see {@link useIsMac} for why that
