@@ -20,6 +20,13 @@ export interface Book {
   lastAccessedWordIndex: number | null
   completedAt: number | null
   updatedAt: number
+  /**
+   * Last books.updatedAt the SERVER reported for this row, in ms. Distinct from
+   * `updatedAt`, which is a browser-clock value the server never sees (sync strips it).
+   * This is the only value the optimistic lock on PUT /books/:id/structure accepts.
+   * Undefined until the first sync after the KAN-304 deploy. Not indexed.
+   */
+  serverUpdatedAt?: number
   remoteId?: string
   catalogId?: string
   jobId?: string

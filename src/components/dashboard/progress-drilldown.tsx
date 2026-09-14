@@ -141,7 +141,6 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
           chapters={book.chapters}
           pdfBlob={book.pdfBlob}
           bookRemoteId={book.remoteId}
-          bookUpdatedAt={book.updatedAt}
           totalBookPages={book.totalPages}
           searchQuery={deferredQuery}
         />

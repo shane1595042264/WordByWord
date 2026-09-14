@@ -15,7 +15,6 @@ interface ChapterAccordionProps {
   chapters: ChapterWithSections[]
   pdfBlob?: Blob
   bookRemoteId?: string
-  bookUpdatedAt?: number
   totalBookPages?: number
   searchQuery?: string
 }
@@ -75,7 +74,7 @@ export function buildChapterGroups(chapters: ChapterWithSections[]): ChapterGrou
   return result
 }
 
-export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, bookUpdatedAt, totalBookPages, searchQuery }: ChapterAccordionProps) {
+export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null)
   const [dividingChapter, setDividingChapter] = useState<ChapterWithSections | null>(null)
@@ -128,11 +127,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
     })
 
     try {
-      await svc.saveStructure(
-        bookRemoteId,
-        fullChapters,
-        bookUpdatedAt ? new Date(bookUpdatedAt).toISOString() : undefined,
-      )
+      await svc.saveStructure(bookRemoteId, fullChapters)
     } catch (err) {
       if (err instanceof StaleBookError) {
         toast.error(err.message)
@@ -147,7 +142,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, book
     setDividingChapter(null)
     // Trigger a page refresh
     window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
-  }, [bookRemoteId, bookUpdatedAt, totalBookPages, chapters])
+  }, [bookRemoteId, totalBookPages, chapters])
   const divideDialog = dividingChapter && pdfBlob && bookRemoteId && totalBookPages ? (() => {
     const PageStripEditor = require('@/components/editor/page-strip-editor').PageStripEditor
     const existingDividers: Divider[] = dividingChapter.sections

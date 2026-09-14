@@ -1045,6 +1045,7 @@ class SyncService {
       processingStatus: (sb.processingStatus as Book['processingStatus']) || 'complete',
       createdAt: sb.createdAt ? new Date(sb.createdAt as string).getTime() : now,
       updatedAt: now,
+      serverUpdatedAt: sb.updatedAt ? new Date(sb.updatedAt as string).getTime() : undefined,
       lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
       lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
@@ -1230,6 +1231,13 @@ class SyncService {
       const local = await db.books.get(localId)
       if (!local) continue
       const serverUpdated = new Date(sb.updatedAt as string).getTime()
+      // Record the server's own clock value unconditionally — deliberately OUTSIDE the
+      // `serverUpdated > local.updatedAt` convergence gate below. That gate never fires for
+      // a browser clock running ahead of the server, which is what made the structure-save
+      // optimistic lock reject the legitimate single-tab writer forever (KAN-304).
+      if (Number.isFinite(serverUpdated) && local.serverUpdatedAt !== serverUpdated) {
+        await db.books.update(localId, { serverUpdatedAt: serverUpdated })
+      }
       // Always update processingStatus from server (processing → complete transition)
       const serverProcessingStatus = sb.processingStatus as Book['processingStatus'] | undefined
       if (serverProcessingStatus === 'complete' && local.processingStatus === 'processing') {

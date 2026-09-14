@@ -332,11 +332,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                   })
 
                   try {
-                    await svc.saveStructure(
-                      book.remoteId!,
-                      finalChapters,
-                      book.updatedAt ? new Date(book.updatedAt).toISOString() : undefined,
-                    )
+                    await svc.saveStructure(book.remoteId!, finalChapters)
                   } catch (err) {
                     if (err instanceof StaleBookError) {
                       toast.error(err.message)
