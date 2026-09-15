@@ -39,7 +39,13 @@ interface PDFViewerProps {
   currentPage?: number
   /** Called when page changes in flip mode */
   onPageChange?: (page: number) => void
-  onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
+  /**
+   * Progress report. `initial` marks a report the viewer emitted on its own
+   * after mounting, before the reader has scrolled or flipped anything — the
+   * pane is sitting at the top of the section, so the percent is ~0 and must
+   * not be treated as a position the reader chose.
+   */
+  onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number, initial?: boolean) => void
   /** Optional external ref to the scroll container (for sync scrolling) */
   scrollRef?: RefObject<HTMLDivElement | null>
   /** Word to highlight on the PDF */
@@ -98,12 +104,19 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     onPageChange?.(newPage)
   }, [currentFlipPage, onPageChange])
 
-  // Report progress for flip mode
+  // Report progress for flip mode. A report is only the reader's doing if the
+  // page actually changed — the first one lands on the section's opening page,
+  // and this effect also re-runs whenever the parent hands it a new
+  // onPageProgress identity. Both of those are flagged `initial` so they can't
+  // be mistaken for a page turn.
+  const lastFlipReportRef = useRef<number | null>(null)
   useEffect(() => {
     if (readingMode === 'flip') {
       const pageIndex = currentFlipPage - startPage + 1
       const percent = Math.round((pageIndex / totalPages) * 100)
-      onPageProgress?.(currentFlipPage, totalPages, percent)
+      const initial = lastFlipReportRef.current === null || lastFlipReportRef.current === currentFlipPage
+      onPageProgress?.(currentFlipPage, totalPages, percent, initial)
+      lastFlipReportRef.current = currentFlipPage
     }
   }, [currentFlipPage, readingMode, startPage, totalPages, onPageProgress])
 
@@ -356,7 +369,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     const container = containerRef.current
     if (!container) return
 
-    const handleScroll = () => {
+    const handleScroll = (initial: boolean) => {
       const { scrollTop, scrollHeight, clientHeight } = container
       const percent = scrollHeight <= clientHeight ? 100 : Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)
 
@@ -381,14 +394,17 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       // below doesn't snap the scroll back to the top of this page when the
       // parent's currentPage state updates in response to onPageProgress.
       prevControlledPageRef.current = visiblePage
-      onPageProgress?.(visiblePage, totalPages, percent)
+      onPageProgress?.(visiblePage, totalPages, percent, initial)
     }
 
-    container.addEventListener('scroll', handleScroll)
-    // Check once after render
-    const timer = setTimeout(handleScroll, 500)
+    // Wrapped so the DOM Event doesn't land in `initial` as a truthy value.
+    const onScroll = () => handleScroll(false)
+    container.addEventListener('scroll', onScroll)
+    // Check once after render — the reader hasn't scrolled yet, so this one
+    // reports the pane's mount position rather than a chosen one.
+    const timer = setTimeout(() => handleScroll(true), 500)
     return () => {
-      container.removeEventListener('scroll', handleScroll)
+      container.removeEventListener('scroll', onScroll)
       clearTimeout(timer)
     }
   }, [readingMode, startPage, totalPages, onPageProgress])

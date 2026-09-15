@@ -231,44 +231,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return () => window.removeEventListener('keydown', handlePdfKey)
   }, [viewMode])
 
-  // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
-  // On first load, restore to saved word index if available from Continue Reading params,
-  // or fall back to section-level saved scroll progress (for direct section navigation)
-  useEffect(() => {
-    if (viewMode === 'text' || viewMode === 'side-by-side') {
-      const t = setTimeout(() => {
-        const restore = restoreRef.current
-        if (restore && !restore.applied && restore.wordIndex != null) {
-          // Restore to exact word position (Continue Reading)
-          nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
-          restore.applied = true
-        } else if (restore && !restore.applied && restore.scrollProgress != null) {
-          // Restore scroll position from Continue Reading params
-          const el = textScrollRef.current
-          if (el) {
-            const maxScroll = el.scrollHeight - el.clientHeight
-            el.scrollTop = (restore.scrollProgress / 100) * maxScroll
-          }
-          nibTextViewerRef.current?.selectWordByDelta(0)
-          restore.applied = true
-        } else if (section?.scrollProgress != null && section.scrollProgress > 0) {
-          // Restore from section-level saved position (returning to section directly)
-          const el = textScrollRef.current
-          if (el) {
-            const maxScroll = el.scrollHeight - el.clientHeight
-            if (maxScroll > 0) {
-              el.scrollTop = (section.scrollProgress / 100) * maxScroll
-            }
-          }
-          nibTextViewerRef.current?.selectWordByDelta(0)
-        } else {
-          nibTextViewerRef.current?.selectWordByDelta(0)
-        }
-      }, 300) // Slightly longer delay for content to render
-      return () => clearTimeout(t)
-    }
-  }, [viewMode, section?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Compute effective progress: cursor line / last text line for text modes,
   // text-side scroll for side-by-side, PDF scroll for PDF mode
   const effectiveProgress = useMemo(() => {
@@ -560,6 +522,53 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     return !!sectionText                                                           // TextViewer (empty state when null)
   }, [section, sectionText, nibDocument, parseError])
 
+  // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
+  // On first load, restore to saved word index if available from Continue Reading params,
+  // or fall back to section-level saved scroll progress (for direct section navigation).
+  //
+  // Keyed on `textContentReady` as well as the section: for a PDF-backed section
+  // the viewer's content comes from an async NibService.parsePages that takes far
+  // longer than the 300ms delay below, so on the first pass the container is still
+  // a skeleton with maxScroll 0 and every scrollTop assignment here silently
+  // no-ops. That boolean flips false -> true once per section when the real viewer
+  // renders, which re-runs this against a laid-out container. Deliberately NOT
+  // keyed on `nibDocument` — it is an object that can be rebuilt, which would
+  // yank a mid-read reader back to the saved position.
+  useEffect(() => {
+    if (viewMode === 'text' || viewMode === 'side-by-side') {
+      const t = setTimeout(() => {
+        const restore = restoreRef.current
+        if (restore && !restore.applied && restore.wordIndex != null) {
+          // Restore to exact word position (Continue Reading)
+          nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
+          restore.applied = true
+        } else if (restore && !restore.applied && restore.scrollProgress != null) {
+          // Restore scroll position from Continue Reading params
+          const el = textScrollRef.current
+          if (el) {
+            const maxScroll = el.scrollHeight - el.clientHeight
+            el.scrollTop = (restore.scrollProgress / 100) * maxScroll
+          }
+          nibTextViewerRef.current?.selectWordByDelta(0)
+          restore.applied = true
+        } else if (section?.scrollProgress != null && section.scrollProgress > 0) {
+          // Restore from section-level saved position (returning to section directly)
+          const el = textScrollRef.current
+          if (el) {
+            const maxScroll = el.scrollHeight - el.clientHeight
+            if (maxScroll > 0) {
+              el.scrollTop = (section.scrollProgress / 100) * maxScroll
+            }
+          }
+          nibTextViewerRef.current?.selectWordByDelta(0)
+        } else {
+          nibTextViewerRef.current?.selectWordByDelta(0)
+        }
+      }, 300) // Slightly longer delay for content to render
+      return () => clearTimeout(t)
+    }
+  }, [viewMode, section?.id, textContentReady]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // The text pane is what actually renders for 'text' mode and for books with
   // no PDF at all; other modes render their own viewer, so readiness there is
   // determined inside the hook.
@@ -569,7 +578,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef, autoTrackContentReady)
 
   // ── Scroll progress persistence (debounced; shared by PDF and text modes) ──
+  // Two timers, not one: in side-by-side both writers are live at once (the text
+  // pane owns scrollProgress, the PDF pane owns lastPageViewed) and a shared
+  // timer would let whichever fires last cancel the other's pending write.
   const scrollDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pageDbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveErrorShownRef = useRef(false)
 
   // Rejection handler for the lazy `import('@/lib/db/database')` itself failing
@@ -584,43 +597,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     notifyChunkReloadOnce(err)
   }, [])
 
-  const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number) => {
-    setSectionProgress(scrollPercent)
-    setCurrentPage(page)
-    // Debounce the DB write — pdf-viewer's onPageProgress fires on every native scroll event (30-60/s)
-    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
-    scrollDbTimerRef.current = setTimeout(() => {
-      import('@/lib/db/database').then(({ db }) => {
-        const now = Date.now()
-        db.sections.update(sectionId, {
-          lastPageViewed: page,
-          scrollProgress: scrollPercent,
-          updatedAt: now,
-        }).catch((err) => {
-          console.error('Failed to save page progress:', err)
-          if (!saveErrorShownRef.current) {
-            saveErrorShownRef.current = true
-            toast.warning('Could not save reading position. Your progress may not be preserved.')
-          }
-        })
-        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
-      }, reportPositionSaveImportError)
-    }, 500)
-  }, [sectionId, reportPositionSaveImportError])
-
-  // Clear any pending trailing-debounce write on unmount so it can't fire post-navigation.
-  useEffect(() => () => {
-    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
-  }, [])
-
-  const handleTextScroll = useCallback(() => {
-    const el = textScrollRef.current
-    if (!el) return
-    const { scrollTop, scrollHeight, clientHeight } = el
-    const maxScroll = scrollHeight - clientHeight
-    const percent = maxScroll <= 0 ? 100 : Math.min(100, Math.round((scrollTop / maxScroll) * 100))
-    setSectionProgress(percent)
-    // Debounce the DB write to avoid hundreds of writes per second
+  /**
+   * The single writer for `scrollProgress`, debounced 500ms. Owned by whichever
+   * text pane is on screen — the plain-text container in text mode, the
+   * side-by-side viewer's left pane in side-by-side. That is the pane the reader
+   * is actually reading, so it matches what the percent is supposed to mean.
+   */
+  const persistScrollProgress = useCallback((percent: number) => {
     if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
     scrollDbTimerRef.current = setTimeout(() => {
       import('@/lib/db/database').then(({ db }) => {
@@ -636,6 +619,67 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       }, reportPositionSaveImportError)
     }, 500)
   }, [sectionId, reportPositionSaveImportError])
+
+  const handlePageProgress = useCallback((page: number, totalPages: number, scrollPercent: number, initial = false) => {
+    setSectionProgress(scrollPercent)
+    setCurrentPage(page)
+    // In side-by-side the text pane owns scrollProgress; the PDF pane only
+    // records which page is on screen. Its percent is the wrong pane's, and it
+    // only advances at page boundaries, so letting it write here would both
+    // overwrite the text pane's value and make it coarse.
+    const ownsScrollProgress = viewMode !== 'side-by-side'
+    // Debounce the DB write — pdf-viewer's onPageProgress fires on every native scroll event (30-60/s)
+    if (pageDbTimerRef.current) clearTimeout(pageDbTimerRef.current)
+    pageDbTimerRef.current = setTimeout(() => {
+      import('@/lib/db/database').then(({ db }) => {
+        const base = { lastPageViewed: page, updatedAt: Date.now() }
+        // `initial` is the viewer's own post-mount report, taken before the
+        // reader scrolled. Let it raise a stored percent — that is how a
+        // section short enough to fit without scrolling records 100 — but
+        // never let it lower one saved by an earlier session or by text mode.
+        const changes = !ownsScrollProgress
+          ? Promise.resolve(base)
+          : initial
+            ? db.sections.get(sectionId).then(s =>
+                scrollPercent > (s?.scrollProgress ?? 0) ? { ...base, scrollProgress: scrollPercent } : base)
+            : Promise.resolve({ ...base, scrollProgress: scrollPercent })
+
+        changes.then(c => db.sections.update(sectionId, c)).catch((err) => {
+          console.error('Failed to save page progress:', err)
+          if (!saveErrorShownRef.current) {
+            saveErrorShownRef.current = true
+            toast.warning('Could not save reading position. Your progress may not be preserved.')
+          }
+        })
+        import('@/lib/services/sync-service').then(({ syncService }) => syncService.markDirty(), (err) => reportLazyImportError('sync-service markDirty import', err))
+      }, reportPositionSaveImportError)
+    }, 500)
+  }, [sectionId, viewMode, reportPositionSaveImportError])
+
+  // Clear any pending trailing-debounce write on unmount so it can't fire post-navigation.
+  useEffect(() => () => {
+    if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
+    if (pageDbTimerRef.current) clearTimeout(pageDbTimerRef.current)
+  }, [])
+
+  const handleTextScroll = useCallback(() => {
+    const el = textScrollRef.current
+    if (!el) return
+    const { scrollTop, scrollHeight, clientHeight } = el
+    const maxScroll = scrollHeight - clientHeight
+    const percent = maxScroll <= 0 ? 100 : Math.min(100, Math.round((scrollTop / maxScroll) * 100))
+    setSectionProgress(percent)
+    persistScrollProgress(percent)
+  }, [persistScrollProgress])
+
+  /**
+   * Side-by-side text pane progress. Previously this only fed React state for
+   * the toolbar readout, so an entire side-by-side session persisted nothing.
+   */
+  const handleSideBySideTextProgress = useCallback((percent: number) => {
+    setSideBySideTextProgress(percent)
+    persistScrollProgress(percent)
+  }, [persistScrollProgress])
 
   // Track a flag so the effect can re-trigger once loading completes and the ref mounts
   const [textScrollReady, setTextScrollReady] = useState(false)
@@ -858,7 +902,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   vimMode={vim.mode}
                   sectionEndPage={section.endPage}
                   showLineNumbers={showLineNumbers}
-                  onTextScrollProgress={setSideBySideTextProgress}
+                  onTextScrollProgress={handleSideBySideTextProgress}
+                  textContainerRef={textScrollRef}
                 />
               </div>
               <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />

@@ -18,7 +18,7 @@ interface SideBySideViewerProps {
   showIndicators?: boolean
   currentPage?: number
   onPageChange?: (page: number) => void
-  onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number) => void
+  onPageProgress?: (currentPage: number, totalPages: number, scrollPercent: number, initial?: boolean) => void
   syncScroll?: boolean
   /** Forward ref for vim-driven word selection */
   nibTextViewerRef?: React.RefObject<NibTextViewerHandle | null>
@@ -32,12 +32,27 @@ interface SideBySideViewerProps {
   showLineNumbers?: boolean
   /** Called with text-side scroll progress (0-100) so parent can use it for progress bar */
   onTextScrollProgress?: (percent: number) => void
+  /**
+   * Optional parent-owned ref that should point at this pane's text scroll
+   * container. The reader page keeps a single `textScrollRef` for scroll
+   * restore and vim scrolling; without this it stays null in side-by-side
+   * (the container lives in here) and both silently no-op.
+   */
+  textContainerRef?: React.MutableRefObject<HTMLDivElement | null>
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress }: SideBySideViewerProps) {
-  const textRef = useRef<HTMLDivElement>(null)
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress, textContainerRef }: SideBySideViewerProps) {
+  const textRef = useRef<HTMLDivElement | null>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const pdfViewerRef = useRef<PDFViewerHandle>(null)
+
+  // Callback ref so the parent's ref tracks the same node. React detaches a
+  // removed node's callback ref before attaching the replacement's, so
+  // switching modes can't leave the parent pointing at a detached div.
+  const setTextEl = useCallback((node: HTMLDivElement | null) => {
+    textRef.current = node
+    if (textContainerRef) textContainerRef.current = node
+  }, [textContainerRef])
 
   // ── Word highlight state ──
   const [highlightWord, setHighlightWord] = useState<HighlightWordInfo | null>(null)
@@ -184,7 +199,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
           linePositions={linePositions}
         />
         <div
-          ref={textRef}
+          ref={setTextEl}
           className="h-full min-h-0 overflow-auto flex-1"
           onScroll={debouncedTextScroll}
         >
