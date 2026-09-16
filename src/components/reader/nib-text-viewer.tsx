@@ -1099,9 +1099,9 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                       isTableHighlighted ? 'ring-2 ring-blue-400 bg-blue-500/10' :
                       'hover:ring-1 hover:ring-primary/30'
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
                       const word = para.sentences[0]?.words[0]
-                      if (word) handleWordClick(word, null as any)
+                      if (word) handleWordClick(word, e.currentTarget)
                     }}
                   >
                     <table className="border-collapse border border-border text-sm">
@@ -1150,9 +1150,9 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
                       isCodeHighlighted ? 'ring-2 ring-blue-400' :
                       'hover:ring-1 hover:ring-primary/30'
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
                       const word = para.sentences[0]?.words[0]
-                      if (word) handleWordClick(word, null as any)
+                      if (word) handleWordClick(word, e.currentTarget)
                     }}
                   >
                     <pre className="bg-muted/50 border border-border rounded-md p-4 text-sm font-mono overflow-x-auto whitespace-pre leading-relaxed">
