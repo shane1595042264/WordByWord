@@ -1179,10 +1179,11 @@ class SyncService {
   private bookToSync(book: Book): Record<string, unknown> {
     // structureSource and processingStatus are backend-managed — the server rejects
     // client writes on these, and they already flow server→client via applyServerChanges.
+    // coverImage stays local: it is usually a page-1 PNG data: URL rendered on this
+    // device, far too large to push on every sync or store in books.cover_url.
     return {
       id: book.remoteId,
       customTitle: book.title,
-      coverUrl: book.coverImage ?? null,
       lastReadAt: book.lastReadAt ? new Date(book.lastReadAt).toISOString() : null,
       lastAccessedSectionId: book.lastAccessedSectionId ?? null,
       lastAccessedScrollProgress: (book.lastAccessedScrollProgress ?? 0) / 100, // 0-100 → 0-1

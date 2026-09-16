@@ -1480,4 +1480,38 @@ describe('sync push — only rows changed since the last push go up', () => {
     expect(pushes[1].changes.sections).toHaveLength(5)
     expect(pushes[1].changes.chapters).toHaveLength(1)
   })
+
+  // coverImage is usually a page-1 PNG data: URL rendered on this device (upload,
+  // import, cloud download, "generate cover"). Pushing it put megabytes on every
+  // book push, and once nibble-api applied book updates it would land in
+  // books.cover_url — so the cover stays local and only the position goes up.
+  it('pushes an edited book with its reading position and title, but not its rendered cover', async () => {
+    await seedSyncedLibrary()
+    reload()
+    await syncService.sync()
+    const readAt = Date.parse('2026-09-16T18:00:00.000Z')
+    await db.books.update('local-book-1', {
+      title: 'Renamed',
+      coverImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA',
+      lastReadAt: readAt,
+      lastAccessedSectionId: 'sec-2',
+      lastAccessedScrollProgress: 42,
+      lastAccessedWordIndex: 7,
+      updatedAt: Date.now() + 1,
+    })
+    reload()
+    await syncService.sync()
+
+    const books = pushes[1].changes.books as Record<string, unknown>[]
+    expect(books).toHaveLength(1)
+    expect(books[0]).toMatchObject({
+      id: 'remote-book-1',
+      customTitle: 'Renamed',
+      lastReadAt: '2026-09-16T18:00:00.000Z',
+      lastAccessedSectionId: 'sec-2',
+      lastAccessedScrollProgress: 0.42,
+      lastAccessedWordIndex: 7,
+    })
+    expect(books[0]).not.toHaveProperty('coverUrl')
+  })
 })
