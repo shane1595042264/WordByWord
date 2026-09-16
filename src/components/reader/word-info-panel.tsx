@@ -86,8 +86,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
   const [translating, setTranslating] = useState(false)
   const [translationError, setTranslationError] = useState<string | null>(null)
 
-  // Explanation state (lazy loaded)
+  // Explanation state (lazy loaded). Failures live in their own field —
+  // `explanation` is what handleAddVocab persists to IndexedDB and pushes to
+  // the knowledge base (which has no DELETE), so an error string must never
+  // land in it.
   const [explanation, setExplanation] = useState<string | null>(null)
+  const [explanationError, setExplanationError] = useState<string | null>(null)
   const [explaining, setExplaining] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
 
@@ -188,6 +192,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     setTranslation(null)
     setTranslationError(null)
     setExplanation(null)
+    setExplanationError(null)
     setExplaining(false)
     setShowExplanation(false)
 
@@ -215,7 +220,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         } catch (err: any) {
           if (err?.name === 'AbortError') return
           if (!cancelled) {
-            setExplanation(`Explanation failed: ${err.message}`)
+            setExplanationError(`Explanation failed: ${err.message}`)
             setExplaining(false)
           }
         }
@@ -223,7 +228,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         // The dynamic import itself failed (e.g. stale chunk after a deploy);
         // clear the spinner that was set before the import so it can't hang.
         if (cancelled) return
-        setExplanation('Explanation failed: could not load the translation module.')
+        setExplanationError('Explanation failed: could not load the translation module.')
         setExplaining(false)
         reportLazyImportError('image/content explanation import', err)
       })
@@ -321,6 +326,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     const controller = new AbortController()
     explanationControllerRef.current = controller
     setExplaining(true)
+    setExplanationError(null)
     setShowExplanation(true)
 
     try {
@@ -353,7 +359,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return
-      if (!controller.signal.aborted) setExplanation('Failed to load explanation.')
+      // Keep the failure out of `explanation` — handleAddVocab persists that
+      // value and the sync push forwards it to the knowledge base, where a
+      // bogus note cannot be edited or deleted. Leaving `explanation` null
+      // also re-enables the retry path (the guard above and the button's
+      // disabled prop both key off it).
+      if (!controller.signal.aborted) setExplanationError('Failed to load explanation.')
     } finally {
       if (!controller.signal.aborted) setExplaining(false)
     }
@@ -590,7 +601,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                     <circle cx="12" cy="12" r="10" />
                     <path d="M12 16v-4M12 8h.01" />
                   </svg>
-                  <span>{showExplanation ? 'Explanation' : 'See explanation'}</span>
+                  <span>{explanationError ? 'Retry explanation' : showExplanation ? 'Explanation' : 'See explanation'}</span>
                 </ShortcutButton>
 
                 <ShortcutButton
@@ -632,6 +643,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
                       <div className="h-3 w-full bg-muted/40 rounded animate-pulse" />
                       <div className="h-3 w-4/5 bg-muted/40 rounded animate-pulse" />
                       <div className="h-3 w-3/5 bg-muted/40 rounded animate-pulse" />
+                    </div>
+                  ) : explanationError ? (
+                    <div role="alert" className="text-xs text-red-400 leading-relaxed">
+                      {explanationError}
                     </div>
                   ) : explanation ? (
                     <div className="text-xs text-muted-foreground leading-relaxed prose prose-xs prose-neutral dark:prose-invert max-w-none [&_h1]:text-sm [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-1 [&_p]:my-1 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:my-0.5 [&_strong]:text-foreground">
