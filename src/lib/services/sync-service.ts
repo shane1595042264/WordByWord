@@ -12,7 +12,20 @@ const SYNC_DEBOUNCE_MS = 30_000
  */
 const SYNC_MAX_WAIT_MS = 120_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
+// Push cursor, separate from the pull watermark above: client-clock ms taken just
+// before the last successful push read its dirty rows.
+const LAST_PUSHED_KEY = 'nibble_lastPushedAt'
 const SYNC_LOG_KEY = 'nibble_syncLog'
+
+/**
+ * A row written from server data is already in sync, so it carries the server's
+ * updatedAt (as vocab always did). Stamping it `Date.now()` made every downloaded
+ * book/chapter/section look like a fresh local edit to the next push.
+ */
+function serverStamp(updatedAt: unknown, fallback: number): number {
+  const ms = typeof updatedAt === 'string' ? Date.parse(updatedAt) : NaN
+  return Number.isFinite(ms) ? ms : fallback
+}
 const PENDING_VOCAB_DELETES_KEY = 'nibble_pendingVocabDeletes'
 const MAX_PENDING_VOCAB_DELETES = 200
 
@@ -396,6 +409,7 @@ class SyncService {
    */
   clearLocalSyncState(): void {
     localStorage.removeItem(LAST_SYNCED_KEY)
+    localStorage.removeItem(LAST_PUSHED_KEY)
     localStorage.removeItem(SYNC_LOG_KEY)
     // bbb-settings itself survives sign-out, so without this a second user on
     // the same browser would look "dirty" and push the previous user's
@@ -557,7 +571,12 @@ class SyncService {
       const lastSyncedAt = isInitSync
         ? '1970-01-01T00:00:00.000Z'
         : (localStorage.getItem(LAST_SYNCED_KEY) || '1970-01-01T00:00:00.000Z')
-      const sinceMs = new Date(lastSyncedAt).getTime()
+      // Push only what changed since the last push. This must not reuse the pull
+      // cursor: the init pull reads from epoch, and pushing from epoch re-uploaded
+      // the whole library on every page load. The new cursor is taken BEFORE the
+      // dirty read, so a write landing while the request is in flight stays dirty.
+      const pushSinceMs = this.readPushCursor()
+      const pushStartedAt = Date.now()
       this.hasInitSynced = true
 
       this.log('sync:start', isInitSync ? 'full sync (init)' : 'incremental')
@@ -569,10 +588,10 @@ class SyncService {
       await this.drainVocabDeletes(token, signal)
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
-        db.books.where('updatedAt').above(sinceMs).toArray(),
-        db.chapters.where('updatedAt').above(sinceMs).toArray(),
-        db.sections.where('updatedAt').above(sinceMs).toArray(),
-        db.vocabulary.where('updatedAt').above(sinceMs).toArray(),
+        db.books.where('updatedAt').above(pushSinceMs).toArray(),
+        db.chapters.where('updatedAt').above(pushSinceMs).toArray(),
+        db.sections.where('updatedAt').above(pushSinceMs).toArray(),
+        db.vocabulary.where('updatedAt').above(pushSinceMs).toArray(),
       ])
 
       // Build local→remote ID map for books
@@ -771,6 +790,11 @@ class SyncService {
       if (failedDownloads.length === 0 && (!prevSyncedAt || new Date(result.syncedAt) >= new Date(prevSyncedAt))) {
         localStorage.setItem(LAST_SYNCED_KEY, result.syncedAt)
       }
+      // The push landed and its failures were re-bumped above (past pushStartedAt),
+      // so advance the push cursor — independent of the download stall above.
+      // One ms early: the dirty read is strictly `above`, and a write in the same
+      // millisecond as pushStartedAt may have missed this payload.
+      localStorage.setItem(LAST_PUSHED_KEY, String(pushStartedAt - 1))
       this.log('sync:complete', `synced at ${result.syncedAt}`)
       if (failedDownloads.length > 0) {
         const n = failedDownloads.length
@@ -807,9 +831,19 @@ class SyncService {
   // ── Force upload: override cloud with local ──────────────────
 
   async forceUpload(): Promise<void> {
-    // Reset lastSyncedAt to epoch so ALL local entities are sent
+    // Reset both cursors to epoch so ALL local entities are sent
     localStorage.setItem(LAST_SYNCED_KEY, '1970-01-01T00:00:00.000Z')
+    localStorage.setItem(LAST_PUSHED_KEY, '0')
     await this.sync()
+  }
+
+  private readPushCursor(): number {
+    const pushed = Number(localStorage.getItem(LAST_PUSHED_KEY) ?? NaN)
+    if (Number.isFinite(pushed)) return pushed
+    // A browser from before the push cursor existed: its pull watermark is the
+    // best bound it has (the pre-cursor code pushed against it on incremental syncs).
+    const synced = Date.parse(localStorage.getItem(LAST_SYNCED_KEY) ?? '')
+    return Number.isFinite(synced) ? synced : 0
   }
 
   // ── Download from cloud: pull all server data ────────────────
@@ -1044,7 +1078,7 @@ class SyncService {
       structureSource: (sb.structureSource as Book['structureSource']) || 'native',
       processingStatus: (sb.processingStatus as Book['processingStatus']) || 'complete',
       createdAt: sb.createdAt ? new Date(sb.createdAt as string).getTime() : now,
-      updatedAt: now,
+      updatedAt: serverStamp(sb.updatedAt, now),
       serverUpdatedAt: sb.updatedAt ? new Date(sb.updatedAt as string).getTime() : undefined,
       lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
@@ -1073,7 +1107,7 @@ class SyncService {
         order: (sch.sortOrder as number) ?? 0,
         startPage: (sch.startPage as number) ?? 0,
         endPage: (sch.endPage as number) ?? 0,
-        updatedAt: now,
+        updatedAt: serverStamp(sch.updatedAt, now),
       }).catch((err: { name?: string }) => {
         if (err?.name !== 'ConstraintError') throw err
         console.warn('Skipped duplicate chapter during download:', sch.id, err)
@@ -1101,7 +1135,7 @@ class SyncService {
         readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
         lastPageViewed: (ss.lastPageViewed as number) ?? null,
         scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
-        updatedAt: now,
+        updatedAt: serverStamp(ss.updatedAt, now),
       }).catch((err: { name?: string }) => {
         if (err?.name !== 'ConstraintError') throw err
         console.warn('Skipped duplicate section during download:', ss.id, err)
@@ -1294,7 +1328,7 @@ class SyncService {
           order: (sch.sortOrder as number) ?? 0,
           startPage: (sch.startPage as number) ?? 0,
           endPage: (sch.endPage as number) ?? 0,
-          updatedAt: Date.now(),
+          updatedAt: serverStamp(sch.updatedAt, Date.now()),
         }).catch((err: { name?: string }) => {
           if (err?.name !== 'ConstraintError') throw err
           console.warn('Skipped duplicate chapter during sync apply:', chapterId, err)
@@ -1339,7 +1373,7 @@ class SyncService {
           readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
           lastPageViewed: (ss.lastPageViewed as number) ?? null,
           scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
-          updatedAt: Date.now(),
+          updatedAt: serverStamp(ss.updatedAt, Date.now()),
         }).catch((err: { name?: string }) => {
           if (err?.name !== 'ConstraintError') throw err
           console.warn('Skipped duplicate section during sync apply:', ss.id, err)

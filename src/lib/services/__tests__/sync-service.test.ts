@@ -1330,3 +1330,154 @@ describe('sync push — page sentinel round-trips as the server NULL', () => {
     expect(internals().sectionToSync(await db.sections.get('sec-real'), bookMap)).toMatchObject({ startPage: 3, endPage: 7 })
   })
 })
+
+// Every page load re-uploaded the entire library (prod: "sync:push: 13 books,
+// 354 chapters, 1434 sections" on a reload with nothing edited). Two causes:
+// the init sync reused its epoch PULL cursor as the PUSH dirty-window, and
+// downloaded rows were stamped updatedAt = now, which also made them look like
+// fresh local edits on the next incremental sync.
+describe('sync push — only rows changed since the last push go up', () => {
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number }
+  const internals = () => syncService as unknown as Internals
+  const OLD = Date.parse('2026-09-16T15:41:45.000Z')
+  const SERVER_ROW_TIME = '2026-04-01T09:17:51.000Z'
+
+  let pushes: Array<{ lastSyncedAt: string; changes: { books: unknown[]; chapters: Array<{ id: string }>; sections: Array<{ id: string }> } }>
+  // What the server holds. An epoch pull returns all of it (as the real server
+  // does) — otherwise the init sync's hard-delete detection wipes the local book.
+  let server: { books: Record<string, unknown>[]; chapters: Record<string, unknown>[]; sections: Record<string, unknown>[] }
+  let syncedAt: string
+  let duringRequest: (() => Promise<void>) | null
+
+  function installFetch() {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (url === '/api/auth/token') return json({ token: 'fake.jwt.token' })
+      if (url.endsWith('/sync')) {
+        const req = JSON.parse(init!.body as string)
+        pushes.push(req)
+        if (duringRequest) { const f = duringRequest; duringRequest = null; await f() }
+        const all = req.lastSyncedAt === '1970-01-01T00:00:00.000Z'
+        return json({
+          syncedAt,
+          serverChanges: { books: all ? server.books : [], chapters: all ? server.chapters : [], sections: all ? server.sections : [], vocabulary: [], settings: null },
+          failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+        })
+      }
+      // EPUB → no blob download needed for the cloud-only book path.
+      if (url.endsWith('/summary')) return json({ catalog: { format: 'epub', title: 'Cloud Book', author: '' } })
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  const reload = () => { internals().hasInitSynced = false; internals().isSyncing = false }
+
+  async function seedSyncedLibrary() {
+    server.books = [{ id: 'remote-book-1', customTitle: 'Book', catalogId: 'cat-1', updatedAt: SERVER_ROW_TIME }]
+    await db.books.add({
+      id: 'local-book-1', title: 'Book', author: '', totalPages: 10, format: 'epub', coverImage: null,
+      structureSource: 'native', processingStatus: 'complete', createdAt: OLD, updatedAt: OLD,
+      lastReadAt: null, lastAccessedSectionId: null, lastAccessedScrollProgress: null, lastAccessedWordIndex: null,
+      completedAt: null, remoteId: 'remote-book-1', catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+    await db.chapters.add({ id: 'ch-1', bookId: 'local-book-1', title: 'C', order: 0, startPage: 1, endPage: 5, updatedAt: OLD })
+    for (let i = 0; i < 5; i++) {
+      await db.sections.add({
+        id: `sec-${i}`, chapterId: 'ch-1', bookId: 'local-book-1', title: `S${i}`, order: i, startPage: 1, endPage: 1,
+        extractedText: 'text', isRead: false, readAt: null, lastPageViewed: null, scrollProgress: 0, updatedAt: OLD,
+      } as Parameters<typeof db.sections.add>[0])
+    }
+  }
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    pushes = []
+    server = { books: [], chapters: [], sections: [] }
+    syncedAt = new Date().toISOString()
+    duringRequest = null
+    internals().token = null
+    internals().tokenExp = 0
+    installFetch()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    reload()
+    vi.restoreAllMocks()
+  })
+
+  it('a page reload with nothing edited pushes nothing, but still pulls from epoch', async () => {
+    await seedSyncedLibrary()
+    syncedAt = '2026-09-16T15:51:48.000Z'
+    reload()
+    await syncService.sync() // first-ever sync on this device pushes the local library once
+    reload()
+    await syncService.sync() // page reload
+
+    const second = pushes[1]
+    expect(second.lastSyncedAt).toBe('1970-01-01T00:00:00.000Z')
+    expect(second.changes).toMatchObject({ books: [], chapters: [], sections: [] })
+  })
+
+  it('pushes only the row edited since the last sync', async () => {
+    await seedSyncedLibrary()
+    reload()
+    await syncService.sync()
+    await db.sections.update('sec-3', { scrollProgress: 40, updatedAt: Date.now() + 1 })
+    reload()
+    await syncService.sync()
+
+    expect(pushes[1].changes.sections.map((s) => s.id)).toEqual(['sec-3'])
+    expect(pushes[1].changes.chapters).toEqual([])
+  })
+
+  it('does not push back a book it just downloaded from the cloud', async () => {
+    reload()
+    server = {
+      books: [{ id: 'remote-cloud', customTitle: 'Cloud Book', totalPages: 3, catalogId: 'cat-9', updatedAt: SERVER_ROW_TIME }],
+      chapters: [{ id: 'cloud-ch', bookId: 'remote-cloud', title: 'C', sortOrder: 0, startPage: 1, endPage: 3, updatedAt: SERVER_ROW_TIME }],
+      sections: [{ id: 'cloud-sec', bookId: 'remote-cloud', chapterId: 'cloud-ch', title: 'S', sortOrder: 1, startPage: 1, endPage: 3, updatedAt: SERVER_ROW_TIME }],
+    }
+    await syncService.sync() // fresh device: downloads the book
+    expect(await db.sections.get('cloud-sec')).toBeTruthy()
+
+    await syncService.sync() // incremental
+    reload()
+    await syncService.sync() // page reload
+
+    for (const p of pushes.slice(1)) {
+      expect(p.changes).toMatchObject({ books: [], chapters: [], sections: [] })
+    }
+  })
+
+  it('does not lose an edit made while a sync request is in flight', async () => {
+    await seedSyncedLibrary()
+    reload()
+    await syncService.sync()
+    // The server stamps syncedAt when it finishes, after this mid-flight edit.
+    duringRequest = async () => { await db.sections.update('sec-1', { isRead: true, updatedAt: Date.now() }) }
+    syncedAt = new Date(Date.now() + 60_000).toISOString()
+    await syncService.sync()
+    syncedAt = new Date(Date.now() + 120_000).toISOString()
+    await syncService.sync()
+
+    expect(pushes[2].changes.sections.map((s) => s.id)).toContain('sec-1')
+  })
+
+  it('forceUpload() still pushes the whole library', async () => {
+    await seedSyncedLibrary()
+    reload()
+    await syncService.sync()
+    await syncService.forceUpload()
+
+    expect(pushes[1].changes.sections).toHaveLength(5)
+    expect(pushes[1].changes.chapters).toHaveLength(1)
+  })
+})
