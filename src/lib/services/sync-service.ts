@@ -1157,13 +1157,21 @@ class SyncService {
     }
   }
 
+  // Pages are 1-based; 0 is the local stand-in for the server's NULL page (the
+  // model has no null, so the download writes `?? 0`). Send it back as NULL —
+  // nibble-api's sync bounds filter rejects a non-positive page, which re-queued
+  // the row and failed it again on every sync.
+  private pageToSync(page: number | null | undefined): number | null {
+    return page && page > 0 ? page : null
+  }
+
   private chapterToSync(ch: Chapter, bookMap: Map<string, string>): Record<string, unknown> {
     return {
       id: ch.id,
       bookId: bookMap.get(ch.bookId),
       title: ch.title,
-      startPage: ch.startPage ?? null,
-      endPage: ch.endPage ?? null,
+      startPage: this.pageToSync(ch.startPage),
+      endPage: this.pageToSync(ch.endPage),
       sortOrder: ch.order,
       updatedAt: new Date(ch.updatedAt).toISOString(),
     }
@@ -1175,8 +1183,8 @@ class SyncService {
       bookId: bookMap.get(sec.bookId),
       chapterId: sec.chapterId,
       title: sec.title,
-      startPage: sec.startPage ?? null,
-      endPage: sec.endPage ?? null,
+      startPage: this.pageToSync(sec.startPage),
+      endPage: this.pageToSync(sec.endPage),
       isRead: sec.isRead,
       readAt: sec.readAt ? new Date(sec.readAt).toISOString() : null,
       lastPageViewed: sec.lastPageViewed ?? null,

@@ -1254,3 +1254,79 @@ describe('syncService.markDirty() — max-wait cap under continuous activity (KA
     syncSpy.mockRestore()
   })
 })
+
+// The local model has no null page — the download writes a server NULL
+// start/end page as 0. The next init sync pushes every downloaded row straight
+// back, and nibble-api's bounds pre-filter rejects a non-positive page, so the
+// row landed in failedEntities, was re-queued, and failed again on every sync
+// ("sync:partial: N entities failed"). The wire must carry the server's NULL back.
+describe('sync push — page sentinel round-trips as the server NULL', () => {
+  type Internals = {
+    applyServerChanges: (
+      c: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
+      m: Map<string, string>,
+    ) => Promise<void>
+    chapterToSync: (ch: unknown, m: Map<string, string>) => Record<string, unknown>
+    sectionToSync: (sec: unknown, m: Map<string, string>) => Record<string, unknown>
+  }
+  const internals = () => syncService as unknown as Internals
+  const bookMap = new Map([['local-book-1', 'remote-book-1']])
+  const serverTime = new Date().toISOString()
+
+  beforeEach(async () => {
+    await db.delete()
+    await db.open()
+    const now = Date.now()
+    await db.books.add({
+      id: 'local-book-1',
+      title: 'Book',
+      author: '',
+      totalPages: 0,
+      format: 'epub',
+      coverImage: null,
+      structureSource: 'native',
+      processingStatus: 'complete',
+      createdAt: now,
+      updatedAt: now,
+      lastReadAt: null,
+      lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null,
+      lastAccessedWordIndex: null,
+      completedAt: null,
+      remoteId: 'remote-book-1',
+      catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+  })
+
+  it('pushes a chapter and section the server sent with NULL pages back as NULL, not 0', async () => {
+    await internals().applyServerChanges(
+      {
+        chapters: [{ id: 'ch-null', bookId: 'remote-book-1', title: 'C', sortOrder: 0, startPage: null, endPage: null, updatedAt: serverTime }],
+        sections: [{
+          id: 'sec-null', bookId: 'remote-book-1', chapterId: 'ch-null', title: 'S', sortOrder: 1,
+          startPage: null, endPage: null, extractedText: null, isRead: true, scrollProgress: 0.4, updatedAt: serverTime,
+        }],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    )
+
+    const ch = internals().chapterToSync(await db.chapters.get('ch-null'), bookMap)
+    const sec = internals().sectionToSync(await db.sections.get('sec-null'), bookMap)
+
+    expect(ch).toMatchObject({ startPage: null, endPage: null })
+    expect(sec).toMatchObject({ startPage: null, endPage: null, isRead: true })
+  })
+
+  it('still pushes real page numbers unchanged', async () => {
+    await internals().applyServerChanges(
+      {
+        chapters: [{ id: 'ch-real', bookId: 'remote-book-1', title: 'C', sortOrder: 0, startPage: 1, endPage: 12, updatedAt: serverTime }],
+        sections: [{ id: 'sec-real', bookId: 'remote-book-1', chapterId: 'ch-real', title: 'S', sortOrder: 1, startPage: 3, endPage: 7, updatedAt: serverTime }],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    )
+
+    expect(internals().chapterToSync(await db.chapters.get('ch-real'), bookMap)).toMatchObject({ startPage: 1, endPage: 12 })
+    expect(internals().sectionToSync(await db.sections.get('sec-real'), bookMap)).toMatchObject({ startPage: 3, endPage: 7 })
+  })
+})
