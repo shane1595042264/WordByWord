@@ -15,7 +15,7 @@ interface BookCardProps {
   book: BookWithProgress
   editMode?: boolean
   selected?: boolean
-  onToggleSelect?: (id: string, event?: React.MouseEvent) => void
+  onToggleSelect?: (id: string, event?: React.MouseEvent | React.KeyboardEvent) => void
   onProcessingComplete?: () => void
 }
 
@@ -56,7 +56,6 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
   const isFailed = book.processingStatus === 'error'
   const { data: processing, pollError, retry } = useProcessingStatus(isProcessing ? book.jobId : undefined)
   const [showLog, setShowLog] = useState(false)
-  const [hovered, setHovered] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
   const [coverError, setCoverError] = useState(false)
@@ -128,8 +127,17 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
         </div>
       )}
 
-      {editMode && hovered && !isProcessing && (
-        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+      {/*
+        Mounted for every non-processing card in edit mode, not just the hovered
+        one, so keyboard users can tab to it (KAN-310). Revealed by hover or
+        focus-within in CSS rather than by the mount condition: tabbing from the
+        card's checkbox to this button fires focusout before focusin, so a
+        focus-gated mount would unmount the button mid-Tab and drop focus.
+        pointer-events-none keeps the invisible button from swallowing clicks
+        meant for the card underneath.
+      */}
+      {editMode && !isProcessing && (
+        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/60 to-transparent opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
           <Button
             variant="secondary"
             size="sm"
@@ -147,7 +155,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
   const cardBody = (
     <Card
-      className={`transition-all h-full overflow-hidden ${
+      className={`group transition-all h-full overflow-hidden ${
         editMode
           ? selected
             ? 'ring-2 ring-primary shadow-lg scale-[0.97] cursor-pointer'
@@ -158,8 +166,6 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
               ? 'opacity-90 hover:shadow-lg cursor-pointer'
               : 'hover:shadow-lg cursor-pointer'
       }`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       onClick={editMode ? (e: React.MouseEvent) => {
         e.preventDefault()
         onToggleSelect?.(book.id, e)
@@ -167,17 +173,46 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
     >
       <CardContent className="p-4 flex flex-col gap-3 relative min-w-0">
         {editMode && (
-          <div className={`absolute top-2 left-2 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-            selected
-              ? 'bg-primary border-primary text-primary-foreground'
-              : 'border-muted-foreground/40 bg-background'
-          }`}>
+          /*
+            The only keyboard-reachable way to select a single book (KAN-310).
+            A span rather than a button on purpose: a native button synthesises a
+            click from Enter/Space, which would run alongside onKeyDown and
+            toggle the selection straight back off. A span has no native
+            activation, so exactly one handler fires per key press.
+          */
+          <span
+            role="checkbox"
+            tabIndex={0}
+            aria-checked={!!selected}
+            aria-label={`Select ${book.title}`}
+            className={`absolute top-2 left-2 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] ${
+              selected
+                ? 'bg-primary border-primary text-primary-foreground'
+                : 'border-muted-foreground/40 bg-background'
+            }`}
+            onClick={(e) => {
+              // Don't let this bubble to the card's own onClick, which would
+              // toggle the same book a second time and cancel this one out.
+              e.preventDefault()
+              e.stopPropagation()
+              onToggleSelect?.(book.id, e)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return
+              // Space would scroll the grid; Enter would activate an ancestor.
+              e.preventDefault()
+              e.stopPropagation()
+              // page.tsx reads .shiftKey/.ctrlKey/.metaKey off this event, so
+              // Shift+Enter range-selects exactly like Shift-click does.
+              onToggleSelect?.(book.id, e)
+            }}
+          >
             {selected && (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             )}
-          </div>
+          </span>
         )}
 
         {coverContent}

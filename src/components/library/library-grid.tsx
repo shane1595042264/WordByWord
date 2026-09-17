@@ -7,7 +7,7 @@ interface LibraryGridProps {
   books: BookWithProgress[]
   editMode?: boolean
   selectedIds?: Set<string>
-  onToggleSelect?: (id: string, event?: React.MouseEvent) => void
+  onToggleSelect?: (id: string, event?: React.MouseEvent | React.KeyboardEvent) => void
   onProcessingComplete?: () => void
 }
 

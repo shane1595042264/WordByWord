@@ -67,7 +67,7 @@ export default function HomePage() {
     }
   }, [refresh])
 
-  const toggleSelect = useCallback((id: string, event?: React.MouseEvent) => {
+  const toggleSelect = useCallback((id: string, event?: React.MouseEvent | React.KeyboardEvent) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
       if (event?.ctrlKey || event?.metaKey) {
