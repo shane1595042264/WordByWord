@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Section, Chapter } from '@/lib/db/models'
+import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,32 +23,85 @@ interface TocViewerProps {
 export function TocViewer({ bookId, extractedText, sectionTitle }: TocViewerProps) {
   const [groups, setGroups] = useState<TocChapterGroup[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  // Bumped by the error panel's Retry to re-run the loader without a full page
+  // reload — enough to recover from a transient IDB failure on its own, and the
+  // stale-chunk case is already handled by reportLazyImportError's reload prompt.
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
-    (async () => {
-      const { db } = await import('@/lib/db/database')
-      const chapters = await db.chapters.where('bookId').equals(bookId).sortBy('order')
-      const allSections = await db.sections.where('bookId').equals(bookId).sortBy('order')
+    let cancelled = false
 
-      const chapterGroups: TocChapterGroup[] = []
+    ;(async () => {
+      // Reset up front so a bookId change (or a retry) can never render the
+      // previous book's groups, or a stale error, while the new read is in flight.
+      setLoading(true)
+      setError(null)
+      try {
+        const { db } = await import('@/lib/db/database')
+        const chapters = await db.chapters.where('bookId').equals(bookId).sortBy('order')
+        const allSections = await db.sections.where('bookId').equals(bookId).sortBy('order')
 
-      for (const ch of chapters) {
-        // Skip the "Contents" chapter
-        if (/^(table of )?contents$/i.test(ch.title)) continue
+        const chapterGroups: TocChapterGroup[] = []
 
-        const chSections = allSections.filter(s => s.chapterId === ch.id)
-        if (chSections.length > 0) {
-          chapterGroups.push({ chapter: ch, sections: chSections })
+        for (const ch of chapters) {
+          // Skip the "Contents" chapter
+          if (/^(table of )?contents$/i.test(ch.title)) continue
+
+          const chSections = allSections.filter(s => s.chapterId === ch.id)
+          if (chSections.length > 0) {
+            chapterGroups.push({ chapter: ch, sections: chSections })
+          }
         }
-      }
 
-      setGroups(chapterGroups)
-      setLoading(false)
+        if (!cancelled) setGroups(chapterGroups)
+      } catch (err) {
+        // Surfaces a stale-chunk reload prompt after a deploy; always logs.
+        reportLazyImportError('TOC viewer load', err)
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load these contents')
+      } finally {
+        // In the finally so the spinner clears on the failure path too.
+        if (!cancelled) setLoading(false)
+      }
     })()
-  }, [bookId])
+
+    return () => { cancelled = true }
+  }, [bookId, reloadKey])
 
   if (loading) {
     return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-8 gap-4 text-muted-foreground">
+        <p className="text-center">Could not load the contents for this book.</p>
+        <p className="text-center text-xs text-muted-foreground/70">{error}</p>
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto px-8 py-8">
+        <h2 className="text-2xl font-bold mb-1 tracking-tight">{sectionTitle}</h2>
+        <p className="text-sm text-muted-foreground mb-8">No chapters to list yet</p>
+        <p className="text-sm text-muted-foreground">
+          This book has no chapters with readable sections, so there is nothing to link to
+          here. Chapters appear once the book finishes processing — open the{' '}
+          <Link href={`/book/${bookId}`} className="underline underline-offset-2 hover:text-foreground">
+            book overview
+          </Link>{' '}
+          to check its structure.
+        </p>
+      </div>
+    )
   }
 
   const totalSections = groups.reduce((sum, g) => sum + g.sections.length, 0)
