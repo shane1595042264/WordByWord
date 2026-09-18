@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { detectMac, formatKeyCombo, isUnbindableCombo } from '@/lib/keymap-display'
+import { SETTINGS_SYNCED_EVENT } from '@/lib/services/settings-service'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -142,7 +143,11 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
 
   const getAll = useCallback(() => [...shortcuts.values()], [shortcuts])
 
-  // Reload custom mappings when settings change (e.g. from settings page)
+  // Reload custom mappings when settings change. Two sources: the local keymap
+  // editor ('keymap-changed') and a sync pull that overwrote localStorage
+  // (SETTINGS_SYNCED_EVENT). This provider sits at the root and never remounts,
+  // so without the sync event a pulled keymap would render in Settings while
+  // the superseded keys kept firing for the rest of the tab session.
   useEffect(() => {
     const handler = () => {
       const fresh = loadCustomMappings()
@@ -159,7 +164,11 @@ export function ShortcutProvider({ children }: { children: ReactNode }) {
       })
     }
     window.addEventListener('keymap-changed', handler)
-    return () => window.removeEventListener('keymap-changed', handler)
+    window.addEventListener(SETTINGS_SYNCED_EVENT, handler)
+    return () => {
+      window.removeEventListener('keymap-changed', handler)
+      window.removeEventListener(SETTINGS_SYNCED_EVENT, handler)
+    }
   }, [])
 
   // Global keydown handler
