@@ -74,6 +74,54 @@ export function buildChapterGroups(chapters: ChapterWithSections[]): ChapterGrou
   return result
 }
 
+// Rebuild a chapter's sections from the dividers the editor returned. Each divider
+// names the segment that STARTS at its page, so divider i-1 titles segment i.
+//
+// Segment 0 has no divider of its own: the chapter's first section starts at the
+// chapter start page, so it is filtered out of existingDividers and the editor never
+// shows it. Carry its current title through instead of stamping a placeholder
+// over it -- the chapter-level editor does the same with book.chapters[0]?.title
+// (src/app/book/[id]/page.tsx). 'Section 1' is a fallback for a chapter that has no
+// sections yet, not a rename.
+export function buildSectionsFromDividers(
+  chapter: Pick<ChapterWithSections, 'startPage' | 'endPage' | 'sections'>,
+  dividers: Divider[]
+): Array<{ title: string; startPage: number; endPage: number }> {
+  // Take the title from the section that actually covers the chapter start and is
+  // therefore absent from the dividers: the latest one starting at or before
+  // chapter.startPage. Scanning rather than reading sections[0] because getByChapter
+  // sorts by `order`, which is not guaranteed to track page order. Picking the
+  // globally lowest startPage instead would, for a chapter whose sections all start
+  // after its first page, copy a title that is also a divider and duplicate it.
+  let openingTitle = ''
+  let openingStart = -Infinity
+  for (const s of chapter.sections) {
+    if (s.startPage <= chapter.startPage && s.startPage > openingStart) {
+      openingStart = s.startPage
+      openingTitle = s.title
+    }
+  }
+  const firstTitle = openingTitle || 'Section 1'
+
+  const sorted = [...dividers].sort((a, b) => a.page - b.page)
+  const sections: Array<{ title: string; startPage: number; endPage: number }> = []
+  let cs = chapter.startPage
+  for (let i = 0; i < sorted.length; i++) {
+    sections.push({
+      title: i === 0 ? firstTitle : sorted[i - 1].title,
+      startPage: cs,
+      endPage: sorted[i].page - 1,
+    })
+    cs = sorted[i].page
+  }
+  sections.push({
+    title: sorted.length > 0 ? sorted[sorted.length - 1].title : firstTitle,
+    startPage: cs,
+    endPage: chapter.endPage,
+  })
+  return sections
+}
+
 export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null)
@@ -92,23 +140,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
     const svc = new StructureService()
 
-    // Build sections for this chapter from dividers
-    const sorted = [...dividers].sort((a, b) => a.page - b.page)
-    const sections: Array<{ title: string; startPage: number; endPage: number }> = []
-    let cs = chapter.startPage
-    for (let i = 0; i < sorted.length; i++) {
-      sections.push({
-        title: i === 0 ? 'Section 1' : sorted[i - 1].title,
-        startPage: cs,
-        endPage: sorted[i].page - 1,
-      })
-      cs = sorted[i].page
-    }
-    sections.push({
-      title: sorted.length > 0 ? sorted[sorted.length - 1].title : 'Section 1',
-      startPage: cs,
-      endPage: chapter.endPage,
-    })
+    const sections = buildSectionsFromDividers(chapter, dividers)
 
     // Build full book structure with sections for this chapter
     const fullChapters = chapters.map(ch => {
