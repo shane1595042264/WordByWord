@@ -22,6 +22,23 @@ export class StaleBookError extends Error {
   }
 }
 
+/**
+ * Build the message `page-strip-editor` shows in `tocError` when Process TOC fails.
+ *
+ * The bare `AI suggest failed: ${status}` this replaces was a dead end after a 10-30s
+ * wait — nothing told the user that an AI truncation is worth retrying with fewer TOC
+ * pages. nibble-api's error handler always replies `{ error: { code, message, status } }`,
+ * so prefer the server's own sentence and keep the status only as the fallback for a
+ * body that isn't that envelope (a CDN/proxy error page, say). KAN-313.
+ */
+async function describeSuggestFailure(res: Response): Promise<string> {
+  const body = await res.json().catch(() => null) as { error?: { message?: unknown } } | null
+  const message = body?.error?.message
+  return typeof message === 'string' && message.trim()
+    ? message
+    : `AI suggest failed: ${res.status}`
+}
+
 export class StructureService {
   private async getToken(): Promise<string | null> {
     const res = await fetch('/api/auth/token')
@@ -111,7 +128,7 @@ export class StructureService {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tocPages }),
     })
-    if (!res.ok) throw new Error(`AI suggest failed: ${res.status}`)
+    if (!res.ok) throw new Error(await describeSuggestFailure(res))
     return res.json()
   }
 }
