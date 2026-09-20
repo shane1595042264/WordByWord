@@ -29,6 +29,10 @@ export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
   { id: 'toggle-line-numbers', label: 'Toggle Line Numbers', defaultKeys: 'Ctrl+Shift+l', description: 'Show/hide relative line numbers' },
   { id: 'toggle-user-menu', label: 'User Menu', defaultKeys: 'Ctrl+m', description: 'Open/close the profile dropdown menu' },
   { id: 'toggle-sidebar', label: 'Toggle Sections Panel', defaultKeys: 'Ctrl+[', description: 'Collapse or expand the sections sidebar in the reader' },
+  { id: 'toggle-read', label: 'Toggle Read', defaultKeys: 'Ctrl+Enter', description: 'Mark the current section read or unread' },
+  { id: 'back-to-dashboard', label: 'Back to Dashboard', defaultKeys: 'Ctrl+b', description: 'Leave the reader and return to the book dashboard' },
+  { id: 'reading-mode-scroll', label: 'Scroll Mode', defaultKeys: 'Ctrl+Shift+s', description: 'Read the PDF as one continuous scroll' },
+  { id: 'reading-mode-flip', label: 'Flip Mode', defaultKeys: 'Ctrl+Shift+f', description: 'Read the PDF one page at a time' },
   { id: 'open-settings', label: 'Open Settings', defaultKeys: 'Ctrl+,', description: 'Open the settings page' },
   { id: 'open-keymap', label: 'Keyboard Shortcuts', defaultKeys: 'Ctrl+]', description: 'Open the keyboard customization settings' },
 ]

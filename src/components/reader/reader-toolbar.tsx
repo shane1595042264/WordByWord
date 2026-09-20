@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { BlockTooltip } from '@/components/ui/block-tooltip'
-import { useShortcuts } from '@/hooks/use-shortcuts'
+import { useShortcut, useShortcuts } from '@/hooks/use-shortcuts'
 import type { ViewMode } from '@/hooks/use-reader'
 
 interface ReaderToolbarProps {
@@ -61,14 +62,23 @@ export function ReaderToolbar({
   format = 'pdf',
 }: ReaderToolbarProps) {
   const isEpub = format === 'epub'
+  const router = useRouter()
   const { getKeysDisplay } = useShortcuts()
   const [isTogglingRead, setIsTogglingRead] = useState(false)
+  // Mirror of isTogglingRead. The state drives the disabled/aria-busy UI, but the
+  // re-entrancy guard has to read a value that is already true by the time a second
+  // trigger arrives — setState is async, so two rapid presses (badge click racing the
+  // keyboard shortcut) would both see `false` and fire two writes.
+  const togglingRef = useRef(false)
 
   /** Get the display string for a shortcut, falling back to the provided default */
   const sk = (id: string, fallback: string) => getKeysDisplay(id) ?? fallback
 
-  const handleToggleRead = async () => {
-    if (isTogglingRead) return
+  // Memoized: useShortcut re-registers whenever the action identity changes, and
+  // register() sets provider state, so an inline closure would loop.
+  const handleToggleRead = useCallback(async () => {
+    if (togglingRef.current) return
+    togglingRef.current = true
     setIsTogglingRead(true)
     try {
       const { SectionRepository } = await import('@/lib/repositories')
@@ -84,9 +94,37 @@ export function ReaderToolbar({
       toast.error('Failed to update read state', { duration: 5000 })
       console.error('Failed to toggle read state:', err)
     } finally {
+      togglingRef.current = false
       setIsTogglingRead(false)
     }
-  }
+  }, [isRead, sectionId, onReadToggle])
+
+  const handleBackToDashboard = useCallback(() => {
+    router.push(`/book/${bookId}`)
+  }, [router, bookId])
+
+  // Guarded rather than conditionally registered: the reading-mode buttons only
+  // render for paged formats, and a hook cannot be called conditionally.
+  const handleScrollMode = useCallback(() => {
+    if (isEpub) return
+    onReadingModeChange('scroll')
+  }, [isEpub, onReadingModeChange])
+
+  const handleFlipMode = useCallback(() => {
+    if (isEpub) return
+    onReadingModeChange('flip')
+  }, [isEpub, onReadingModeChange])
+
+  // Every id the tooltips below advertise has to be a real registration — an
+  // unregistered combo falls straight through to the browser, so the hint is a
+  // promise the app never keeps (and Ctrl+R/Ctrl+S would have hit reload and the
+  // save dialog). Defaults mirror GLOBAL_SHORTCUTS in settings/keymap-settings.tsx;
+  // the provider layers any user override from bbb-settings.keymapOverrides on top
+  // at register time, which is also what makes getKeysDisplay show the rebound combo.
+  useShortcut('back-to-dashboard', 'Back to Dashboard', 'Ctrl+b', handleBackToDashboard)
+  useShortcut('toggle-read', 'Toggle Read', 'Ctrl+Enter', handleToggleRead)
+  useShortcut('reading-mode-scroll', 'Scroll Mode', 'Ctrl+Shift+s', handleScrollMode)
+  useShortcut('reading-mode-flip', 'Flip Mode', 'Ctrl+Shift+f', handleFlipMode)
 
   return (
     <div className="border-b bg-background">
@@ -116,7 +154,7 @@ export function ReaderToolbar({
             </>
           )}
           <span className="text-sm font-medium truncate max-w-[200px]">{sectionTitle}</span>
-          <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut={sk('toggle-read', '⌃ R')}>
+          <BlockTooltip label={isRead ? 'Mark as Unread' : 'Mark as Read'} shortcut={sk('toggle-read', '⌃ ↵')}>
             <Badge
               asChild
               variant={isRead ? 'default' : 'outline'}
@@ -190,7 +228,7 @@ export function ReaderToolbar({
           {/* Reading mode toggle (scroll vs flip) - only for PDF modes */}
           {!isEpub && viewMode !== 'text' && (
             <div className="flex border rounded-md">
-              <BlockTooltip label="Scroll Mode" shortcut={sk('reading-mode-scroll', '⌃ S')}>
+              <BlockTooltip label="Scroll Mode" shortcut={sk('reading-mode-scroll', '⌃ ⇧ S')}>
                 <button
                   onClick={() => onReadingModeChange('scroll')}
                   aria-pressed={readingMode === 'scroll'}
@@ -201,7 +239,7 @@ export function ReaderToolbar({
                   Scroll
                 </button>
               </BlockTooltip>
-              <BlockTooltip label="Flip Mode" shortcut={sk('reading-mode-flip', '⌃ F')}>
+              <BlockTooltip label="Flip Mode" shortcut={sk('reading-mode-flip', '⌃ ⇧ F')}>
                 <button
                   onClick={() => onReadingModeChange('flip')}
                   aria-pressed={readingMode === 'flip'}
