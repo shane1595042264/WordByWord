@@ -6,7 +6,7 @@ import type { NextRequest } from 'next/server'
  * Lightweight auth protection — checks session cookie at the edge.
  */
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname, search } = request.nextUrl
 
   // Public routes — no auth required
   const publicPaths = ['/auth/login', '/auth/register', '/api/auth', '/api/admin/register']
@@ -20,7 +20,9 @@ export function proxy(request: NextRequest) {
 
   if (!sessionToken) {
     const loginUrl = new URL('/auth/login', request.url)
-    loginUrl.searchParams.set('callbackUrl', pathname)
+    // Keep the query string — deep links carry restore params (?sp=&wi=) and
+    // tab selectors (?tab=keymap) that are lost forever if dropped here.
+    loginUrl.searchParams.set('callbackUrl', pathname + search)
     return NextResponse.redirect(loginUrl)
   }
 
