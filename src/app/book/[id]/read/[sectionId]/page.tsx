@@ -27,17 +27,29 @@ import type { VimRule } from '@/lib/vim'
 export default function ReaderPage({ params }: { params: Promise<{ id: string; sectionId: string }> }) {
   const { id: bookId, sectionId } = use(params)
   const router = useRouter()
-  /** Restore params from Continue Reading (read once on mount from URL) */
+  /** Restore params from Continue Reading (read once, lazily, from the URL) */
   const restoreRef = useRef<{ scrollProgress: number | null; wordIndex: number | null; applied: boolean } | null>(null)
-  if (restoreRef.current === null) {
-    // Parse once on initial render (safe in client component)
-    const qs = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-    restoreRef.current = {
-      scrollProgress: qs?.get('sp') ? Number(qs.get('sp')) : null,
-      wordIndex: qs?.get('wi') ? Number(qs.get('wi')) : null,
-      applied: false,
+  /**
+   * Parsed on first use from inside the restore effects, NOT during the initial
+   * render. Arriving here via a client-side router.push — which is what the
+   * login page does after signing in from a deep link — renders this component
+   * before the pushed URL is committed to window.location, so an
+   * initial-render parse saw an empty search string and latched both params to
+   * null forever. Effects run after the commit, so by then the query string is
+   * there. Still parsed exactly once: a mid-read re-render must not yank the
+   * reader back to the arrival position.
+   */
+  const getRestore = useCallback(() => {
+    if (restoreRef.current === null) {
+      const qs = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+      restoreRef.current = {
+        scrollProgress: qs?.get('sp') ? Number(qs.get('sp')) : null,
+        wordIndex: qs?.get('wi') ? Number(qs.get('wi')) : null,
+        applied: false,
+      }
     }
-  }
+    return restoreRef.current
+  }, [])
   const {
     book, section, chapterSections,
     viewMode, setViewMode,
@@ -321,7 +333,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (viewMode !== 'pdf' || !section) return
 
-    const restore = restoreRef.current
+    const restore = getRestore()
     // Skip if Continue Reading scroll param exists (handled via currentPage already)
     if (restore && !restore.applied && restore.scrollProgress != null) return
 
@@ -537,7 +549,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (viewMode === 'text' || viewMode === 'side-by-side') {
       const t = setTimeout(() => {
-        const restore = restoreRef.current
+        const restore = getRestore()
         if (restore && !restore.applied && restore.wordIndex != null) {
           // Restore to exact word position (Continue Reading)
           nibTextViewerRef.current?.selectWordByIndex(restore.wordIndex)
