@@ -142,6 +142,11 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
           setYankFlash('Copied!')
           yankFlashTimerRef.current = setTimeout(() => setYankFlash(''), 1500)
         })
+      } else {
+        // Nothing to yank — say so instead of failing silently.
+        if (yankFlashTimerRef.current) clearTimeout(yankFlashTimerRef.current)
+        setYankFlash('Nothing selected to copy')
+        yankFlashTimerRef.current = setTimeout(() => setYankFlash(''), 1500)
       }
     }, []),
     onClearSelection: useCallback(() => {

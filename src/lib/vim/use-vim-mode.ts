@@ -7,6 +7,18 @@ import { findRule, RULEBOOK } from './rulebook'
 const DEFAULT_LINE_HEIGHT = 24
 const GG_TIMEOUT = 500
 
+/**
+ * True when the user has a real, non-empty DOM selection (e.g. a mouse drag-select).
+ * Such a selection always beats the vim cursor: the browser's native copy already
+ * does the right thing with it, and the vim cursor may be stale (Continue Reading
+ * restores one on mount, so it is set even when the user never touched the keyboard).
+ */
+function hasNativeSelection(): boolean {
+  if (typeof window === 'undefined') return false
+  const sel = window.getSelection()
+  return !!sel && !sel.isCollapsed && sel.toString().trim().length > 0
+}
+
 interface UseVimModeOptions {
   enabled: boolean
   scrollRef: React.RefObject<HTMLElement | null>
@@ -81,6 +93,10 @@ export function useVimMode({
 
     // Ctrl+C / Cmd+C — yank (copy) selected text
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      // Let the native copy win when there is a real DOM selection — don't
+      // preventDefault, and don't route it through the vim yank (which cannot
+      // see a mouse selection and would copy the vim cursor word instead).
+      if (hasNativeSelection()) return
       e.preventDefault()
       onYank?.()
       setCountBuffer('')
