@@ -464,9 +464,18 @@ class SyncService {
       body: formData,
     })
     if (!res.ok) {
-      const errorData = await res.json().catch(() => null)
-      const errorMsg = errorData?.error || `Upload failed (${res.status})`
-      throw new Error(errorMsg)
+      // This route answers with TWO error shapes. The handler's own early returns
+      // are { error: 'sentence' }, but anything thrown (AppError via nibble-api's
+      // errorHandler) is { error: { code, message, status } }. Reading .error
+      // blindly stringified that envelope, so every thrown upload error reached
+      // the user as "Upload failed: [object Object]" — including the 409 a
+      // cross-user processing collision now returns, whose whole point is to tell
+      // them to try again shortly (KAN-322).
+      const body = await res.json().catch(() => null) as { error?: unknown } | null
+      const raw = body?.error
+      const nested = (raw as { message?: unknown } | null | undefined)?.message
+      const message = typeof raw === 'string' ? raw : typeof nested === 'string' ? nested : ''
+      throw new Error(message.trim() || `Upload failed (${res.status})`)
     }
     const data = await res.json()
     // Defense in depth: a 200 with a missing book/catalogEntry (e.g. a failed server-side

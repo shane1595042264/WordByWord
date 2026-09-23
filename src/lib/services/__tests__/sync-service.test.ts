@@ -1515,3 +1515,66 @@ describe('sync push — only rows changed since the last push go up', () => {
     expect(books[0]).not.toHaveProperty('coverUrl')
   })
 })
+
+// KAN-322: /books/upload answers with two different error shapes. Its own early
+// returns are { error: 'sentence' }, but anything THROWN reaches the client as
+// nibble-api's error envelope, { error: { code, message, status } }. uploadBook
+// read `.error` blindly, so every thrown upload error was stringified into
+// "[object Object]" — hiding, among others, the 409 a cross-user processing
+// collision now returns, whose entire job is to tell the user to retry shortly.
+describe('syncService.uploadBook() — surfacing the server sentence (KAN-322)', () => {
+  const realFetch = globalThis.fetch
+
+  function installUploadMock(status: number, body: unknown) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/books/upload')) {
+        return new Response(JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  const upload = () => syncService.uploadBook(new Blob(['x']), 'Shared Textbook')
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    vi.restoreAllMocks()
+  })
+
+  it('unwraps the AppError envelope instead of throwing "[object Object]"', async () => {
+    const message = 'This file is already being processed — it will finish shortly. Please try uploading it again in a few minutes.'
+    installUploadMock(409, { error: { code: 'CONFLICT', message, status: 409 } })
+
+    await expect(upload()).rejects.toThrow(message)
+  })
+
+  it('never lets an error object reach the user as [object Object]', async () => {
+    installUploadMock(409, { error: { code: 'CONFLICT', message: 'Readable sentence', status: 409 } })
+
+    await expect(upload()).rejects.not.toThrow(/\[object Object\]/)
+  })
+
+  it('still honours the route\'s own plain-string error shape', async () => {
+    // The 413/400 early returns in routes/books.ts reply with a bare string.
+    installUploadMock(413, { error: 'File size exceeds the 100MB limit' })
+
+    await expect(upload()).rejects.toThrow('File size exceeds the 100MB limit')
+  })
+
+  it('falls back to the status code when the body carries no usable message', async () => {
+    // A CDN/proxy error page, or an envelope with an empty message.
+    installUploadMock(502, { error: { code: 'BAD_GATEWAY', message: '   ', status: 502 } })
+
+    await expect(upload()).rejects.toThrow('Upload failed (502)')
+  })
+})
