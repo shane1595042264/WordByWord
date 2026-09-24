@@ -2,6 +2,27 @@ import { db } from '@/lib/db/database'
 import type { Section } from '@/lib/db/models'
 import { syncService } from '../services/sync-service'
 
+export interface SectionProgress {
+  read: number
+  total: number
+  percentage: number
+}
+
+/**
+ * Progress over an already-loaded set of sections. The repository helpers below
+ * delegate here so callers that already hold the rows (e.g. useBookDetail, which
+ * loads the whole book once) can compute the same numbers without re-reading
+ * IndexedDB — the rounding has to match exactly, so there is only one copy.
+ */
+export function computeSectionProgress(sections: Section[]): SectionProgress {
+  const read = sections.filter(s => s.isRead).length
+  const total = sections.length
+  const percentage = total === 0 ? 0 : Math.round(
+    sections.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
+  )
+  return { read, total, percentage }
+}
+
 export class SectionRepository {
   async bulkCreate(sections: Section[]): Promise<void> {
     const now = Date.now()
@@ -72,23 +93,11 @@ export class SectionRepository {
     await db.sections.update(id, { extractedText: text, updatedAt: Date.now() })
   }
 
-  async getBookProgress(bookId: string): Promise<{ read: number; total: number; percentage: number }> {
-    const all = await db.sections.where('bookId').equals(bookId).toArray()
-    const read = all.filter(s => s.isRead).length
-    const total = all.length
-    const percentage = total === 0 ? 0 : Math.round(
-      all.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
-    )
-    return { read, total, percentage }
+  async getBookProgress(bookId: string): Promise<SectionProgress> {
+    return computeSectionProgress(await db.sections.where('bookId').equals(bookId).toArray())
   }
 
-  async getChapterProgress(chapterId: string): Promise<{ read: number; total: number; percentage: number }> {
-    const all = await db.sections.where('chapterId').equals(chapterId).toArray()
-    const read = all.filter(s => s.isRead).length
-    const total = all.length
-    const percentage = total === 0 ? 0 : Math.round(
-      all.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
-    )
-    return { read, total, percentage }
+  async getChapterProgress(chapterId: string): Promise<SectionProgress> {
+    return computeSectionProgress(await db.sections.where('chapterId').equals(chapterId).toArray())
   }
 }

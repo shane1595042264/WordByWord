@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { SectionRepository } from '../section-repository'
+import { SectionRepository, computeSectionProgress } from '../section-repository'
 import { db } from '@/lib/db/database'
 import type { Book, Section } from '@/lib/db/models'
 
@@ -45,6 +45,37 @@ describe('SectionRepository', () => {
     const sections = await repo.getByChapter('ch1')
     expect(sections[0].title).toBe('First')
     expect(sections[1].title).toBe('Second')
+  })
+
+  it('should compute the same progress in memory as the per-chapter/per-book queries (KAN-324)', async () => {
+    const mk = (id: string, chapterId: string, order: number, isRead: boolean, scrollProgress: number | null): Section => ({
+      id, chapterId, bookId: 'b-equiv', title: id, order, startPage: order, endPage: order + 1,
+      extractedText: null, isRead, readAt: isRead ? Date.now() : null, lastPageViewed: null,
+      scrollProgress, updatedAt: Date.now(),
+    })
+    await db.sections.bulkAdd([
+      mk('s3', 'ch2', 3, false, 40),
+      mk('s1', 'ch1', 1, true, null),
+      mk('s2', 'ch1', 2, false, 25),
+      mk('s4', 'ch2', 4, false, null),
+    ])
+
+    const allSections = await repo.getByBook('b-equiv')
+
+    // Book-level: one in-memory pass matches the dedicated query, rounding included.
+    expect(computeSectionProgress(allSections)).toEqual(await repo.getBookProgress('b-equiv'))
+
+    // Per-chapter: the filtered slice is identical to getByChapter, ids and order.
+    for (const chapterId of ['ch1', 'ch2']) {
+      const slice = allSections.filter(s => s.chapterId === chapterId)
+      expect(slice.map(s => s.id)).toEqual((await repo.getByChapter(chapterId)).map(s => s.id))
+      expect(computeSectionProgress(slice)).toEqual(await repo.getChapterProgress(chapterId))
+    }
+
+    // A chapter with no sections must yield {0,0,0}, not NaN.
+    expect(computeSectionProgress(allSections.filter(s => s.chapterId === 'ch-empty')))
+      .toEqual(await repo.getChapterProgress('ch-empty'))
+    expect(computeSectionProgress([])).toEqual({ read: 0, total: 0, percentage: 0 })
   })
 
   it('should serialize concurrent markAsRead on the last two unread sections — only one returns true and completedAt is written exactly once', async () => {

@@ -26,7 +26,7 @@ export function useBookDetail(bookId: string) {
     if (!opts?.silent) setLoading(true)
     setError(null)
     try {
-      const { BookRepository, ChapterRepository, SectionRepository } = await import('@/lib/repositories')
+      const { BookRepository, ChapterRepository, SectionRepository, computeSectionProgress } = await import('@/lib/repositories')
       const bookRepo = new BookRepository()
       const chapterRepo = new ChapterRepository()
       const sectionRepo = new SectionRepository()
@@ -35,18 +35,21 @@ export function useBookDetail(bookId: string) {
       if (!b) { setBook(null); return }
 
       const chapters = await chapterRepo.getByBook(bookId)
+      // One pass over the book's sections, then slice it per chapter in memory.
+      // Sections carry the full extractedText/richContent, so every extra query
+      // here re-deserializes the whole book's text — a per-chapter getByChapter +
+      // getChapterProgress (plus a separate getBookProgress) read the same rows
+      // four times over, on every sync-complete refresh as well as on mount.
+      // getByBook is already sorted by `order`, and filtering preserves that
+      // order, so each slice matches what getByChapter returns.
       const allSections = await sectionRepo.getByBook(bookId)
-      const bookProgress = await sectionRepo.getBookProgress(bookId)
 
-      const chaptersWithSections: ChapterWithSections[] = await Promise.all(
-        chapters.map(async (ch) => {
-          const sections = await sectionRepo.getByChapter(ch.id)
-          const progress = await sectionRepo.getChapterProgress(ch.id)
-          return { ...ch, sections, progress }
-        })
-      )
+      const chaptersWithSections: ChapterWithSections[] = chapters.map((ch) => {
+        const sections = allSections.filter(s => s.chapterId === ch.id)
+        return { ...ch, sections, progress: computeSectionProgress(sections) }
+      })
 
-      setBook({ ...b, chapters: chaptersWithSections, progress: bookProgress, allSections })
+      setBook({ ...b, chapters: chaptersWithSections, progress: computeSectionProgress(allSections), allSections })
     } catch (err) {
       // Surfaces a stale-chunk reload prompt after a deploy; always logs.
       reportLazyImportError('useBookDetail load', err)
