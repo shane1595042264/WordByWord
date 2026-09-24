@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { BookRepository } from '../book-repository'
 import { db } from '@/lib/db/database'
 
@@ -53,5 +53,63 @@ describe('BookRepository', () => {
     expect(await db.vocabulary.where('bookId').equals(book.id).count()).toBe(0)
     expect(await db.vocabulary.where('bookId').equals(otherBook.id).count()).toBe(1)
     expect((await db.vocabulary.get('v3'))?.word).toBe('baz')
+  })
+
+  // Regression coverage for KAN-323: PUT /books/:id/metadata writes the SHARED
+  // book_catalog row, so a personal rename used to rename the book for every other
+  // user holding the same file_hash (and rewrote the Marketplace listing + the fuzzy
+  // upload dedup). A rename must stay local + /sync-borne (books.custom_title).
+  describe('updateDetails — never pushes a rename to the shared catalog', () => {
+    const realFetch = globalThis.fetch
+
+    afterEach(() => {
+      globalThis.fetch = realFetch
+      vi.restoreAllMocks()
+    })
+
+    async function syncedBook(title: string) {
+      const book = await repo.create({ title, author: 'A', totalPages: 10, pdfBlob: new Blob(['a']) })
+      await db.books.update(book.id, { remoteId: 'remote-book-1' })
+      return book
+    }
+
+    it('issues no backend request at all for a title-only edit', async () => {
+      const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+      globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+      const book = await syncedBook('Old Title')
+      const res = await repo.updateDetails(book.id, { title: 'My Private Rename' })
+
+      expect(res.backendSyncFailed).toBe(false)
+      // Not even the token fetch — there is nothing left to send.
+      expect(fetchSpy).not.toHaveBeenCalled()
+      // …and the rename is still persisted locally for /sync to carry up.
+      expect((await db.books.get(book.id))?.title).toBe('My Private Rename')
+    })
+
+    it('still pushes author (no per-user column) but strips title from the payload', async () => {
+      const urls: string[] = []
+      let sentBody: Record<string, unknown> | null = null
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+        urls.push(url)
+        if (url === '/api/auth/token') {
+          return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        sentBody = JSON.parse(init?.body as string)
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+      }) as typeof fetch
+
+      const book = await syncedBook('Old Title')
+      await repo.updateDetails(book.id, { title: 'My Private Rename', author: 'New Author' })
+
+      expect(urls.some(u => u.includes('/metadata'))).toBe(true)
+      expect(sentBody).toEqual({ author: 'New Author' })
+      expect(sentBody).not.toHaveProperty('title')
+      expect((await db.books.get(book.id))?.title).toBe('My Private Rename')
+    })
   })
 })

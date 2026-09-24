@@ -1034,7 +1034,8 @@ class SyncService {
 
     // Fetch catalog first — we need `format` to decide whether to download
     // the source file. EPUBs skip the blob entirely; their text lives in sections.
-    let title = (sb.customTitle as string) || 'Untitled'
+    const customTitle = (sb.customTitle as string) || ''
+    let title = customTitle || 'Untitled'
     let author = ''
     let format: 'pdf' | 'epub' = 'pdf'
     let catalogCoverUrl: string | null = null
@@ -1045,7 +1046,11 @@ class SyncService {
       })
       if (summaryRes.ok) {
         const summary = await summaryRes.json()
-        title = summary.catalog?.title || title
+        // The user's own rename wins over the shared catalog title — matching what
+        // applyServerChanges does (`sb.customTitle || local.title`). Letting the catalog
+        // win here silently discarded the rename on every fresh device / Download from
+        // cloud. author, format and coverUrl still come from the catalog: no per-user column.
+        title = customTitle || summary.catalog?.title || title
         author = summary.catalog?.author || ''
         if (summary.catalog?.format === 'epub') format = 'epub'
         catalogCoverUrl = summary.catalog?.coverUrl ?? null

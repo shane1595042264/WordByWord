@@ -88,6 +88,17 @@ export class BookRepository {
     await db.books.update(id, update)
     syncService.markDirty()
 
+    // title is deliberately NOT pushed here: /books/:id/metadata writes the SHARED
+    // book_catalog row, so sending a personal rename renamed the book for every other
+    // user holding the same file_hash, and rewrote the Marketplace listing + the fuzzy
+    // upload dedup. The per-user home for a rename is books.custom_title, which the
+    // local write + markDirty() above already carry through /sync via bookToSync.
+    // Catalog titles stay admin-only (PUT /admin/catalog/:id).
+    const backendData: Record<string, unknown> = {}
+    if (data.author !== undefined) backendData.author = data.author
+    if (data.coverImage !== undefined) backendData.coverUrl = data.coverImage
+    if (Object.keys(backendData).length === 0) return { backendSyncFailed: false }
+
     // Fetch remoteId after local update; skip backend push if book hasn't been
     // synced to the catalog yet — markDirty above will let the next global sync pick it up.
     const book = await db.books.get(id)
@@ -100,11 +111,6 @@ export class BookRepository {
       const { token } = await tokenRes.json()
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
-      const backendData: Record<string, unknown> = {}
-      if (data.title !== undefined) backendData.title = data.title
-      if (data.author !== undefined) backendData.author = data.author
-      if (data.coverImage !== undefined) backendData.coverUrl = data.coverImage
-
       const res = await fetch(`${apiUrl}/books/${book.remoteId}/metadata`, {
         method: 'PUT',
         headers: {

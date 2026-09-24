@@ -896,6 +896,49 @@ describe('sync download chain — AbortSignal propagation (KAN-263)', () => {
 
     expect(await db.books.count()).toBe(1)
   })
+
+  // Regression coverage for KAN-323: the download path let the SHARED catalog title
+  // win unconditionally (`title = summary.catalog?.title || title`), so a fresh device
+  // or Settings > Download from cloud silently discarded the user's own rename. That
+  // was masked only because renaming also rewrote the catalog — which it no longer does.
+  it('createLocalBookFromServer prefers the user customTitle over the shared catalog title', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/summary')) {
+        // format=epub so no blob download is attempted (keeps the test PDF-free).
+        return new Response(
+          JSON.stringify({ catalog: { format: 'epub', title: 'Shared Catalog Title', author: 'A' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+
+    const call = (sb: Record<string, unknown>) =>
+      (syncService as unknown as {
+        createLocalBookFromServer: (
+          sb: Record<string, unknown>,
+          serverChanges: unknown,
+          token: string,
+          signal?: AbortSignal,
+        ) => Promise<string>
+      }).createLocalBookFromServer(sb, { chapters: [], sections: [] }, 'fake.jwt.token')
+
+    const renamedId = await call({ id: 'remote-book-1', customTitle: 'My Private Rename', totalPages: 5 })
+    expect((await db.books.get(renamedId))?.title).toBe('My Private Rename')
+    // author still comes from the catalog — there is no per-user author column.
+    expect((await db.books.get(renamedId))?.author).toBe('A')
+
+    // Control arm: with no customTitle the catalog title is still the fallback.
+    const neverRenamedId = await call({ id: 'remote-book-2', customTitle: null, totalPages: 5 })
+    expect((await db.books.get(neverRenamedId))?.title).toBe('Shared Catalog Title')
+  })
 })
 
 // Regression coverage for KAN-283: VocabService.delete() used to fire-and-forget
