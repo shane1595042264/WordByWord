@@ -25,7 +25,7 @@ interface CatalogEntry {
 const PAGE_SIZE = 20
 
 export default function MarketplacePage() {
-  const { data: session } = useSession()
+  const { data: session, status } = useSession()
   const router = useRouter()
   const isAdmin = (session?.user as any)?.role === 'admin'
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
@@ -44,12 +44,13 @@ export default function MarketplacePage() {
   const pageRef = useRef(1)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Redirect non-admins
+  // Redirect non-admins. Gated on the resolved status so a still-loading session
+  // is never mistaken for a signed-out one.
   useEffect(() => {
-    if (session && !isAdmin) {
+    if (status === 'authenticated' && !isAdmin) {
       router.push('/')
     }
-  }, [session, isAdmin, router])
+  }, [status, isAdmin, router])
 
   const fetchCatalog = useCallback(async () => {
     abortRef.current?.abort()
@@ -122,7 +123,10 @@ export default function MarketplacePage() {
     setMessage(null)
     try {
       const tokenRes = await fetch('/api/auth/token')
-      if (!tokenRes.ok) return
+      if (!tokenRes.ok) {
+        setMessage('Failed to authenticate. Please try again.')
+        return
+      }
       const { token } = await tokenRes.json()
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
       const res = await fetch(`${apiUrl}/admin/catalog/${catalogId}/add-to-shelf`, {
@@ -144,6 +148,13 @@ export default function MarketplacePage() {
     } finally {
       setAdding(null)
     }
+  }
+
+  // The session is fetched client-side (bare SessionProvider, no middleware), so
+  // status is 'loading' on every first paint. Show that as its own state instead of
+  // falling through to the access-denied copy below.
+  if (status === 'loading') {
+    return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
   }
 
   if (!isAdmin) {
