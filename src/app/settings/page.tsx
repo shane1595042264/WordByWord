@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -20,12 +20,19 @@ import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 function SettingsContent() {
   const { data: session } = useSession()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const initialTab = tabParam && ['profile', 'general', 'keymap', 'cloud', 'admin'].includes(tabParam)
+  const urlTab = tabParam && ['profile', 'general', 'keymap', 'cloud', 'admin'].includes(tabParam)
     ? tabParam
     : 'profile'
   const isAdmin = (session?.user as any)?.role === 'admin'
+  // The Tabs root is controlled, not defaultValue-seeded: a query-only push
+  // (Ctrl+], back/forward, a deep link) is a soft navigation that re-renders
+  // this client component without remounting it, so Radix would never read a
+  // fresh defaultValue and the panel would sit still while the URL moved.
+  const [activeTab, setActiveTab] = useState(urlTab)
+
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -37,6 +44,21 @@ function SettingsContent() {
     setUnsavedEdits(true)
     setSettings(next)
   }
+
+  /**
+   * Write the selection back so ?tab= stays truthful and /settings is
+   * deep-linkable. replace, not push, so clicking through tabs doesn't fill
+   * history; scroll:false so the page doesn't jump to the top on each switch.
+   */
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab)
+    router.replace(`/settings?tab=${tab}`, { scroll: false })
+  }
+
+  // Adopt any externally-driven ?tab= change.
+  useEffect(() => {
+    setActiveTab(urlTab)
+  }, [urlTab])
 
   useEffect(() => {
     let cancelled = false
@@ -108,7 +130,7 @@ function SettingsContent() {
       </Link>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      <Tabs defaultValue={initialTab}>
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
