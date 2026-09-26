@@ -29,10 +29,20 @@ function isEmojiAvatar(str: string | null | undefined): boolean {
   return !str.startsWith('http') && !str.startsWith('/') && !str.startsWith('r2:')
 }
 
+/**
+ * The navigable entries of the dropdown. Scoped to the panel (never the wrapper)
+ * so the trigger — a never-disabled <button> that precedes the panel in DOM
+ * order — can't win the query and steal focus from the first real item.
+ */
+const MENU_ITEM_SELECTOR = '[role="menuitem"]:not([disabled])'
+
 export function UserMenu() {
   const { data: session } = useSession()
   const [open, setOpen] = useState(false)
+  /** Outer wrapper: includes the trigger, used for the outside-click check. */
   const menuRef = useRef<HTMLDivElement>(null)
+  /** Dropdown panel only: used for every focus query. */
+  const panelRef = useRef<HTMLDivElement>(null)
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -57,7 +67,8 @@ export function UserMenu() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Close on Escape key and trap focus within the dropdown
+  // Close on Escape key, trap focus within the dropdown, and move between items
+  // with the Arrow/Home/End keys the role="menu" contract promises.
   useEffect(() => {
     if (!open) return
 
@@ -68,14 +79,14 @@ export function UserMenu() {
         return
       }
 
-      if (e.key === 'Tab') {
-        const focusable = menuRef.current?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled])'
-        )
-        if (!focusable || focusable.length === 0) return
+      const items = Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR) ?? []
+      )
+      if (items.length === 0) return
 
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
+      if (e.key === 'Tab') {
+        const first = items[0]
+        const last = items[items.length - 1]
 
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault()
@@ -84,6 +95,25 @@ export function UserMenu() {
           e.preventDefault()
           first.focus()
         }
+        return
+      }
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        // Claim the key even when focus is still outside the list, so an open
+        // menu never lets an Arrow press scroll the page underneath it.
+        e.preventDefault()
+        const current = items.indexOf(document.activeElement as HTMLElement)
+        let next: number
+        if (e.key === 'Home') {
+          next = 0
+        } else if (e.key === 'End') {
+          next = items.length - 1
+        } else if (e.key === 'ArrowDown') {
+          next = current < 0 ? 0 : (current + 1) % items.length
+        } else {
+          next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length
+        }
+        items[next].focus()
       }
     }
 
@@ -140,7 +170,7 @@ export function UserMenu() {
     if (!open) {
       // When opening via shortcut, focus the first menu item after render
       setTimeout(() => {
-        const firstItem = menuRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')
+        const firstItem = panelRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR)
         firstItem?.focus()
       }, 0)
     } else {
@@ -221,6 +251,7 @@ export function UserMenu() {
 
       {open && (
         <div
+          ref={panelRef}
           id="user-menu-panel"
           role="menu"
           className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50"
