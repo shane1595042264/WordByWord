@@ -22,14 +22,24 @@ export class VocabService {
     return id
   }
 
-  /** Check if a word (in context of sentence) already exists in vocab */
-  async exists(word: string, contextSentence: string): Promise<boolean> {
-    const count = await db.vocabulary
+  /**
+   * Every saved entry for a word in one specific sentence context — usually
+   * zero or one row, but the same word/sentence pair can be saved once per
+   * target language.
+   *
+   * This replaced a `count() > 0` existence check: the stored row already holds
+   * the pronunciation, translation and explanation the reader panel used to
+   * re-buy from Anthropic on every re-open (KAN-328), so callers need the row
+   * itself, not a boolean. Returning the whole (tiny) match set keeps it to one
+   * IDB read for callers that want both "is this word saved at all?" and "is
+   * there a row for the language I'm displaying?".
+   */
+  async findByWordAndContext(word: string, contextSentence: string): Promise<VocabEntry[]> {
+    return db.vocabulary
       .where('word')
       .equals(word)
       .filter(v => v.contextSentence === contextSentence)
-      .count()
-    return count > 0
+      .toArray()
   }
 
   /** Get all vocab entries, ordered by most recent first */

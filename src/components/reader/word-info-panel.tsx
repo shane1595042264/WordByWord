@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, type CSSProperties } from 're
 import ReactMarkdown from 'react-markdown'
 import { ShortcutButton } from '@/components/ui/shortcut-button'
 import type { NibWord } from '@/lib/nib'
+import type { VocabEntry } from '@/lib/db/models'
 import type { TranslationResult } from '@/lib/services/translation-service'
 import { SettingsService, type TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
@@ -21,6 +22,30 @@ interface WordInfoPanelProps {
   sectionTitle?: string
   /** Panel mode: 'word' shows word translation, 'sentence' shows sentence translation */
   panelMode?: 'word' | 'sentence'
+}
+
+/**
+ * The saved vocab entry for this exact word + sentence in the language we are
+ * about to display, or null when there isn't one.
+ *
+ * Language-matched on purpose: entries store the `targetLanguage` they were
+ * translated into, so a row saved while reading in Spanish must not be served
+ * to a reader who has since switched to French. A rejected lookup resolves null
+ * so a cache read can never stop the real translation from happening.
+ */
+async function findCachedVocabEntry(
+  word: string,
+  contextSentence: string,
+  targetLang: TargetLanguage,
+): Promise<VocabEntry | null> {
+  try {
+    const { VocabService } = await import('@/lib/services/vocab-service')
+    const entries = await new VocabService().findByWordAndContext(word, contextSentence)
+    return entries.find(e => e.targetLanguage === targetLang) ?? null
+  } catch (err) {
+    console.warn('vocab cache lookup failed; falling back to the translation API:', err)
+    return null
+  }
 }
 
 /**
@@ -164,9 +189,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     import('@/lib/services/vocab-service').then(({ VocabService }) => {
       if (cancelled) return
       const svc = new VocabService()
-      svc.exists(word.text, word.sentence.text).then(exists => {
+      svc.findByWordAndContext(word.text, word.sentence.text).then(entries => {
         if (!cancelled) {
-          setAddedToVocab(exists)
+          // Language-agnostic on purpose: the Add button reflects "this word is
+          // in the vocab book", same as the count() > 0 check this replaced.
+          // The translate effect below does its own language-matched lookup.
+          setAddedToVocab(entries.length > 0)
           setCheckingVocab(false)
         }
       }, handleFailure)
@@ -233,31 +261,57 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         reportLazyImportError('image/content explanation import', err)
       })
     } else {
-      // Regular word → backend-proxied translation
+      // Regular word → saved vocab row first, backend-proxied translation on miss
       setTranslating(true)
-      import('@/lib/services/translation-service').then(({ TranslationService }) => {
-        const svc = new TranslationService()
-        svc.translateWord(word.text, word.sentence.text, targetLang, controller.signal)
-          .then(result => {
-            if (!cancelled) {
-              setTranslation(result)
-              setTranslating(false)
-            }
-          })
-          .catch(err => {
-            if (err?.name === 'AbortError') return
-            if (!cancelled) {
-              setTranslationError(err.message || 'Translation failed')
-              setTranslating(false)
-            }
-          })
-      }, (err) => {
-        // Import rejected (stale chunk after a deploy) — clear the spinner set
-        // before the import so it can't spin forever.
+      findCachedVocabEntry(word.text, word.sentence.text, targetLang).then(cached => {
         if (cancelled) return
-        setTranslationError('Could not load the translation module.')
-        setTranslating(false)
-        reportLazyImportError('word translation import', err)
+
+        if (cached) {
+          // Everything the API would return is already in IndexedDB — serve it
+          // locally instead of re-buying the same answer from Anthropic on every
+          // re-open of a word the user has already saved (KAN-328). Works
+          // offline too.
+          setTranslation({
+            word: word.text,
+            pronunciation: cached.pronunciation,
+            translation: cached.translation,
+            // Not persisted on VocabEntry. The badge below is conditional, so
+            // it stays hidden rather than showing an invented part of speech.
+            partOfSpeech: '',
+          })
+          // Point the explanation write-back at the row we just read, so if its
+          // explanation is still null and the user loads one now, it lands on
+          // the saved entry instead of being discarded.
+          addedVocabIdRef.current = cached.id
+          if (cached.explanation) setExplanation(cached.explanation)
+          setTranslating(false)
+          return
+        }
+
+        import('@/lib/services/translation-service').then(({ TranslationService }) => {
+          const svc = new TranslationService()
+          svc.translateWord(word.text, word.sentence.text, targetLang, controller.signal)
+            .then(result => {
+              if (!cancelled) {
+                setTranslation(result)
+                setTranslating(false)
+              }
+            })
+            .catch(err => {
+              if (err?.name === 'AbortError') return
+              if (!cancelled) {
+                setTranslationError(err.message || 'Translation failed')
+                setTranslating(false)
+              }
+            })
+        }, (err) => {
+          // Import rejected (stale chunk after a deploy) — clear the spinner set
+          // before the import so it can't spin forever.
+          if (cancelled) return
+          setTranslationError('Could not load the translation module.')
+          setTranslating(false)
+          reportLazyImportError('word translation import', err)
+        })
       })
     }
 
@@ -321,7 +375,14 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
 
   // Load explanation lazily (backend-proxied — no key needed)
   const handleLoadExplanation = useCallback(async () => {
-    if (explanation || explaining || !translation) return
+    if (explaining || !translation) return
+    // Already have the text — either loaded earlier this session or seeded from
+    // the saved vocab entry. Reveal it; never pay for /ai/explain-translation
+    // twice for the same word (KAN-328).
+    if (explanation) {
+      setShowExplanation(true)
+      return
+    }
     explanationControllerRef.current?.abort()
     const controller = new AbortController()
     explanationControllerRef.current = controller
