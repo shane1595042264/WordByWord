@@ -92,6 +92,20 @@ function SettingsContent() {
     return () => window.removeEventListener(SETTINGS_SYNCED_EVENT, onSynced)
   }, [unsavedEdits])
 
+  // General is a deferred-save form: nothing is persisted until Save. Without a
+  // guard a reload or tab close drops the edits silently — costliest for the
+  // Anthropic API key, the one field users paste rather than retype (KAN-331).
+  // Same pattern as upload-dialog.tsx.
+  useEffect(() => {
+    if (!unsavedEdits) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [unsavedEdits])
+
   if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-4">
@@ -125,7 +139,24 @@ function SettingsContent() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-2xl">
-      <Link href="/" className="text-sm text-muted-foreground hover:underline mb-4 inline-block">
+      {/* Kept as a Link for prefetch and middle-click, but a soft navigation
+          unmounts this form without firing beforeunload, so the dirty check
+          has to be done here too (KAN-331). */}
+      <Link
+        href="/"
+        onClick={(e) => {
+          if (!unsavedEdits) return
+          // A modified click opens a new tab/window — this form is not going
+          // anywhere, so there is nothing to guard.
+          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
+          e.preventDefault()
+          if (window.confirm('You have unsaved settings changes. Leave without saving?')) {
+            setUnsavedEdits(false)
+            router.push('/')
+          }
+        }}
+        className="text-sm text-muted-foreground hover:underline mb-4 inline-block"
+      >
         &larr; Back to Library
       </Link>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
@@ -293,8 +324,10 @@ function SettingsContent() {
               </p>
             </div>
 
-            <Button onClick={handleSave}>
-              {saved ? 'Saved!' : 'Save Settings'}
+            {/* Deferred save, so the button is the only cue that edits are
+                pending — disabled when clean, marked when dirty (KAN-331). */}
+            <Button onClick={handleSave} disabled={!unsavedEdits}>
+              {saved ? 'Saved!' : unsavedEdits ? 'Save Settings *' : 'Save Settings'}
             </Button>
           </div>
         </TabsContent>
@@ -310,12 +343,15 @@ function SettingsContent() {
             <KeymapSettings
               overrides={settings.keymapOverrides ?? {}}
               onChange={(overrides) => {
-                const updated = { ...settings, keymapOverrides: overrides }
-                setSettings(updated)
-                // Auto-save keymap changes
+                setSettings({ ...settings, keymapOverrides: overrides })
+                // Auto-save keymap changes. Persist ONLY the key this tab owns:
+                // `settings` may still carry unconfirmed General edits, and
+                // updateSettings merges the partial over the stored copy, so
+                // passing the whole object would commit — and sync — values the
+                // user never clicked Save on (KAN-331).
                 import('@/lib/services/settings-service').then(({ SettingsService }) => {
                   const svc = new SettingsService()
-                  svc.updateSettings(updated)
+                  svc.updateSettings({ keymapOverrides: overrides })
                   window.dispatchEvent(new Event('keymap-changed'))
                 }).catch((err) => {
                   toast.error('Failed to save keymap', {
