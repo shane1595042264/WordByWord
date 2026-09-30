@@ -152,3 +152,15 @@
 .animate-celebration-pop {
   animation: celebration-pop 0.5s ease-out forwards;
 }
+
+/* Honour the OS reduce-motion preference for the book-completion celebration.
+   Must stay unlayered here: Tailwind v4 emits utilities into @layer utilities, and
+   unlayered CSS wins over layered CSS, so a motion-reduce:animate-none utility would
+   lose to the unlayered .animate-confetti-fall / .animate-celebration-pop rules above. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-confetti-fall,
+  .animate-celebration-pop,
+  .animate-bounce {
+    animation: none;
+  }
+}

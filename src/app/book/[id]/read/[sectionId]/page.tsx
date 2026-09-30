@@ -536,6 +536,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (bookJustCompleted) setShowCelebration(true)
   }, [refreshReadStatus])
 
+  const handleCelebrationDismiss = useCallback(() => setShowCelebration(false), [])
+
   // Whether the text pane is showing real section content rather than a
   // skeleton, the parse-error panel or the "no extractable text layer" empty
   // state. Mirrors the branch order of the text pane's JSX below — all of
@@ -942,7 +944,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       {showCelebration && book && (
         <BookCompleteCelebration
           bookTitle={book.title}
-          onDismiss={() => setShowCelebration(false)}
+          onDismiss={handleCelebrationDismiss}
         />
       )}
     </div>
