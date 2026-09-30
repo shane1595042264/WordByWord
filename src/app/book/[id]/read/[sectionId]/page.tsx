@@ -440,7 +440,18 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         const { NibDocument: NibDoc } = await import('@/lib/nib')
         const doc = NibDoc.fromData(docData)
         if (!cancelled) setNibDocument(doc)
-      })()
+      })().catch((err: unknown) => {
+        // Without this the branch had no rejection path at all: nibDocument
+        // stayed null with parseError false, so the text pane sat on
+        // <NibTextViewerSkeleton /> forever and textContentReady never armed
+        // auto-track. Setting parseError drops the chain through to TextViewer,
+        // which still has sectionText (extractedText, or the raw markdown).
+        reportLazyImportError('reader richContent markdown parse', err)
+        if (cancelled) return
+        setNibDocument(null)
+        setParseError(true)
+        toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+      })
       return () => { cancelled = true }
     }
 
