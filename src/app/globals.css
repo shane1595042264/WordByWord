@@ -164,3 +164,108 @@
     animation: none;
   }
 }
+
+/* ── PDF text layer (reader PDF view) ─────────────────────────────────────────
+   pdf.js draws each page onto a <canvas>; on its own that is pixels, so text
+   can't be selected and the vim engine has nothing to put a cursor on. The
+   text layer (src/lib/pdf-text) lays pdf.js's transparent text spans over the
+   canvas — one absolutely positioned span per text item, each split into
+   inline .pdf-word children. These rules are adapted from pdfjs-dist's
+   web/pdf_viewer.css .textLayer block: pdf.js writes left/top in % and the
+   --font-height / --scale-x / --rotate custom properties onto each span and
+   sizes the layer itself from --total-scale-factor (set by the renderer and
+   re-derived on resize), so the geometry below has to be exactly this. Kept
+   unlayered so nothing in Tailwind's layers can override the positioning. */
+.pdf-text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  text-align: initial;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 1;
+  color-scheme: only light;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  /* setLayerDimensions() rounds the layer size with these when CSS round() exists */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+
+.pdf-text-layer :is(span, br):not(.pdf-word) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer > :not(.markedContent),
+.pdf-text-layer .markedContent span:not(.markedContent):not(.pdf-word) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text-layer .markedContent {
+  display: contents;
+}
+
+/* Word spans flow inline inside their (absolutely positioned) text item so the
+   item's scaleX transform keeps them on the glyphs; they only carry colour. */
+.pdf-text-layer .pdf-word {
+  color: transparent;
+  border-radius: 2px;
+}
+
+.pdf-text-layer ::selection {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+/* Vim selection (sentence / visual / line) and the block cursor — same hues as
+   NibTextViewer's bg-blue-500/25 and bg-yellow-400/40 so the two panes match. */
+.pdf-text-layer .pdf-word-selected {
+  background: rgba(59, 130, 246, 0.28);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+}
+
+.pdf-text-layer .pdf-word-cursor {
+  background: rgba(250, 204, 21, 0.55);
+  box-shadow: 0 0 0 1px rgba(202, 138, 4, 0.9);
+}
+
+/* pdf.js's TextLayer measures glyph ascent on a 30x30 canvas it appends to
+   <body> once per page load (class hiddenCanvasElement). pdf_viewer.css hides
+   it; we don't import that stylesheet, so without this rule an opaque square
+   sits below the reader and adds a window scrollbar. */
+.hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Pages stored with /Rotate 90|180|270: pdf.js lays the text layer out
+   unrotated and stamps data-main-rotation on it, relying on these transforms
+   (from pdf_viewer.css) to turn the whole box onto the rotated canvas. */
+.pdf-text-layer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.pdf-text-layer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.pdf-text-layer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}

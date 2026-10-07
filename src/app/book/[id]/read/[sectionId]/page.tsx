@@ -19,16 +19,35 @@ import { BookCompleteCelebration } from '@/components/reader/book-complete-celeb
 import { RelativeLineNumbers } from '@/components/reader/relative-line-numbers'
 import { Button } from '@/components/ui/button'
 import { useVimMode, getEffectiveRulebook } from '@/lib/vim'
+import { EDGE_DELTA } from '@/lib/vim/use-vim-mode'
 import { NibService } from '@/lib/services/nib-service'
 import { BookRepository } from '@/lib/repositories'
+import { resolvePdfPageNav, clampPage } from '@/lib/reader/page-navigation'
+import type { PdfTextCursorHandle } from '@/lib/pdf-text/types'
 import type { NibDocument } from '@/lib/nib'
 import type { VimRule } from '@/lib/vim'
+
+/**
+ * The slice of a viewer handle the vim callbacks drive. NibTextViewer (text and
+ * side-by-side views) and the PDF text cursor (PDF view) both implement it, so
+ * the page can hand each keystroke to whichever pane is on screen.
+ */
+type VimTarget = Pick<NibTextViewerHandle,
+  | 'selectWordByDelta' | 'selectSentenceByDelta' | 'selectCurrentLine' | 'selectToEnd' | 'selectToStart'
+  | 'getSelectedText' | 'clearVimSelection' | 'confirmSelection' | 'selectWordVertical' | 'selectSentenceVertical'
+>
 
 export default function ReaderPage({ params }: { params: Promise<{ id: string; sectionId: string }> }) {
   const { id: bookId, sectionId } = use(params)
   const router = useRouter()
-  /** Restore params from Continue Reading (read once, lazily, from the URL) */
-  const restoreRef = useRef<{ scrollProgress: number | null; wordIndex: number | null; applied: boolean } | null>(null)
+  /**
+   * Restore params read lazily from the URL: `sp`/`wi` from Continue Reading,
+   * `page` from PDF view's Next/Prev when it crosses into another section.
+   * Keyed by sectionId because this component stays mounted across section
+   * navigation — the params of the section we arrived from must not apply to
+   * the one we moved to.
+   */
+  const restoreRef = useRef<{ forSectionId: string; scrollProgress: number | null; wordIndex: number | null; page: number | null; applied: boolean; pageApplied: boolean } | null>(null)
   /**
    * Parsed on first use from inside the restore effects, NOT during the initial
    * render. Arriving here via a client-side router.push — which is what the
@@ -36,22 +55,26 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
    * before the pushed URL is committed to window.location, so an
    * initial-render parse saw an empty search string and latched both params to
    * null forever. Effects run after the commit, so by then the query string is
-   * there. Still parsed exactly once: a mid-read re-render must not yank the
-   * reader back to the arrival position.
+   * there. Still parsed exactly once per section: a mid-read re-render must not
+   * yank the reader back to the arrival position.
    */
   const getRestore = useCallback(() => {
-    if (restoreRef.current === null) {
+    if (restoreRef.current === null || restoreRef.current.forSectionId !== sectionId) {
       const qs = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+      const pageParam = qs?.get('page') ? Number(qs.get('page')) : null
       restoreRef.current = {
+        forSectionId: sectionId,
         scrollProgress: qs?.get('sp') ? Number(qs.get('sp')) : null,
         wordIndex: qs?.get('wi') ? Number(qs.get('wi')) : null,
+        page: pageParam != null && Number.isFinite(pageParam) ? pageParam : null,
         applied: false,
+        pageApplied: false,
       }
     }
     return restoreRef.current
-  }, [])
+  }, [sectionId])
   const {
-    book, section, chapterSections,
+    book, section, chapterSections, allBookSections,
     viewMode, setViewMode,
     readingMode, setReadingMode,
     prevSection, nextSection,
@@ -67,6 +90,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const [showLineNumbers, setShowLineNumbers] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const nibTextViewerRef = useRef<NibTextViewerHandle>(null)
+  /** The PDF view's word cursor (set by PDFViewer while PDF view is on screen). */
+  const pdfCursorRef = useRef<PdfTextCursorHandle | null>(null)
   const yankFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [effectiveRulebook, setEffectiveRulebook] = useState<VimRule[]>([])
   const [cursorLine, setCursorLine] = useState(0)
@@ -102,27 +127,49 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }, (err) => reportLazyImportError('reader keymap load', err))
   }, [])
 
-  // ── Vim engine (always enabled for text and side-by-side modes) ──
+  // ── Vim engine (every view: text and side-by-side drive NibTextViewer, PDF view drives the text-layer cursor) ──
+  // EPUBs have no PDF, so their pane is always the text viewer whatever viewMode says.
+  const hasPdf = !!book?.pdfBlob
+  const isPdfPane = viewMode === 'pdf' && hasPdf
+  const isPdfPaneRef = useRef(isPdfPane)
+  isPdfPaneRef.current = isPdfPane
+  /** The handle the vim callbacks should talk to right now. */
+  const vimTarget = useCallback((): VimTarget | null => (
+    isPdfPaneRef.current ? pdfCursorRef.current : nibTextViewerRef.current
+  ), [])
+  /** The pane the vim scroll motions (d/u/Ctrl+E/Ctrl+Y/gg/G) should move. */
+  const vimScrollRef = useMemo<React.RefObject<HTMLElement | null>>(() => ({
+    get current() { return isPdfPane ? pdfScrollRef.current : textScrollRef.current },
+  }), [isPdfPane])
+
   const vim = useVimMode({
-    enabled: viewMode === 'text' || viewMode === 'side-by-side',
-    scrollRef: textScrollRef,
+    enabled: true,
+    scrollRef: vimScrollRef,
     onSelectWord: useCallback((delta: number) => {
-      nibTextViewerRef.current?.selectWordByDelta(delta)
-    }, []),
+      // gg / G in PDF view: the engine has already started a smooth scroll to
+      // the pane's edge, and PDF pages render lazily, so moving the cursor now
+      // would clamp it to the last RENDERED word and abort that scroll. Let
+      // the cursor land once the pane has settled and the edge page exists.
+      if (isPdfPaneRef.current && Math.abs(delta) >= EDGE_DELTA) {
+        pdfCursorRef.current?.requestEdgeSelection(delta > 0 ? 1 : -1)
+        return
+      }
+      vimTarget()?.selectWordByDelta(delta)
+    }, [vimTarget]),
     onSelectSentence: useCallback((delta: number) => {
-      nibTextViewerRef.current?.selectSentenceByDelta(delta)
-    }, []),
+      vimTarget()?.selectSentenceByDelta(delta)
+    }, [vimTarget]),
     onSelectLine: useCallback(() => {
-      nibTextViewerRef.current?.selectCurrentLine()
-    }, []),
+      vimTarget()?.selectCurrentLine()
+    }, [vimTarget]),
     onSelectToEnd: useCallback(() => {
-      nibTextViewerRef.current?.selectToEnd()
-    }, []),
+      vimTarget()?.selectToEnd()
+    }, [vimTarget]),
     onSelectToStart: useCallback(() => {
-      nibTextViewerRef.current?.selectToStart()
-    }, []),
+      vimTarget()?.selectToStart()
+    }, [vimTarget]),
     onYank: useCallback(() => {
-      const text = nibTextViewerRef.current?.getSelectedText()
+      const text = vimTarget()?.getSelectedText()
       if (text) {
         if (yankFlashTimerRef.current) clearTimeout(yankFlashTimerRef.current)
         navigator.clipboard.writeText(text).then(() => {
@@ -148,19 +195,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         setYankFlash('Nothing selected to copy')
         yankFlashTimerRef.current = setTimeout(() => setYankFlash(''), 1500)
       }
-    }, []),
+    }, [vimTarget]),
     onClearSelection: useCallback(() => {
-      nibTextViewerRef.current?.clearVimSelection()
-    }, []),
+      vimTarget()?.clearVimSelection()
+    }, [vimTarget]),
     onConfirmSelection: useCallback(() => {
-      nibTextViewerRef.current?.confirmSelection()
-    }, []),
+      vimTarget()?.confirmSelection()
+    }, [vimTarget]),
     onSelectWordVertical: useCallback((direction: number) => {
-      nibTextViewerRef.current?.selectWordVertical(direction)
-    }, []),
+      vimTarget()?.selectWordVertical(direction)
+    }, [vimTarget]),
     onSelectSentenceVertical: useCallback((direction: number) => {
-      nibTextViewerRef.current?.selectSentenceVertical(direction)
-    }, []),
+      vimTarget()?.selectSentenceVertical(direction)
+    }, [vimTarget]),
     rulebook: effectiveRulebook.length > 0 ? effectiveRulebook : undefined,
   })
 
@@ -168,85 +215,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => () => {
     if (yankFlashTimerRef.current) clearTimeout(yankFlashTimerRef.current)
   }, [])
-
-  // ── PDF mode: Vim-style scroll keybindings (Ctrl+E, Ctrl+Y, d, u, gg, G) ──
-  const lastPdfGTime = useRef(0)
-  useEffect(() => {
-    if (viewMode !== 'pdf') return
-    const LINE_HEIGHT = 24
-    const GG_TIMEOUT = 500
-
-    const handlePdfKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
-
-      const el = pdfScrollRef.current
-      if (!el) return
-
-      // Ctrl+E — scroll down one line
-      if (e.ctrlKey && e.key === 'e') {
-        e.preventDefault()
-        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
-        return
-      }
-      // Ctrl+Y — scroll up one line
-      if (e.ctrlKey && e.key === 'y') {
-        e.preventDefault()
-        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
-        return
-      }
-
-      // Block other Ctrl/Meta/Alt combos
-      if (e.ctrlKey || e.metaKey || e.altKey) return
-
-      // j — scroll down one line
-      if (e.key === 'j') {
-        e.preventDefault()
-        el.scrollBy({ top: LINE_HEIGHT, behavior: 'smooth' })
-        return
-      }
-      // k — scroll up one line
-      if (e.key === 'k') {
-        e.preventDefault()
-        el.scrollBy({ top: -LINE_HEIGHT, behavior: 'smooth' })
-        return
-      }
-
-      // d — half-page down
-      if (e.key === 'd') {
-        e.preventDefault()
-        el.scrollBy({ top: el.clientHeight * 0.5, behavior: 'smooth' })
-        return
-      }
-      // u — half-page up
-      if (e.key === 'u') {
-        e.preventDefault()
-        el.scrollBy({ top: -el.clientHeight * 0.5, behavior: 'smooth' })
-        return
-      }
-      // G — scroll to bottom
-      if (e.key === 'G' && e.shiftKey) {
-        e.preventDefault()
-        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-        return
-      }
-      // gg — scroll to top (double-tap g)
-      if (e.key === 'g' && !e.shiftKey) {
-        const now = Date.now()
-        if (now - lastPdfGTime.current < GG_TIMEOUT) {
-          e.preventDefault()
-          el.scrollTo({ top: 0, behavior: 'smooth' })
-          lastPdfGTime.current = 0
-          return
-        }
-        lastPdfGTime.current = now
-        e.preventDefault()
-        return
-      }
-    }
-    window.addEventListener('keydown', handlePdfKey)
-    return () => window.removeEventListener('keydown', handlePdfKey)
-  }, [viewMode])
 
   // Compute effective progress: cursor line / last text line for text modes,
   // text-side scroll for side-by-side, PDF scroll for PDF mode
@@ -320,12 +288,32 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Reset page/progress when section changes, resume from lastPageViewed if available
   useEffect(() => {
     if (section) {
-      // Clamp lastPageViewed to valid bounds to prevent stale/corrupt values
-      // from leaving currentPage beyond navEndPage (which disables the Next button)
-      const saved = section.lastPageViewed
-      const validPage = saved != null
-        ? Math.max(section.startPage, Math.min(saved, section.endPage))
-        : section.startPage
+      // A `?page=N` arrival — PDF view's Next/Prev crossing a section boundary —
+      // names the exact page to open on; it beats the section's saved page.
+      const restore = getRestore()
+      let validPage: number
+      if (restore.page != null && !restore.pageApplied) {
+        validPage = clampPage(restore.page, section)
+        restore.pageApplied = true
+        // One-shot: drop the param from the address bar so a reload or
+        // Back/Forward resumes from the saved position instead of re-opening
+        // the arrival page. (restore.page stays set in the ref so this
+        // section's scroll-percent restore still knows to stand down.)
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href)
+          if (url.searchParams.has('page')) {
+            url.searchParams.delete('page')
+            window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+          }
+        }
+      } else {
+        // Clamp lastPageViewed to valid bounds to prevent stale/corrupt values
+        // from leaving currentPage beyond navEndPage (which disables the Next button)
+        const saved = section.lastPageViewed
+        validPage = saved != null
+          ? Math.max(section.startPage, Math.min(saved, section.endPage))
+          : section.startPage
+      }
       setCurrentPage(validPage)
       setSectionProgress(section.scrollProgress ?? 0)
       // Mark currentPage as now belonging to this section, gating the persist effect.
@@ -341,6 +329,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     const restore = getRestore()
     // Skip if Continue Reading scroll param exists (handled via currentPage already)
     if (restore && !restore.applied && restore.scrollProgress != null) return
+    // A `?page=N` arrival already opened the viewer on page N — restoring the
+    // section's old scroll percent would drag the reader off the page they asked for.
+    if (restore && restore.page != null) return
 
     const savedProgress = section.scrollProgress
     if (savedProgress == null || savedProgress <= 0) return
@@ -389,12 +380,35 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // In side-by-side mode the PDF renders up to effectiveEndPage, so navigation
   // must match — otherwise the toolbar shows more pages than the user can reach.
   const navEndPage = viewMode === 'side-by-side' ? effectiveEndPage : endPage
-  const canGoPrev = isTextMode ? !!prevSection : (currentPage > startPage || !!prevSection)
-  const canGoNext = isTextMode ? !!nextSection : (currentPage < navEndPage || !!nextSection)
+  // PDF view: Next/Prev mean "the next/previous PDF page", crossing section
+  // boundaries when needed. Sections overlap on pages (a sub-section often
+  // starts mid-page), so "next section at its start page" used to re-show the
+  // page already on screen. The resolver targets the page itself and picks the
+  // section that owns it; a cross-section hop carries the page in `?page=`.
+  const pdfPrevTarget = useMemo(
+    () => (isPdfPane ? resolvePdfPageNav(allBookSections, sectionId, currentPage, -1) : null),
+    [isPdfPane, allBookSections, sectionId, currentPage],
+  )
+  const pdfNextTarget = useMemo(
+    () => (isPdfPane ? resolvePdfPageNav(allBookSections, sectionId, currentPage, 1) : null),
+    [isPdfPane, allBookSections, sectionId, currentPage],
+  )
+  const canGoPrev = isTextMode ? !!prevSection : isPdfPane ? pdfPrevTarget !== null : (currentPage > startPage || !!prevSection)
+  const canGoNext = isTextMode ? !!nextSection : isPdfPane ? pdfNextTarget !== null : (currentPage < navEndPage || !!nextSection)
+
+  const applyPdfNav = useCallback((target: typeof pdfNextTarget) => {
+    if (!target) return
+    if (target.kind === 'page') setCurrentPage(target.page)
+    else router.push(`/book/${bookId}/read/${target.sectionId}?page=${target.page}`)
+  }, [bookId, router])
 
   const goToPrevPage = useCallback(() => {
     if (isTextMode) {
       if (prevSection) router.push(`/book/${bookId}/read/${prevSection.id}`)
+      return
+    }
+    if (isPdfPane) {
+      applyPdfNav(pdfPrevTarget)
       return
     }
     if (currentPage > startPage) {
@@ -402,11 +416,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     } else if (prevSection) {
       router.push(`/book/${bookId}/read/${prevSection.id}`)
     }
-  }, [isTextMode, currentPage, startPage, prevSection, bookId, router])
+  }, [isTextMode, isPdfPane, applyPdfNav, pdfPrevTarget, currentPage, startPage, prevSection, bookId, router])
 
   const goToNextPage = useCallback(() => {
     if (isTextMode) {
       if (nextSection) router.push(`/book/${bookId}/read/${nextSection.id}`)
+      return
+    }
+    if (isPdfPane) {
+      applyPdfNav(pdfNextTarget)
       return
     }
     if (currentPage < navEndPage) {
@@ -414,7 +432,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     } else if (nextSection) {
       router.push(`/book/${bookId}/read/${nextSection.id}`)
     }
-  }, [isTextMode, currentPage, navEndPage, nextSection, bookId, router])
+  }, [isTextMode, isPdfPane, applyPdfNav, pdfNextTarget, currentPage, navEndPage, nextSection, bookId, router])
 
   const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page)
@@ -599,13 +617,33 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     }
   }, [viewMode, section?.id, textContentReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The text pane is what actually renders for 'text' mode and for books with
-  // no PDF at all; other modes render their own viewer, so readiness there is
-  // determined inside the hook.
-  const autoTrackContentReady = viewMode === 'text' || !book?.pdfBlob ? textContentReady : true
+  // Which pane is actually on screen. Books with no PDF (EPUBs) always render
+  // the text pane whatever viewMode says, so track that one.
+  const autoTrackViewMode = hasPdf ? viewMode : 'text'
+  // The text pane is what renders for text view and PDF-less books; the
+  // side-by-side text pane shows the nib viewer or the plain text viewer, and
+  // a skeleton only while neither is available; PDF view checks its own
+  // rendered pages inside the hook.
+  const autoTrackContentReady = autoTrackViewMode === 'text'
+    ? textContentReady
+    : autoTrackViewMode === 'side-by-side'
+      ? (!!nibDocument || !!sectionText)
+      : true
 
-  // Only track after loading completes to ensure scroll containers are mounted
-  useAutoTrack(sectionId, loading ? true : (section?.isRead ?? false), handleMarkedRead, contentRef, textScrollRef, viewMode, pdfScrollRef, autoTrackContentReady)
+  // Position-based read tracking (there is no timer): the section is read when
+  // the reader reaches the end of its content in whichever pane they are using.
+  // Only tracks after loading completes so the scroll containers are mounted.
+  useAutoTrack({
+    sectionId,
+    isRead: loading ? true : (section?.isRead ?? false),
+    onMarkedRead: handleMarkedRead,
+    viewMode: autoTrackViewMode,
+    readingMode,
+    textScrollRef,
+    pdfScrollRef,
+    contentReady: autoTrackContentReady,
+    pdfOnLastPage: currentPage >= endPage,
+  })
 
   // ── Scroll progress persistence (debounced; shared by PDF and text modes) ──
   // Two timers, not one: in side-by-side both writers are live at once (the text
@@ -852,16 +890,26 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
             could still flip viewMode — fall through to Text view in that case.
           */}
           {viewMode === 'pdf' && book.pdfBlob && (
-            <PDFViewer
-              pdfBlob={book.pdfBlob}
-              startPage={section.startPage}
-              endPage={endPage}
-              readingMode={readingMode}
-              currentPage={currentPage}
-              onPageChange={handlePageChange}
-              onPageProgress={handlePageProgress}
-              scrollRef={pdfScrollRef}
-            />
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <PDFViewer
+                  pdfBlob={book.pdfBlob}
+                  startPage={section.startPage}
+                  endPage={endPage}
+                  readingMode={readingMode}
+                  currentPage={currentPage}
+                  onPageChange={handlePageChange}
+                  onPageProgress={handlePageProgress}
+                  scrollRef={pdfScrollRef}
+                  enableTextCursor
+                  textCursorRef={pdfCursorRef}
+                  vimMode={vim.mode}
+                  bookTitle={book.title}
+                  sectionTitle={section.title}
+                />
+              </div>
+              <VimStatusBar mode={vim.mode} countBuffer={vim.countBuffer} enabled={true} flashMessage={yankFlash} />
+            </div>
           )}
           {(viewMode === 'text' || !book.pdfBlob) && (
             <div className="flex-1 flex flex-col overflow-hidden">

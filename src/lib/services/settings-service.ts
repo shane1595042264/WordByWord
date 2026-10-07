@@ -35,8 +35,10 @@ export const TARGET_LANGUAGES: { code: TargetLanguage; label: string; native: st
 
 export interface AppSettings {
   anthropicApiKey: string | null
+  /** @deprecated no longer drives behaviour; kept for sync back-compat */
   autoReadThresholdSeconds: number
   defaultViewMode: 'pdf' | 'text' | 'side-by-side'
+  /** @deprecated no longer drives behaviour; kept for sync back-compat */
   trackingMode: 'timer' | 'endofpage'
   readingMode: 'scroll' | 'flip'
   keymapOverrides: KeymapOverrides

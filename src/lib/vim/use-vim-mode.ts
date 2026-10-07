@@ -6,6 +6,13 @@ import { findRule, RULEBOOK } from './rulebook'
 
 const DEFAULT_LINE_HEIGHT = 24
 const GG_TIMEOUT = 500
+/**
+ * Sentinel delta the engine hands to onSelectWord for gg / G: "all the way" to
+ * the first/last word. Exported so a pane whose words render lazily (the PDF
+ * view) can recognise the edge motion and resolve it after the scroll settles
+ * instead of clamping to whatever happens to be rendered.
+ */
+export const EDGE_DELTA = 999999
 
 /**
  * True when the user has a real, non-empty DOM selection (e.g. a mouse drag-select).
@@ -132,7 +139,7 @@ export function useVimMode({
         } else {
           // In normal/sentence, scroll to top and move cursor to first word
           dispatchScrollTo(-1)
-          onSelectWord?.(-999999)
+          onSelectWord?.(-EDGE_DELTA)
         }
         setCountBuffer('')
         lastGTime.current = 0
@@ -163,9 +170,9 @@ export function useVimMode({
         dispatchScrollTo(dir)
         // Also move word cursor to top/bottom
         if (dir < 0) {
-          onSelectWord?.(-999999)
+          onSelectWord?.(-EDGE_DELTA)
         } else {
-          onSelectWord?.(999999)
+          onSelectWord?.(EDGE_DELTA)
         }
         break
       }

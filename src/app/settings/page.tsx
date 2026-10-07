@@ -8,7 +8,6 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import { AdminSettings } from '@/components/settings/admin-settings'
@@ -189,50 +188,6 @@ function SettingsContent() {
                 Required for AI-powered section splitting. Your key stays in your browser.
               </p>
             </div>
-
-            <div className="space-y-2">
-              <Label id="tracking-mode-label">Reading tracking mode</Label>
-              <div className="flex gap-2" role="radiogroup" aria-labelledby="tracking-mode-label">
-                <Button
-                  variant={settings.trackingMode === 'timer' ? 'default' : 'outline'}
-                  size="sm"
-                  role="radio"
-                  aria-checked={settings.trackingMode === 'timer'}
-                  onClick={() => editSettings({ ...settings, trackingMode: 'timer' })}
-                >
-                  Timer
-                </Button>
-                <Button
-                  variant={settings.trackingMode === 'endofpage' ? 'default' : 'outline'}
-                  size="sm"
-                  role="radio"
-                  aria-checked={settings.trackingMode === 'endofpage'}
-                  onClick={() => editSettings({ ...settings, trackingMode: 'endofpage' })}
-                >
-                  End of Page
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Timer: marks as read after a set time. End of Page: marks as read when you scroll to the bottom.
-              </p>
-            </div>
-
-            {settings.trackingMode === 'timer' && (
-              <div className="space-y-2">
-                <Label id="auto-read-threshold-label">Auto-read threshold: {settings.autoReadThresholdSeconds}s</Label>
-                <Slider
-                  aria-labelledby="auto-read-threshold-label"
-                  value={[settings.autoReadThresholdSeconds]}
-                  onValueChange={([v]) => editSettings({ ...settings, autoReadThresholdSeconds: v })}
-                  min={1}
-                  max={30}
-                  step={1}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Sections are marked as read after viewing for this many seconds.
-                </p>
-              </div>
-            )}
 
             <div className="space-y-2">
               <Label id="default-view-mode-label">Default view mode</Label>

@@ -8,6 +8,33 @@
 
 Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
 
+### 2026-10-06 — PDF view: selectable text layer, the vim cursor, and page-based Next/Prev
+
+PDF view used to be a stack of bare `<canvas>` pages: nothing on them could be selected, and the vim keys only scrolled (an ad-hoc handler in the reader page bound j/k/d/u/gg/G/Ctrl+E/Ctrl+Y to `scrollBy`). The user asked for text view's behaviour in PDF view — "highlight text and navigate the text like in text mode, with vim commands".
+
+- **Every rendered PDF page now gets a pdf.js text layer** (`src/lib/pdf-text/text-layer.ts`, styled by `.pdf-text-layer` in `globals.css`): transparent text spans over the canvas, each text item split into one `span.pdf-word` per word. Native mouse selection and copy work; the vim yank path defers to a native selection exactly as text view does.
+- **PDF view drives the same vim engine as text view** through `PdfTextCursor` (`src/lib/pdf-text/cursor.ts`), which implements NibTextViewer's handle over those word spans: h/l/w/b words, j/k nearest word on the line above/below, `s` sentence mode (sentences split word-by-word with the same rule as NibParser), `v` visual mode with anchor-based range extension, `V` line, `G`/`gg`, `y` yank, Enter → the word info panel (translation / vocab), click → cursor + panel. The reader page dispatches each vim callback to whichever pane is on screen (`vimTarget()` in `page.tsx`); the old PDF-only key handler is gone. Side-by-side keeps the text pane as the cursor owner — its PDF pane gets the selectable text layer only.
+- **Next/Prev in PDF view mean "the next/previous PDF page"**, resolved by `resolvePdfPageNav` (`src/lib/reader/page-navigation.ts`) over the whole book's sections. Sections overlap on pages (a sub-section often starts mid-page: "7 Heaps — Introduction" is p.37, "7.1" is p.37–38), so the old "next section at its start page" re-showed the page already on screen. The resolver targets the page itself, picks the section that owns it, skips sections living entirely on pages already shown, and carries a cross-section hop as `?page=N` — which the reader honours over the section's saved `lastPageViewed` and over its saved scroll percent. The PDF viewer opens directly on the controlled page (no top-of-section flash) and reports the section's last page whenever the pane is scrolled to the bottom, so a short final page can no longer snap the toolbar back to the previous one.
+
+**Why:** the whole point of the app is atomic, context-aware text elements (Section 1). A PDF page the reader can't select, move through or translate from is the one surface where that promise didn't hold.
+
+**Don't undo this without explicit user consent:** don't drop the text layer, don't re-add a PDF-only scroll key handler in `page.tsx`, and don't make PDF Next/Prev section-based again.
+
+### 2026-10-06 — Reading tracking is position-based only; timer mode is retired
+
+A section used to be auto-marked read on a clock: the default `trackingMode: 'timer'` fired `autoReadThresholdSeconds` (5s) after the section opened, wherever the reader was on the page — "marked read when I'm 30% down the page — not good, we want it based on where the reader is at." Side-by-side view in `'endofpage'` mode was also watching the reader's outer `overflow-hidden` wrapper, which never scrolls, so it took the "fits without scrolling" shortcut the moment the section opened. Both are gone.
+
+- **A section is read when the reader reaches the end of its content.** Decided per view in `src/hooks/use-auto-track.ts` (`useAutoTrack(options)`), with no settings lookup at all:
+  - **text view and side-by-side view** — the text pane is scrolled to the bottom (within 50px) or fits without scrolling, and real content (not a skeleton / error / empty state) is on screen;
+  - **PDF scroll mode** — the PDF pane is scrolled to the bottom of the section's pages, or they fit without scrolling once pdf.js has rendered at least one page;
+  - **PDF flip mode** — the page on screen is the section's last page (scroll position is meaningless in an overflow-hidden single-page box).
+- `trackingMode` and `autoReadThresholdSeconds` **remain in `AppSettings`, `SYNCED_SETTING_KEYS` and the `POST /api/sync` payload** for back-compat with older clients and the existing `user_settings` columns, but they no longer do anything and are hidden from the Settings page. Don't wire them back into the hook; don't drop them from the sync payload without a matching backend change.
+- Manual mark read / unread is untouched.
+
+**Why the change:** time spent with a section open says nothing about whether it was read. Position does.
+
+**Don't undo this without explicit user consent:** don't reintroduce a timer, a "tracking mode" setting, or any auto-mark-read path that doesn't depend on where the reader is.
+
 ### 2026-09-05 — Settings now sync to the cloud (they used to be localStorage-only)
 
 `bbb-settings` was a purely device-local blob: every sync push hardcoded `settings: null` and the pull discarded `serverChanges.settings`, so prod's `user_settings` table held 0 rows for 22 users and every preference plus all keymap overrides reset on a new device (KAN-288). Six settings now round-trip through `POST /api/sync`: `autoReadThresholdSeconds`, `defaultViewMode`, `readingMode`, `trackingMode`, `targetLanguage`, `keymapOverrides`.
@@ -81,7 +108,7 @@ The crown jewel. Every PDF gets parsed into a **word-level document object model
 - Book structure is extracted from PDF outline (TOC) or built by AI vision (Claude API, 10 pages/batch).
 - Every section has a `startPage`/`endPage`, `isRead`, `readAt`, `lastPageViewed`, `scrollProgress`.
 - Sections can be read in any order. Progress = sections read / total sections.
-- **Auto-tracking:** configurable timer (default 5s) — view a section long enough, it's marked read. Also supports manual toggle.
+- **Auto-tracking:** configurable timer (default 5s) — view a section long enough, it's marked read. Also supports manual toggle. *(superseded 2026-10-06 — see Section 0: tracking is position-based, the timer is retired.)*
 - Heatmap grid on the book dashboard shows at-a-glance coverage (green = read, gray = unread).
 
 ### 2.3 — Three Reader Modes
@@ -215,7 +242,7 @@ Each paragraph carries a `blockType`: `body | introduction | blockquote | list-i
 | `src/lib/services/settings-service.ts` | User settings (localStorage) |
 | `src/hooks/use-reader.ts` | Reader state, page tracking, mode persistence |
 | `src/hooks/use-shortcuts.tsx` | Keyboard shortcut system |
-| `src/hooks/use-auto-track.ts` | Auto-mark-read timer |
+| `src/hooks/use-auto-track.ts` | Auto-mark-read timer (superseded 2026-10-06 — see Section 0: position-based, no timer) |
 | `src/components/reader/nib-text-viewer.tsx` | Word-level interactive text display |
 | `src/components/reader/pdf-viewer.tsx` | PDF rendering (scroll + flip modes) |
 | `src/components/reader/reader-toolbar.tsx` | Toolbar: modes, page nav, labels toggle |
@@ -229,10 +256,10 @@ Each paragraph carries a `blockType`: `body | introduction | blockquote | list-i
 
 Stored in `localStorage` as `bbb-settings`:
 - `anthropicApiKey` — user-provided Claude API key
-- `autoReadThresholdSeconds` — seconds before auto-marking read (default 5)
+- `autoReadThresholdSeconds` — seconds before auto-marking read (default 5) *(superseded 2026-10-06 — see Section 0: no longer used, kept only for sync back-compat)*
 - `defaultViewMode` — `'pdf' | 'text' | 'side-by-side'`
 - `readingMode` — `'scroll' | 'flip'`
-- `trackingMode` — `'timer' | 'endofpage'`
+- `trackingMode` — `'timer' | 'endofpage'` *(superseded 2026-10-06 — see Section 0: no longer used, kept only for sync back-compat)*
 
 ---
 
@@ -262,7 +289,7 @@ Stored in `localStorage` as `bbb-settings`:
 - [x] Word-level interactive text viewer (NibTextViewer)
 - [x] Keyboard shortcuts (customizable, storable)
 - [x] Glassy tooltips + element type badges
-- [x] Auto-read tracking (timer-based)
+- [x] Auto-read tracking (timer-based) *(superseded 2026-10-06 — see Section 0: now position-based)*
 - [x] View mode + reading mode persistence
 - [x] AI book processing with priority queue
 - [x] Introduction section injection (outline tree + text parser)

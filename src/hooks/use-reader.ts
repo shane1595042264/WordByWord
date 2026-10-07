@@ -140,6 +140,8 @@ export function useReader(bookId: string, sectionId: string) {
 
   return {
     book, section, chapter, chapterSections,
+    /** Every section of the book in reading order — PDF view's page-based Next/Prev resolves against it. */
+    allBookSections,
     viewMode, setViewMode,
     readingMode, setReadingMode,
     prevSection, nextSection,

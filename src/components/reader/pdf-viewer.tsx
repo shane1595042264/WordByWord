@@ -1,7 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, type RefObject, type MutableRefObject } from 'react'
 import { toast } from 'sonner'
+import { WordInfoPanel } from '@/components/reader/word-info-panel'
+import { NibPage, type NibWord } from '@/lib/nib'
+import { PdfTextCursor } from '@/lib/pdf-text/cursor'
+import { renderPdfTextLayer, applyPdfTextLayerScale } from '@/lib/pdf-text/text-layer'
+import { PDF_TEXT_LAYER_CLASS, type PdfTextCursorHandle, type PdfSelectionInfo, type PdfVimMode } from '@/lib/pdf-text/types'
 
 /** Describes a word's position on a PDF page (in CSS pixels relative to the page wrapper) */
 export interface PDFTextPosition {
@@ -55,9 +60,44 @@ interface PDFViewerProps {
   /** The original section end page (before overlap extension). Pages after this
    *  are overlap pages and will show a "section ends" divider. */
   sectionEndPage?: number
+  /**
+   * Drive a word-level vim cursor over the text layer (PDF-only view). The
+   * reader page dispatches its vim callbacks through `textCursorRef`, exactly
+   * as it does through NibTextViewer's handle in text view. Off in
+   * side-by-side, where the text pane owns the cursor.
+   */
+  enableTextCursor?: boolean
+  /** Receives the cursor handle while `enableTextCursor` is on. */
+  textCursorRef?: MutableRefObject<PdfTextCursorHandle | null>
+  /** Current vim mode, so the cursor can anchor visual-mode ranges. */
+  vimMode?: PdfVimMode
+  /** Context for the word info panel opened from the PDF cursor. */
+  bookTitle?: string
+  sectionTitle?: string
 }
 
-export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord, pdfViewerRef, sectionEndPage }: PDFViewerProps) {
+/**
+ * Turn a PDF-cursor selection into the NibWord the info panel expects. The
+ * panel only reads the word, its sentence (text + words) and the page number,
+ * so a one-paragraph, one-sentence page is a complete context for it.
+ */
+function makePanelWord(sel: PdfSelectionInfo): NibWord {
+  const words = sel.sentenceWords.length > 0 ? sel.sentenceWords : [sel.text]
+  const page = new NibPage({
+    pageNumber: sel.pageNum,
+    header: null,
+    footer: null,
+    footnotes: [],
+    paragraphs: [{ index: 0, sentences: [{ index: 0, words: words.map((text, index) => ({ text, index })) }] }],
+    figures: [],
+    listItems: [],
+  })
+  const sentence = page.paragraphs[0].sentences[0]
+  const idx = Math.min(Math.max(sel.wordIndexInSentence, 0), sentence.words.length - 1)
+  return sentence.words[idx]
+}
+
+export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord, pdfViewerRef, sectionEndPage, enableTextCursor = false, textCursorRef, vimMode = 'normal', bookTitle, sectionTitle }: PDFViewerProps) {
   const internalRef = useRef<HTMLDivElement>(null)
   // Use a callback ref to assign to both internal and external refs
   const containerRef = internalRef
@@ -68,6 +108,93 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   const [error, setError] = useState<string | null>(null)
   const currentFlipPage = controlledPage ?? startPage
   const totalPages = endPage - startPage + 1
+  // Latest controlled page, readable from effects that deliberately don't
+  // re-run when it changes (the scroll-mode setup below honours it once, when
+  // the placeholders first exist, so a `?page=N` arrival opens ON page N).
+  const controlledPageRef = useRef(currentFlipPage)
+  controlledPageRef.current = currentFlipPage
+
+  // ── Text layer + vim cursor ──
+  // The cursor lives for as long as the viewer does; each rendered page calls
+  // refresh() so the word list follows lazy rendering.
+  const cursorRef = useRef<PdfTextCursor | null>(null)
+  const [panelSel, setPanelSel] = useState<PdfSelectionInfo | null>(null)
+  useEffect(() => {
+    if (!enableTextCursor) return
+    const container = containerRef.current
+    if (!container) return
+    const cursor = new PdfTextCursor(container, {
+      onConfirm: (sel) => setPanelSel(sel),
+      onClear: () => setPanelSel(null),
+    })
+    cursorRef.current = cursor
+    if (textCursorRef) textCursorRef.current = cursor
+    cursor.refresh()
+    return () => {
+      cursor.dispose()
+      cursorRef.current = null
+      if (textCursorRef) textCursorRef.current = null
+      setPanelSel(null)
+    }
+  }, [enableTextCursor, textCursorRef])
+
+  useEffect(() => {
+    cursorRef.current?.setMode(vimMode)
+  }, [vimMode])
+
+  // The canvas is drawn at the setup-time width and CSS-scaled to width:100%,
+  // so when the pane resizes (sidebar toggle, window) the text layer has to be
+  // told the new scale or its spans drift off the glyphs underneath.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      for (const layer of container.querySelectorAll<HTMLElement>(`.${PDF_TEXT_LAYER_CLASS}`)) {
+        const wrapper = layer.parentElement
+        if (wrapper) applyPdfTextLayerScale(layer, wrapper.clientWidth)
+      }
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [])
+
+  /**
+   * Render the selectable text layer over a freshly drawn page and let the
+   * cursor pick the words up. A text-layer failure must never take the canvas
+   * down with it — the page stays readable, just not selectable.
+   */
+  const mountTextLayer = useCallback(async (
+    wrapper: HTMLElement,
+    pdfjs: any,
+    textContent: any,
+    viewport: any,
+    pageNum: number,
+    isCancelled: () => boolean,
+  ) => {
+    try {
+      await renderPdfTextLayer(wrapper, { pdfjs, textContent, viewport, pageNum })
+    } catch (err) {
+      console.warn(`PDF text layer failed for page ${pageNum}:`, err)
+      return
+    }
+    if (isCancelled()) return
+    const cursor = cursorRef.current
+    if (cursor) {
+      cursor.refresh()
+      // First words on screen: give the reader a cursor straight away, the
+      // way text view selects its first visible word on mount. Non-scrolling
+      // on purpose — pages finish rendering in any order, and placing the
+      // cursor on an off-screen neighbour would drag the pane away from the
+      // page the reader just opened.
+      if (cursor.getVimCursorIndex() === -1) cursor.placeOnFirstVisibleWord()
+    }
+  }, [])
+
+  const panelWord = useMemo(() => (panelSel ? makePanelWord(panelSel) : null), [panelSel])
+  const handlePanelClose = useCallback(() => {
+    setPanelSel(null)
+    cursorRef.current?.clearVimSelection()
+  }, [])
 
   // Expose imperative handle for scrolling to a page
   useEffect(() => {
@@ -129,12 +256,11 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
    * screen coords (origin top-left).  We multiply item.transform by the viewport
    * transform to get the final CSS-pixel position of each text run.
    */
-  const extractTextPositions = useCallback(async (
-    page: any, // PDFPageProxy
+  const extractTextPositions = useCallback((
+    textContent: any, // result of PDFPageProxy.getTextContent(), shared with the text layer
     pageNum: number,
     viewport: any, // PageViewport
-  ): Promise<PDFTextPosition[]> => {
-    const textContent = await page.getTextContent()
+  ): PDFTextPosition[] => {
     const positions: PDFTextPosition[] = []
 
     for (const item of textContent.items) {
@@ -182,6 +308,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   const flipDocRef = useRef<any>(null)
   // Track container width for consistent scaling
   const containerWidthRef = useRef(0)
+  // The lazily imported pdfjs module, for the text layer renderer.
+  const pdfjsRef = useRef<any>(null)
+  // Last controlled page the scroll-mode effect below has already scrolled to
+  // (or that a user scroll produced), so a parent echo of the page we just
+  // reported doesn't snap the scroll position.
+  const prevControlledPageRef = useRef(currentFlipPage)
 
   // Scroll mode: create placeholders for all pages, then lazily render
   // visible + nearby pages using IntersectionObserver with a generous rootMargin
@@ -194,6 +326,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       try {
         const pdfjs = await import('pdfjs-dist')
         pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        pdfjsRef.current = pdfjs
 
         const container = containerRef.current
         if (!container || cancelled) return
@@ -202,6 +335,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         pageWrappersRef.current.clear()
         renderedPagesRef.current.clear()
         viewportInfoRef.current.clear()
+        // The word spans are gone: drop the cursor's references and any panel
+        // anchored to one of them.
+        cursorRef.current?.refresh()
+        setPanelSel(null)
 
         const containerWidth = container.clientWidth
         containerWidthRef.current = containerWidth
@@ -251,6 +388,19 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           }
         }
 
+        // Phase 1b: Open on the controlled page. A `?page=N` arrival (Next/Prev
+        // crossing a section boundary) and a resumed lastPageViewed both mount
+        // the viewer with currentPage > startPage; the placeholders already have
+        // their final heights, so the wrapper's offsetTop is exact.
+        const openOn = Math.min(Math.max(controlledPageRef.current, startPage), endPage)
+        if (openOn > startPage) {
+          const target = pageWrappersRef.current.get(openOn)
+          if (target) {
+            container.scrollTop = target.offsetTop
+            prevControlledPageRef.current = openOn
+          }
+        }
+
         // Phase 2: Use IntersectionObserver to render pages as they approach the viewport
         // rootMargin of 200% means we pre-render pages 2 viewports ahead/behind
         const observer = new IntersectionObserver(
@@ -271,11 +421,11 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           observer.observe(wrapper)
         }
 
-        // Phase 3: Eagerly render first 3 pages for instant display
-        const eagerPages = Math.min(3, endPage - startPage + 1)
-        for (let i = 0; i < eagerPages; i++) {
+        // Phase 3: Eagerly render the opening page and the two after it for
+        // instant display (the observer fills in the rest as they approach).
+        for (let pageNum = openOn; pageNum <= Math.min(endPage, openOn + 2); pageNum++) {
           if (cancelled) break
-          await renderPage(startPage + i)
+          await renderPage(pageNum)
         }
       } catch (err) {
         if (!cancelled) {
@@ -311,8 +461,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         const ctx = canvas.getContext('2d')!
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
 
-        // Extract text positions for this page
-        const positions = await extractTextPositions(page, pageNum, viewport)
+        // One getTextContent() feeds both the highlight positions and the
+        // selectable text layer.
+        const textContent = await page.getTextContent()
+        const positions = extractTextPositions(textContent, pageNum, viewport)
         textPositionsRef.current.set(pageNum, positions)
         // Store viewport info for pdfRect → viewport coordinate conversion
         viewportInfoRef.current.set(pageNum, { scale, viewport })
@@ -323,6 +475,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           wrapper.style.height = 'auto' // let canvas determine height now
           wrapper.style.backgroundColor = ''
           wrapper.appendChild(canvas)
+          await mountTextLayer(wrapper, pdfjsRef.current, textContent, viewport, pageNum, () => cancelled)
         }
       } catch (err) {
         // Mark as not rendered so it can be retried
@@ -344,10 +497,9 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         pdfDocRef.current = null
       }
     }
-  }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions])
+  }, [pdfBlob, startPage, endPage, readingMode, extractTextPositions, mountTextLayer])
 
   // Scroll mode: scroll to controlled page when it changes (Next/Prev button clicks)
-  const prevControlledPageRef = useRef(currentFlipPage)
   useEffect(() => {
     if (readingMode !== 'scroll') return
     if (currentFlipPage === prevControlledPageRef.current) return
@@ -370,26 +522,43 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     if (!container) return
 
     const handleScroll = (initial: boolean) => {
+      // Measure the page WRAPPERS, not the canvases: Phase 1 gives every
+      // wrapper its final height before any canvas is drawn, so a scroll that
+      // lands while pages are still rendering (Phase 1b opening on `?page=N`,
+      // a reader who scrolls early) still resolves to the right page. And
+      // with no wrappers at all there is nothing on screen to report: an empty
+      // pane measures as "fits, 100%, last page", which used to open sections
+      // on their final page and persist that as the reading position.
+      const wrappers = Array.from(pageWrappersRef.current.values())
+      if (wrappers.length === 0) return
       const { scrollTop, scrollHeight, clientHeight } = container
       const percent = scrollHeight <= clientHeight ? 100 : Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)
 
       // Pick the page occupying the most vertical area in the viewport.
       // "First intersecting" misreports near boundaries (a 1px sliver of
       // the previous page at the top would win).
-      const canvases = container.querySelectorAll('canvas[data-page-num]')
       const containerRect = container.getBoundingClientRect()
       let visiblePage = startPage
       let maxVisibleHeight = -1
-      for (const canvas of canvases) {
-        const rect = canvas.getBoundingClientRect()
+      for (const wrapper of wrappers) {
+        const rect = wrapper.getBoundingClientRect()
         const visibleTop = Math.max(rect.top, containerRect.top)
         const visibleBottom = Math.min(rect.bottom, containerRect.bottom)
         const visibleHeight = visibleBottom - visibleTop
         if (visibleHeight > maxVisibleHeight) {
           maxVisibleHeight = visibleHeight
-          visiblePage = Number(canvas.getAttribute('data-page-num'))
+          visiblePage = Number(wrapper.dataset.pageNum)
         }
       }
+      // Scrolled all the way down: the reader is on the last page even when a
+      // short final page can't be brought to the top and the previous page
+      // still shows more area. Without this, Next on the penultimate page
+      // scrolled to the bottom, the area heuristic reported the previous page
+      // back, and the toolbar snapped to it — "Next does nothing". Only once
+      // every page's wrapper exists and the pane overflows: a half-built or
+      // non-scrolling pane is "at the bottom" trivially.
+      const complete = wrappers.length >= totalPages
+      if (complete && scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 2) visiblePage = endPage
       // Mark this page as "scroll-originated" so the scroll-to-page effect
       // below doesn't snap the scroll back to the top of this page when the
       // parent's currentPage state updates in response to onPageProgress.
@@ -400,14 +569,27 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     // Wrapped so the DOM Event doesn't land in `initial` as a truthy value.
     const onScroll = () => handleScroll(false)
     container.addEventListener('scroll', onScroll)
-    // Check once after render — the reader hasn't scrolled yet, so this one
-    // reports the pane's mount position rather than a chosen one.
-    const timer = setTimeout(() => handleScroll(true), 500)
+    // Report once every placeholder exists — the reader hasn't scrolled yet,
+    // so this one reports the pane's mount position rather than a chosen one.
+    // Phase 1 (worker boot, getDocument, one getPage per section page) can
+    // outlast any fixed delay on a cold load or a big PDF, so poll for the
+    // wrappers instead of reporting whatever happens to be there at 500ms.
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const initialReport = () => {
+      timer = null
+      if (pageWrappersRef.current.size < totalPages) {
+        if (attempts++ < 60) timer = setTimeout(initialReport, 500)
+        return
+      }
+      handleScroll(true)
+    }
+    timer = setTimeout(initialReport, 500)
     return () => {
       container.removeEventListener('scroll', onScroll)
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
     }
-  }, [readingMode, startPage, totalPages, onPageProgress])
+  }, [readingMode, startPage, endPage, totalPages, onPageProgress])
 
   // Flip mode: load and cache the PDF document when pdfBlob changes
   useEffect(() => {
@@ -418,6 +600,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       try {
         const pdfjs = await import('pdfjs-dist')
         pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        pdfjsRef.current = pdfjs
 
         const arrayBuffer = await pdfBlob.arrayBuffer()
         const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
@@ -465,6 +648,12 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         textPositionsRef.current.clear()
         pageWrappersRef.current.clear()
         viewportInfoRef.current.clear()
+        // A page turn replaces every word span: reset the cursor (so the new
+        // page's first visible word gets it, rather than the old page's word
+        // index being clamped onto the new page) and close a panel anchored
+        // to a span that no longer exists.
+        cursorRef.current?.refresh()
+        setPanelSel(null)
 
         const containerWidth = container.clientWidth
 
@@ -489,8 +678,9 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         const ctx = canvas.getContext('2d')!
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
 
-        // Extract text positions
-        const positions = await extractTextPositions(page, currentFlipPage, viewport)
+        // Extract text positions (shared with the text layer below)
+        const textContent = await page.getTextContent()
+        const positions = extractTextPositions(textContent, currentFlipPage, viewport)
         textPositionsRef.current.set(currentFlipPage, positions)
         viewportInfoRef.current.set(currentFlipPage, { scale, viewport })
 
@@ -498,6 +688,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           pageWrapper.appendChild(canvas)
           container.appendChild(pageWrapper)
           pageWrappersRef.current.set(currentFlipPage, pageWrapper)
+          await mountTextLayer(pageWrapper, pdfjsRef.current, textContent, viewport, currentFlipPage, () => cancelled)
         }
       } catch (err) {
         if (!cancelled) {
@@ -509,7 +700,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
     }
     render()
     return () => { cancelled = true }
-  }, [pdfBlob, currentFlipPage, readingMode, extractTextPositions])
+  }, [pdfBlob, currentFlipPage, readingMode, extractTextPositions, mountTextLayer])
 
   // ── Highlight word matching ──
   // When highlightWord changes, find the matching text position on the PDF.
@@ -686,6 +877,17 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         ref={setContainerRef}
         className={readingMode === 'scroll' ? 'flex-1 overflow-auto' : 'flex-1 overflow-hidden'}
       />
+      {/* Word info panel opened from the PDF cursor (Enter / click) — only when the cursor is on */}
+      {enableTextCursor && panelSel && panelWord && (
+        <WordInfoPanel
+          word={panelWord}
+          anchorEl={panelSel.anchorEl}
+          onClose={handlePanelClose}
+          bookTitle={bookTitle}
+          sectionTitle={sectionTitle}
+          panelMode={panelSel.mode === 'sentence' ? 'sentence' : 'word'}
+        />
+      )}
     </div>
   )
 }
