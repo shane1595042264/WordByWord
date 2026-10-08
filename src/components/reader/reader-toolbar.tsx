@@ -161,11 +161,15 @@ export function ReaderToolbar({
               className={`cursor-pointer ${isTogglingRead ? 'pointer-events-none opacity-60' : ''}`}
               aria-busy={isTogglingRead}
             >
+              {/* aria-disabled, not disabled: browsers blur a button the moment it
+                  becomes disabled, which dropped keyboard focus to <body> on every
+                  press and left the celebration nothing to restore focus to.
+                  togglingRef already rejects a second press mid-write. */}
               <button
                 type="button"
                 onClick={handleToggleRead}
                 aria-pressed={isRead}
-                disabled={isTogglingRead}
+                aria-disabled={isTogglingRead}
               >
                 {isRead ? 'Read' : 'Mark as Read'}
               </button>
