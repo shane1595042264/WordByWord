@@ -26,6 +26,14 @@ function hasNativeSelection(): boolean {
   return !!sel && !sel.isCollapsed && sel.toString().trim().length > 0
 }
 
+/**
+ * Focusable controls whose native keyboard activation (Enter / Space) must win
+ * over the vim rulebook. Other keys still reach the engine, so j/k keep working
+ * after a toolbar button has been clicked and kept focus.
+ */
+const ACTIVATABLE_SELECTOR =
+  'button, a[href], select, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"], [role="option"]'
+
 interface UseVimModeOptions {
   enabled: boolean
   scrollRef: React.RefObject<HTMLElement | null>
@@ -97,6 +105,7 @@ export function useVimMode({
 
     const target = e.target as HTMLElement
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+    if ((e.key === 'Enter' || e.key === ' ') && target.closest?.(ACTIVATABLE_SELECTOR)) return
 
     // Ctrl+C / Cmd+C — yank (copy) selected text
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
