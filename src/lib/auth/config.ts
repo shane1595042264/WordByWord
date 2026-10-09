@@ -114,12 +114,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // OAuth provider (Google, etc.)
       if (account && profile?.email) {
         const email = profile.email
+        // Only an email the provider has verified may claim an existing row or
+        // create a new one by address. Already-linked identities are matched by
+        // providerAccountId below and don't need the claim.
+        const providerVerifiedEmail = profile.email_verified === true
         const existingUser = await userRepo.getByEmail(email)
 
         if (existingUser) {
           // Check if this OAuth account is already linked
           const linked = await userRepo.getByProviderAccount(account.provider, account.providerAccountId)
           if (!linked) {
+            if (!providerVerifiedEmail) return false
+            // A password on an unverified row was set by whoever self-registered
+            // the address, which may not be the person now proving they own it.
+            // Drop it so the link can't hand the account to a squatter.
+            if (existingUser.passwordHash && !existingUser.emailVerified) {
+              await userRepo.clearPassword(existingUser.id)
+            }
             // Auto-link: same email → link the OAuth account to existing user
             await userRepo.linkAccount(existingUser.id, account.provider, account.providerAccountId, {
               accessToken: account.access_token ?? undefined,
@@ -147,6 +158,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           }
           ;(user as Record<string, unknown>).role = existingUser.role
         } else {
+          if (!providerVerifiedEmail) return false
           // New user — create account from OAuth
           const newUser = await userRepo.createFromOAuth(
             email,
@@ -170,12 +182,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true
     },
 
-    async jwt({ token, user, trigger, session: updateData }) {
+    async jwt({ token, user, account, trigger, session: updateData }) {
       // On initial sign-in, add user data to the JWT
       if (user) {
         token.id = user.id
         token.role = (user as Record<string, unknown>).role ?? 'user'
         token.picture = user.image ?? null
+        token.authProvider = account?.provider ?? null
         // Fresh by definition — don't re-query on the very next callback.
         token.roleCheckedAt = Date.now()
       }
@@ -195,6 +208,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token.id && Date.now() - checkedAt >= ROLE_REFRESH_INTERVAL_MS) {
         try {
           const fresh = await userRepo.getById(token.id as string)
+          // A password session outlives its password only when a verified
+          // OAuth link cleared it — that session belongs to whoever squatted
+          // the address, so end it.
+          if (fresh && token.authProvider === 'credentials' && !fresh.passwordHash) return null
           // A missing row means the account is gone — drop to the least
           // privileged role rather than leaving a stale `admin` claim alive.
           token.role = fresh ? fresh.role : 'user'

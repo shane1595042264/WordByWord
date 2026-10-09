@@ -157,6 +157,16 @@ export class UserRepository {
     await sql`UPDATE users SET password_hash = ${passwordHash}, updated_at = NOW() WHERE id = ${userId}`
   }
 
+  /**
+   * Remove a user's password so only their linked OAuth identities can sign in.
+   * Used when Google proves ownership of an email whose password was set by an
+   * unverified self-signup — that password may belong to someone else.
+   */
+  async clearPassword(userId: string): Promise<void> {
+    const sql = getDb()
+    await sql`UPDATE users SET password_hash = NULL, updated_at = NOW() WHERE id = ${userId}`
+  }
+
   /** Update user profile */
   async updateProfile(userId: string, data: { name?: string; image?: string }): Promise<void> {
     const sql = getDb()
