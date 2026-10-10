@@ -38,6 +38,17 @@ export interface CloudStatus {
   books: { id: string; customTitle: string | null; catalogId: string; updatedAt: string }[]
 }
 
+/**
+ * What a sync() call actually did. sync() never rejects — background callers
+ * fire and forget — so a caller that must tell the user the truth (Settings >
+ * Cloud Sync) reads this instead of relying on a catch that can't run (KAN-342).
+ */
+export type SyncResult =
+  | { status: 'complete' }
+  | { status: 'partial'; reason: string }
+  | { status: 'skipped'; reason: 'in-progress' | 'no-token' }
+  | { status: 'failed'; reason: string }
+
 export interface SyncConflict {
   localOnlyBooks: number
   cloudOnlyBooks: number
@@ -62,6 +73,8 @@ class SyncService {
   /** Timestamp of the first dirty write since the last committed sync (KAN-298). */
   private firstDirtyAt: number | null = null
   private isSyncing = false
+  /** The running sync() call, set synchronously so it also covers the token fetch. */
+  private inFlight: Promise<SyncResult> | null = null
   private token: string | null = null
   private tokenExp = 0
   private cleanupFns: (() => void)[] = []
@@ -153,6 +166,7 @@ class SyncService {
     this.cleanupFns = []
     // Reset syncing flag so the next init() can sync successfully
     this.isSyncing = false
+    this.inFlight = null
   }
 
   // ── Logging ───────────────────────────────────────────────────
@@ -299,7 +313,7 @@ class SyncService {
     // flight — sync() early-returns on 'already syncing', which would drop this
     // entity with no timer left to retry it (the KAN-245 failure mode); we fall
     // through and arm the normal debounce as the safety net instead.
-    if (elapsed >= SYNC_MAX_WAIT_MS && !this.isSyncing) {
+    if (elapsed >= SYNC_MAX_WAIT_MS && !this.isSyncing && !this.inFlight) {
       // Restart the window even though sync() may early-return (e.g. no token),
       // so a sync that never commits can't be re-attempted on every write.
       this.firstDirtyAt = now
@@ -330,7 +344,7 @@ class SyncService {
    * longer have to arm the safety net themselves.
    */
   syncNow(): void {
-    if (this.isSyncing) {
+    if (this.isSyncing || this.inFlight) {
       // A sync is already running — an immediate sync() would no-op. Arm the
       // debounce so this entity still gets pushed after the current sync ends.
       this.markDirty()
@@ -554,15 +568,33 @@ class SyncService {
 
   // ── Core sync (bidirectional) ────────────────────────────────
 
-  async sync(alreadyRefreshedToken = false): Promise<void> {
+  sync(): Promise<SyncResult> {
+    if (this.inFlight) {
+      this.log('sync:skip', 'already syncing')
+      return Promise.resolve({ status: 'skipped', reason: 'in-progress' })
+    }
+    const run: Promise<SyncResult> = this.runSync().finally(() => {
+      if (this.inFlight === run) this.inFlight = null
+    })
+    this.inFlight = run
+    return run
+  }
+
+  /** Let any in-flight sync settle first, so this call does a real sync rather than a skip. */
+  async syncAfterInFlight(): Promise<SyncResult> {
+    while (this.inFlight) await this.inFlight
+    return this.sync()
+  }
+
+  private async runSync(alreadyRefreshedToken = false): Promise<SyncResult> {
     if (this.isSyncing) {
       this.log('sync:skip', 'already syncing')
-      return
+      return { status: 'skipped', reason: 'in-progress' }
     }
     const token = await this.getToken()
     if (!token) {
       this.log('sync:skip', 'no token available (not authenticated?)')
-      return
+      return { status: 'skipped', reason: 'no-token' }
     }
 
     this.isSyncing = true
@@ -668,7 +700,8 @@ class SyncService {
           throw new Error('Sync failed: authentication rejected after refresh')
         }
         this.isSyncing = false
-        return this.sync(true)
+        // Awaited so the finally below can't clear isSyncing while the retry runs.
+        return await this.runSync(true)
       }
 
       if (!res.ok) {
@@ -805,33 +838,38 @@ class SyncService {
       // millisecond as pushStartedAt may have missed this payload.
       localStorage.setItem(LAST_PUSHED_KEY, String(pushStartedAt - 1))
       this.log('sync:complete', `synced at ${result.syncedAt}`)
+      let outcome: SyncResult = { status: 'complete' }
       if (failedDownloads.length > 0) {
         const n = failedDownloads.length
         const titles = failedDownloads.slice(0, 3).map(f => `"${f.title}"`).join(', ')
         const more = n > 3 ? ` and ${n - 3} more` : ''
         const dlMsg = `${n} book${n === 1 ? '' : 's'} failed to download (${titles}${more}) — will retry next sync`
-        if (failedCount > 0) {
-          this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry; ${dlMsg}`)
-        } else {
-          this.emitStatus('error', `:sync partial — ${dlMsg}`)
-        }
+        const reason = failedCount > 0
+          ? `${failedCount} item${failedCount === 1 ? '' : 's'} will retry; ${dlMsg}`
+          : dlMsg
+        this.emitStatus('error', `:sync partial — ${reason}`)
         this.log('sync:download-partial', dlMsg)
+        outcome = { status: 'partial', reason }
       } else if (failedCount > 0) {
-        this.emitStatus('error', `:sync partial — ${failedCount} item${failedCount === 1 ? '' : 's'} will retry`)
+        const reason = `${failedCount} item${failedCount === 1 ? '' : 's'} will retry`
+        this.emitStatus('error', `:sync partial — ${reason}`)
+        outcome = { status: 'partial', reason }
       } else {
         this.emitStatus('complete', ':sync complete')
       }
 
       // Notify listeners (e.g. useBooks) that sync finished so they can refresh
       window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
+      return outcome
     } catch (err) {
       // Silently ignore aborted requests (from destroy() cancelling in-flight syncs)
       if (err instanceof DOMException && err.name === 'AbortError') {
         this.log('sync:aborted', 'sync cancelled by destroy()')
-        return
+        return { status: 'failed', reason: 'sync was cancelled' }
       }
       console.error('[sync] error:', err)
       this.emitStatus('error', ':sync failed')
+      return { status: 'failed', reason: err instanceof Error ? err.message : String(err) }
     } finally {
       this.isSyncing = false
     }
@@ -839,11 +877,15 @@ class SyncService {
 
   // ── Force upload: override cloud with local ──────────────────
 
-  async forceUpload(): Promise<void> {
-    // Reset both cursors to epoch so ALL local entities are sent
+  async forceUpload(): Promise<SyncResult> {
+    // An in-flight sync would turn ours into a skip and then write its own
+    // cursors over the reset below, so the full push never happened (KAN-342).
+    while (this.inFlight) await this.inFlight
+    // Reset both cursors to epoch so ALL local entities are sent. No await
+    // between here and sync(), which claims inFlight synchronously.
     localStorage.setItem(LAST_SYNCED_KEY, '1970-01-01T00:00:00.000Z')
     localStorage.setItem(LAST_PUSHED_KEY, '0')
-    await this.sync()
+    return this.sync()
   }
 
   private readPushCursor(): number {

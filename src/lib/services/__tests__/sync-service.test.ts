@@ -197,7 +197,7 @@ describe('syncService.syncNow() — safety net when a sync is already in flight'
     s.isSyncing = true
     s.debounceTimer = null
 
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
     syncService.syncNow()
 
     // No immediate sync attempt (it would just log 'already syncing' and drop the entity)...
@@ -218,7 +218,7 @@ describe('syncService.syncNow() — safety net when a sync is already in flight'
     s.isSyncing = false
     s.debounceTimer = null
 
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
     syncService.syncNow()
 
     // Common case unchanged: immediate push, no redundant debounce armed.
@@ -1215,7 +1215,7 @@ describe('syncService.markDirty() — max-wait cap under continuous activity (KA
   })
 
   it('fires sync() within the cap when markDirty() is called every 5s for 3 minutes', () => {
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
 
     let firedBeforeCap = 0
     // 5s cadence — well inside the 30s debounce, which is what starved sync().
@@ -1238,7 +1238,7 @@ describe('syncService.markDirty() — max-wait cap under continuous activity (KA
   })
 
   it('leaves the idle case untouched — one edit still syncs at 30s, not later', () => {
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
 
     syncService.markDirty()
     vi.advanceTimersByTime(29_999)
@@ -1251,7 +1251,7 @@ describe('syncService.markDirty() — max-wait cap under continuous activity (KA
 
   it('does not fire the cap while a sync is in flight — it arms the debounce instead', () => {
     const s = internals()
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
 
     // Open the dirty window, then push past the cap with a sync already running.
     syncService.markDirty()
@@ -1279,7 +1279,7 @@ describe('syncService.markDirty() — max-wait cap under continuous activity (KA
     // sync() early-returns (e.g. no token) without clearing firstDirtyAt. If the
     // cap branch did not restart the window, every subsequent markDirty() would
     // re-attempt — a request per scroll tick for a logged-out user.
-    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(syncService, 'sync').mockResolvedValue({ status: 'complete' })
 
     syncService.markDirty()
     vi.advanceTimersByTime(SYNC_MAX_WAIT_MS_TEST)
@@ -1524,6 +1524,34 @@ describe('sync push — only rows changed since the last push go up', () => {
     expect(pushes[1].changes.chapters).toHaveLength(1)
   })
 
+  // KAN-342: forceUpload() used to reset the cursors and call sync(), which
+  // no-op'd on 'already syncing'; the in-flight sync then wrote its own cursors
+  // over the reset, so the full re-upload silently never happened.
+  it('forceUpload() during an in-flight sync waits for it, then pushes the whole library', async () => {
+    await seedSyncedLibrary()
+    reload()
+    await syncService.sync()
+    let release!: () => void
+    duringRequest = () => new Promise<void>((r) => { release = r })
+    const background = syncService.sync()
+    await vi.waitFor(() => expect(pushes).toHaveLength(2))
+
+    const forced = syncService.forceUpload()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(pushes).toHaveLength(2) // the forced push waits for the held one
+    const releasedAt = Date.now()
+    release()
+
+    expect(await background).toEqual({ status: 'complete' })
+    expect(await forced).toEqual({ status: 'complete' })
+    expect(pushes).toHaveLength(3)
+    expect(pushes[2].lastSyncedAt).toBe('1970-01-01T00:00:00.000Z')
+    expect(pushes[2].changes.sections).toHaveLength(5)
+    expect(pushes[2].changes.chapters).toHaveLength(1)
+    // The cursor belongs to the forced push, which started after the release.
+    expect(Number(localStorage.getItem('nibble_lastPushedAt'))).toBeGreaterThanOrEqual(releasedAt - 1)
+  })
+
   // coverImage is usually a page-1 PNG data: URL rendered on this device (upload,
   // import, cloud download, "generate cover"). Pushing it put megabytes on every
   // book push, and once nibble-api applied book updates it would land in
@@ -1556,6 +1584,111 @@ describe('sync push — only rows changed since the last push go up', () => {
       lastAccessedWordIndex: 7,
     })
     expect(books[0]).not.toHaveProperty('coverUrl')
+  })
+})
+
+// KAN-342: sync() never rejects, so Settings > Cloud Sync could only ever show
+// 'Sync complete.' — every skip and failure has to come back as a result.
+describe('syncService.sync() — reports what actually happened', () => {
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number }
+  const internals = () => syncService as unknown as Internals
+  const okBody = {
+    syncedAt: '2026-10-10T00:00:00.000Z',
+    serverChanges: { books: [], chapters: [], sections: [], vocabulary: [], settings: null },
+    failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+  }
+
+  function install(opts: { token?: boolean; sync: FetchMock | (() => Promise<Response>) }) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return opts.token === false
+          ? new Response('', { status: 401 })
+          : new Response(JSON.stringify({ token: 'fake.jwt.token' }), { status: 200 })
+      }
+      if (url.endsWith('/sync')) {
+        if (typeof opts.sync === 'function') return opts.sync()
+        if (opts.sync === 'reject') throw new Error('network down')
+        return new Response(JSON.stringify(opts.sync.body ?? {}), { status: opts.sync.status })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    internals().token = null
+    internals().tokenExp = 0
+    internals().hasInitSynced = true
+    internals().isSyncing = false
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('complete when the push lands cleanly', async () => {
+    install({ sync: { status: 200, body: okBody } })
+    expect(await syncService.sync()).toEqual({ status: 'complete' })
+  })
+
+  it('failed on an HTTP 500', async () => {
+    install({ sync: { status: 500 } })
+    expect(await syncService.sync()).toEqual({ status: 'failed', reason: 'Sync request failed: HTTP 500' })
+  })
+
+  it('failed on a network error', async () => {
+    install({ sync: 'reject' })
+    expect(await syncService.sync()).toEqual({ status: 'failed', reason: 'network down' })
+  })
+
+  it('skipped with no-token when the session is gone', async () => {
+    install({ token: false, sync: { status: 200, body: okBody } })
+    expect(await syncService.sync()).toEqual({ status: 'skipped', reason: 'no-token' })
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([u]) => String(u).endsWith('/sync'))).toBe(false)
+  })
+
+  it('partial when the server rejects some entities', async () => {
+    install({ sync: { status: 200, body: { ...okBody, failedEntities: { books: [], chapters: [], sections: ['s1', 's2'], vocabulary: [] } } } })
+    expect(await syncService.sync()).toEqual({ status: 'partial', reason: '2 items will retry' })
+  })
+
+  it('skipped with in-progress while another sync is in flight — including its token fetch', async () => {
+    let release!: () => void
+    install({ sync: () => new Promise<Response>((r) => { release = () => r(new Response(JSON.stringify(okBody), { status: 200 })) }) })
+    const first = syncService.sync()
+    // Second call lands before the first has even resolved its token.
+    expect(await syncService.sync()).toEqual({ status: 'skipped', reason: 'in-progress' })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    release()
+    expect(await first).toEqual({ status: 'complete' })
+  })
+
+  it('syncAfterInFlight() runs a real sync once the in-flight one settles', async () => {
+    let calls = 0
+    let release!: () => void
+    install({
+      sync: () => {
+        calls++
+        if (calls === 1) return new Promise<Response>((r) => { release = () => r(new Response(JSON.stringify(okBody), { status: 200 })) })
+        return Promise.resolve(new Response('', { status: 500 }))
+      },
+    })
+    const first = syncService.sync()
+    const second = syncService.syncAfterInFlight()
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    release()
+    expect(await first).toEqual({ status: 'complete' })
+    // Its own request went out — and its own failure is what it reports.
+    expect(await second).toEqual({ status: 'failed', reason: 'Sync request failed: HTTP 500' })
+    expect(calls).toBe(2)
   })
 })
 

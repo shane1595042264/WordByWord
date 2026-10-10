@@ -2,7 +2,26 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { syncService, type CloudStatus } from '@/lib/services/sync-service'
+import { syncService, type CloudStatus, type SyncResult } from '@/lib/services/sync-service'
+
+// sync() never rejects, so each outcome needs its own message — a success
+// string after `await` would also show for skips and failures (KAN-342).
+function describeSyncResult(result: SyncResult, successMessage: string, action: 'Sync' | 'Upload'): string {
+  switch (result.status) {
+    case 'complete':
+      return successMessage
+    case 'partial':
+      return `${action} finished with problems: ${result.reason}.`
+    case 'skipped':
+      return result.reason === 'no-token'
+        ? `${action} did not run — you are signed out or your session expired. Sign in again and retry.`
+        : `${action} did not run — another sync is still in progress. Try again in a moment.`
+    case 'failed':
+      return action === 'Upload'
+        ? `Upload failed — your cloud may be out of sync. (${result.reason})`
+        : `Sync failed. (${result.reason})`
+  }
+}
 
 export function CloudSyncSettings() {
   const [status, setStatus] = useState<CloudStatus | null>(null)
@@ -58,8 +77,8 @@ export function CloudSyncSettings() {
     setSyncing(true)
     setMessage('Uploading all local data to cloud...')
     try {
-      await syncService.forceUpload()
-      setMessage('Upload complete. Cloud is now in sync with your local data.')
+      const result = await syncService.forceUpload()
+      setMessage(describeSyncResult(result, 'Upload complete. Cloud is now in sync with your local data.', 'Upload'))
       await refreshStatus()
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
@@ -73,8 +92,8 @@ export function CloudSyncSettings() {
     setSyncing(true)
     setMessage('Syncing...')
     try {
-      await syncService.sync()
-      setMessage('Sync complete.')
+      const result = await syncService.syncAfterInFlight()
+      setMessage(describeSyncResult(result, 'Sync complete.', 'Sync'))
       await refreshStatus()
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
