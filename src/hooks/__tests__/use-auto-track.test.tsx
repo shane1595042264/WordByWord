@@ -1,14 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useAutoTrack, type UseAutoTrackOptions } from '../use-auto-track'
+import { toast } from 'sonner'
+import { useAutoTrack, AUTO_MARK_FAILED_TOAST_ID, type UseAutoTrackOptions } from '../use-auto-track'
 
-const markAsRead = vi.fn(async () => false)
+const markAsRead = vi.fn(async (_sectionId: string) => false)
+/** Set to make the next SectionRepository construction throw (setup() rejects). */
+const repoInit = { error: null as Error | null }
 
 vi.mock('@/lib/repositories', () => ({
   SectionRepository: class {
     markAsRead = markAsRead
+    constructor() {
+      if (repoInit.error) throw repoInit.error
+    }
   },
 }))
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 
 /**
  * A stand-in for a text/PDF scroll container. jsdom doesn't lay anything out,
@@ -101,11 +109,16 @@ describe('useAutoTrack', () => {
     // via dynamic import(), which doesn't settle under fake timers.
     await import('@/lib/repositories')
     vi.useFakeTimers()
-    markAsRead.mockClear()
+    // mockReset, not mockClear: a persistent mockRejectedValue must not leak.
+    markAsRead.mockReset()
+    markAsRead.mockImplementation(async () => false)
+    vi.mocked(toast.error).mockClear()
+    repoInit.error = null
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
@@ -411,6 +424,82 @@ describe('useAutoTrack', () => {
 
       expect(addListener).not.toHaveBeenCalled()
       expect(markAsRead).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('write failures (KAN-344)', () => {
+    it('toasts, keeps listening, and marks read on the next scroll-to-bottom', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      markAsRead.mockRejectedValueOnce(new Error('DatabaseClosedError'))
+      const onMarkedRead = vi.fn()
+      const container = overflowing()
+      const removeListener = vi.spyOn(container, 'removeEventListener')
+
+      renderHook(() => useAutoTrack(opts({ textScrollRef: { current: container }, onMarkedRead })))
+
+      await settle(50)
+      await scrollTo(container, BOTTOM)
+
+      expect(markAsRead).toHaveBeenCalledTimes(1)
+      expect(onMarkedRead).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(toast.error).toHaveBeenCalledWith(
+        'Could not mark section as read',
+        expect.objectContaining({ id: AUTO_MARK_FAILED_TOAST_ID }),
+      )
+      expect(removeListener).not.toHaveBeenCalled()
+
+      await scrollTo(container, BOTTOM)
+
+      expect(markAsRead).toHaveBeenCalledTimes(2)
+      expect(onMarkedRead).toHaveBeenCalledTimes(1)
+      expect(onMarkedRead).toHaveBeenCalledWith(false)
+      expect(removeListener).toHaveBeenCalledWith('scroll', expect.any(Function))
+
+      // Marked now — further scrolls are no-ops.
+      await scrollTo(container, BOTTOM)
+      expect(markAsRead).toHaveBeenCalledTimes(2)
+    })
+
+    it('toasts once however many retries keep failing', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      markAsRead.mockRejectedValue(new Error('QuotaExceededError'))
+      const onMarkedRead = vi.fn()
+      const container = overflowing()
+
+      renderHook(() => useAutoTrack(opts({ textScrollRef: { current: container }, onMarkedRead })))
+
+      await settle(50)
+      await scrollTo(container, BOTTOM)
+      await scrollTo(container, BOTTOM)
+      await scrollTo(container, BOTTOM)
+
+      expect(markAsRead).toHaveBeenCalledTimes(3)
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(onMarkedRead).not.toHaveBeenCalled()
+    })
+
+    it('a failed setup (stale chunk) toasts instead of rejecting unhandled', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      repoInit.error = new Error('ChunkLoadError')
+      const unhandled = vi.fn()
+      process.on('unhandledRejection', unhandled)
+      const container = fitting()
+
+      try {
+        renderHook(() => useAutoTrack(opts({ textScrollRef: { current: container } })))
+        await advancePastInitialCheck()
+        // Let Node's unhandled-rejection bookkeeping run.
+        vi.useRealTimers()
+        await new Promise(r => setTimeout(r, 0))
+      } finally {
+        process.off('unhandledRejection', unhandled)
+      }
+
+      expect(unhandled).not.toHaveBeenCalled()
+      expect(markAsRead).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(consoleError).toHaveBeenCalledWith('Auto-tracking failed to start:', repoInit.error)
     })
   })
 

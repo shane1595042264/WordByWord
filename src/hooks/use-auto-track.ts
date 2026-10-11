@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, type RefObject } from 'react'
+import { toast } from 'sonner'
 
 /**
  * Auto-mark a section as read based on WHERE THE READER IS — never on how long
@@ -46,6 +47,8 @@ export const REF_MOUNT_RETRY_MS = 200
 export const FITS_WITHOUT_SCROLL_PX = 10
 /** Scrolled to within this many px of the bottom counts as "reached the end". */
 export const BOTTOM_THRESHOLD_PX = 50
+/** Sonner id for the auto-mark failure toast, so repeated failures don't stack. */
+export const AUTO_MARK_FAILED_TOAST_ID = 'auto-mark-read-failed'
 
 /** Why a section was marked read — one per position signal. */
 export type AutoTrackReason =
@@ -90,6 +93,9 @@ export function useAutoTrack({
 
     let cancelled = false
     let marked = false
+    // One toast per section visit: a pane parked at the bottom can fire many
+    // scroll events, each retrying a write that keeps failing.
+    let failureReported = false
 
     const isPdfView = viewMode === 'pdf'
     const isPdfFlip = isPdfView && readingMode === 'flip'
@@ -106,18 +112,45 @@ export function useAutoTrack({
       scrollCleanupRef.current = null
     }
 
+    const reportFailure = (message: string, err: unknown, hint: string) => {
+      console.error(message, err)
+      if (failureReported) return
+      failureReported = true
+      toast.error('Could not mark section as read', {
+        id: AUTO_MARK_FAILED_TOAST_ID,
+        description: hint,
+        duration: 5000,
+      })
+    }
+
     const setup = async () => {
       const { SectionRepository } = await import('@/lib/repositories')
       const sectionRepo = new SectionRepository()
 
       const markRead = async (_reason: AutoTrackReason) => {
         if (cancelled || marked) return
+        // `marked` guards the write while it is in flight, so a scroll-to-bottom
+        // followed by the initial check can't mark twice.
         marked = true
-        // One signal is enough: stop listening and drop any pending check so a
-        // scroll-to-bottom followed by the initial check can't mark twice.
         clearTimer()
-        detachScroll()
-        const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+        let bookJustCompleted: boolean
+        try {
+          bookJustCompleted = await sectionRepo.markAsRead(sectionId)
+        } catch (err) {
+          // The scroll listener is still attached, so re-arm: the next
+          // scroll-to-bottom retries the write.
+          marked = false
+          reportFailure(
+            'Failed to auto-mark section as read:',
+            err,
+            'Scroll to the end again, or use Mark as Read in the toolbar.',
+          )
+          return
+        }
+        // One signal is enough: only stop listening once the write has landed.
+        // If the effect re-ran mid-write, its cleanup already detached ours and
+        // the ref now holds the next run's listener — leave that one alone.
+        if (!cancelled) detachScroll()
         onMarkedRead(bookJustCompleted)
       }
 
@@ -218,7 +251,15 @@ export function useAutoTrack({
       })
     }
 
-    setup()
+    // The lazy import rejects on a stale chunk after a deploy (ChunkLoadError).
+    // Nothing re-runs setup this visit, so point at the manual path instead.
+    setup().catch(err =>
+      reportFailure(
+        'Auto-tracking failed to start:',
+        err,
+        'Use Mark as Read in the toolbar, or reload the page.',
+      ),
+    )
 
     return () => {
       cancelled = true
