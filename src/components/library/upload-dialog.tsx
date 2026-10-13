@@ -94,33 +94,47 @@ export function UploadDialog({ onBookImported }: UploadDialogProps) {
       const { syncService } = await import('@/lib/services/sync-service')
       const uploadResult = await syncService.uploadBook(f, title, author, totalPages, mode)
 
-      // Step 4: Create local book in IndexedDB
-      const localId = uuid()
-      const now = Date.now()
-      const book: Book = {
-        id: localId,
-        title,
-        author,
-        totalPages,
-        format,
-        // For PDFs we keep the blob locally so the viewer can render offline.
-        // For EPUBs we don't render the source file anywhere — skip the blob.
-        pdfBlob: isEpub ? undefined : f,
-        coverImage: uploadResult.coverUrl || coverImage,
-        structureSource: isEpub ? 'epub' : 'native',
-        processingStatus: uploadResult.jobId ? 'processing' : 'complete',
-        createdAt: now,
-        updatedAt: now,
-        lastReadAt: null,
-        lastAccessedSectionId: null,
-        lastAccessedScrollProgress: null,
-        lastAccessedWordIndex: null,
-        completedAt: null,
-        remoteId: uploadResult.remoteId,
-        catalogId: uploadResult.catalogId,
-        jobId: uploadResult.jobId,
+      // The backend dedupes per user+catalog and hands back the existing book's
+      // id. A second local row sharing that remoteId would push its empty
+      // reading position over the real book on the next sync, and deleting it
+      // would delete the real book (KAN-345) — so reuse the row we already have.
+      const existing = await db.books.where('remoteId').equals(uploadResult.remoteId).first()
+      if (existing) {
+        if (uploadResult.jobId && uploadResult.jobId !== existing.jobId) {
+          // The backend (re)started processing, e.g. after an earlier failure.
+          // Backend-managed fields only, so no updatedAt bump / sync push.
+          await db.books.update(existing.id, { processingStatus: 'processing', jobId: uploadResult.jobId })
+        }
+        toast.info(`"${existing.title}" is already in your library`)
+      } else {
+        // Step 4: Create local book in IndexedDB
+        const localId = uuid()
+        const now = Date.now()
+        const book: Book = {
+          id: localId,
+          title,
+          author,
+          totalPages,
+          format,
+          // For PDFs we keep the blob locally so the viewer can render offline.
+          // For EPUBs we don't render the source file anywhere — skip the blob.
+          pdfBlob: isEpub ? undefined : f,
+          coverImage: uploadResult.coverUrl || coverImage,
+          structureSource: isEpub ? 'epub' : 'native',
+          processingStatus: uploadResult.jobId ? 'processing' : 'complete',
+          createdAt: now,
+          updatedAt: now,
+          lastReadAt: null,
+          lastAccessedSectionId: null,
+          lastAccessedScrollProgress: null,
+          lastAccessedWordIndex: null,
+          completedAt: null,
+          remoteId: uploadResult.remoteId,
+          catalogId: uploadResult.catalogId,
+          jobId: uploadResult.jobId,
+        }
+        await db.books.add(book)
       }
-      await db.books.add(book)
 
       setOpen(false)
       setLoading(false)
