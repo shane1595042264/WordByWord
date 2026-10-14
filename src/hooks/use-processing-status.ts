@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 export interface ProcessingStatus {
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'superseded'
   progress: number
   stage: string | null
   error: string | null
@@ -122,7 +122,9 @@ export function useProcessingStatus(jobId: string | undefined) {
       failureCountRef.current = 0
       setPollError(null)
 
-      const terminal = status.status === 'completed' || status.status === 'failed'
+      // 'superseded' is what a retried job becomes; a newer job carries on in
+      // its place, so polling the old id can never change again (KAN-347).
+      const terminal = status.status === 'completed' || status.status === 'failed' || status.status === 'superseded'
       if (terminal) {
         if (intervalRef.current) {
           clearInterval(intervalRef.current)

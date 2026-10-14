@@ -98,6 +98,24 @@ describe('useProcessingStatus', () => {
     unmount()
   })
 
+  it('stops polling a superseded (retried) job (KAN-347)', async () => {
+    const fx = setupFetch()
+    const useProcessingStatus = await loadHook()
+    const { unmount } = renderHook(() => useProcessingStatus('job-old'))
+
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(1))
+    fx.resolveAt(0, { token: makeJwt(60_000) })
+    await waitFor(() => expect(fx.calls.length).toBeGreaterThanOrEqual(2))
+    fx.resolveAt(1, { status: 'superseded', progress: 40, stage: 'ocr', error: null, bookId: null })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+    })
+    expect(fx.calls.filter((c) => c.url.includes('/processing/job-old')).length).toBe(1)
+
+    unmount()
+  })
+
   it('drops stale response when jobId becomes undefined mid-poll', async () => {
     const fx = setupFetch()
     const useProcessingStatus = await loadHook()

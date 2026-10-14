@@ -9,6 +9,7 @@ import { FileTextIcon } from 'lucide-react'
 import type { BookWithProgress } from '@/hooks/use-books'
 import { useProcessingStatus } from '@/hooks/use-processing-status'
 import { ProcessingLogDialog } from './processing-log-dialog'
+import { db } from '@/lib/db/database'
 import { toast } from 'sonner'
 
 interface BookCardProps {
@@ -314,6 +315,16 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
                       headers: { Authorization: `Bearer ${token}` },
                     })
                     if (res.ok) {
+                      // /retry supersedes the old job and starts a NEW one. Nothing
+                      // else writes books.jobId (sync pulls processingStatus only), so
+                      // without this the card polls, logs and cancels the dead job
+                      // forever (KAN-347). Backend-managed fields only, so no
+                      // updatedAt bump / sync push — same as upload-dialog.tsx.
+                      const body = await res.json().catch(() => null)
+                      if (typeof body?.jobId === 'string') {
+                        await db.books.update(book.id, { processingStatus: 'processing', jobId: body.jobId })
+                        completedRef.current = false
+                      }
                       onProcessingComplete?.() // refresh to show new processing state
                     } else {
                       // A retry can lose to another user already processing the
