@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useBookDetail } from '@/hooks/use-book-detail'
 import { ProgressDrilldown } from '@/components/dashboard/progress-drilldown'
 import { ProcessButton } from '@/components/dashboard/process-button'
+import { buildChaptersFromDividers } from '@/components/dashboard/chapter-accordion'
 import type { Divider } from '@/components/editor/page-strip-editor'
 
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
@@ -303,33 +304,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 onSave={async (dividers: Divider[]) => {
                   const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
                   const svc = new StructureService()
-                  const sorted = [...dividers].sort((a, b) => a.page - b.page)
-                  const chapters: Array<{ title: string; startPage: number; endPage: number }> = []
-                  let currentStart = 1
-                  for (const div of sorted) {
-                    chapters.push({
-                      title: chapters.length === 0 ? (book.chapters[0]?.title || 'Chapter 1') : chapters[chapters.length - 1]?.title || 'Chapter',
-                      startPage: currentStart,
-                      endPage: div.page - 1,
-                    })
-                    currentStart = div.page
-                  }
-                  // Fix titles: each divider names the chapter that STARTS at that page
-                  const finalChapters: Array<{ title: string; startPage: number; endPage: number }> = []
-                  let cs = 1
-                  for (let i = 0; i < sorted.length; i++) {
-                    finalChapters.push({
-                      title: i === 0 ? (book.chapters[0]?.title || 'Chapter 1') : sorted[i - 1].title,
-                      startPage: cs,
-                      endPage: sorted[i].page - 1,
-                    })
-                    cs = sorted[i].page
-                  }
-                  finalChapters.push({
-                    title: sorted.length > 0 ? sorted[sorted.length - 1].title : 'Chapter 1',
-                    startPage: cs,
-                    endPage: book.totalPages,
-                  })
+                  const finalChapters = buildChaptersFromDividers(book.chapters, book.totalPages, dividers)
 
                   try {
                     await svc.saveStructure(book.remoteId!, finalChapters)

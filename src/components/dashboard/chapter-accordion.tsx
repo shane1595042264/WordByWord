@@ -74,52 +74,74 @@ export function buildChapterGroups(chapters: ChapterWithSections[]): ChapterGrou
   return result
 }
 
-// Rebuild a chapter's sections from the dividers the editor returned. Each divider
-// names the segment that STARTS at its page, so divider i-1 titles segment i.
+// Rebuild the segments of a page range from the dividers the editor returned. Each
+// divider names the segment that STARTS at its page, so divider i-1 titles segment i.
 //
-// Segment 0 has no divider of its own: the chapter's first section starts at the
-// chapter start page, so it is filtered out of existingDividers and the editor never
-// shows it. Carry its current title through instead of stamping a placeholder
-// over it -- the chapter-level editor does the same with book.chapters[0]?.title
-// (src/app/book/[id]/page.tsx). 'Section 1' is a fallback for a chapter that has no
-// sections yet, not a rename.
-export function buildSectionsFromDividers(
-  chapter: Pick<ChapterWithSections, 'startPage' | 'endPage' | 'sections'>,
+// Segment 0 has no divider of its own: whatever starts at rangeStart is filtered out
+// of existingDividers and the editor never shows it. Carry its current title through
+// instead of stamping a placeholder over it. `fallback` is used only when nothing
+// existing covers rangeStart, not as a rename.
+function buildSegmentsFromDividers(
+  rangeStart: number,
+  rangeEnd: number,
+  existing: Array<{ title: string; startPage: number }>,
+  fallback: string,
   dividers: Divider[]
 ): Array<{ title: string; startPage: number; endPage: number }> {
-  // Take the title from the section that actually covers the chapter start and is
-  // therefore absent from the dividers: the latest one starting at or before
-  // chapter.startPage. Scanning rather than reading sections[0] because getByChapter
-  // sorts by `order`, which is not guaranteed to track page order. Picking the
-  // globally lowest startPage instead would, for a chapter whose sections all start
-  // after its first page, copy a title that is also a divider and duplicate it.
+  // Take the title from the item that actually covers rangeStart and is therefore
+  // absent from the dividers: the latest one starting at or before rangeStart.
+  // Scanning rather than reading existing[0] because callers sort by `order`, which
+  // is not guaranteed to track page order. Picking the globally lowest startPage
+  // instead would, for a range whose items all start after its first page, copy a
+  // title that is also a divider and duplicate it.
   let openingTitle = ''
   let openingStart = -Infinity
-  for (const s of chapter.sections) {
-    if (s.startPage <= chapter.startPage && s.startPage > openingStart) {
-      openingStart = s.startPage
-      openingTitle = s.title
+  for (const item of existing) {
+    if (item.startPage <= rangeStart && item.startPage > openingStart) {
+      openingStart = item.startPage
+      openingTitle = item.title
     }
   }
-  const firstTitle = openingTitle || 'Section 1'
+  const firstTitle = openingTitle || fallback
 
   const sorted = [...dividers].sort((a, b) => a.page - b.page)
-  const sections: Array<{ title: string; startPage: number; endPage: number }> = []
-  let cs = chapter.startPage
+  const segments: Array<{ title: string; startPage: number; endPage: number }> = []
+  let cs = rangeStart
   for (let i = 0; i < sorted.length; i++) {
-    sections.push({
+    segments.push({
       title: i === 0 ? firstTitle : sorted[i - 1].title,
       startPage: cs,
       endPage: sorted[i].page - 1,
     })
     cs = sorted[i].page
   }
-  sections.push({
+  segments.push({
     title: sorted.length > 0 ? sorted[sorted.length - 1].title : firstTitle,
     startPage: cs,
-    endPage: chapter.endPage,
+    endPage: rangeEnd,
   })
-  return sections
+  return segments
+}
+
+// Rebuild a chapter's sections from the Divide Sections editor. 'Section 1' is a
+// fallback for a chapter that has no sections yet.
+export function buildSectionsFromDividers(
+  chapter: Pick<ChapterWithSections, 'startPage' | 'endPage' | 'sections'>,
+  dividers: Divider[]
+): Array<{ title: string; startPage: number; endPage: number }> {
+  return buildSegmentsFromDividers(chapter.startPage, chapter.endPage, chapter.sections, 'Section 1', dividers)
+}
+
+// Rebuild a book's chapters from the Reorganize Chapters editor. When chapter 1
+// starts after page 1 it is itself a divider, so the pages before it are front
+// matter and must not reuse its title.
+export function buildChaptersFromDividers(
+  chapters: Array<{ title: string; startPage: number }>,
+  totalPages: number,
+  dividers: Divider[]
+): Array<{ title: string; startPage: number; endPage: number }> {
+  const fallback = dividers.length > 0 ? 'Front Matter' : 'Chapter 1'
+  return buildSegmentsFromDividers(1, totalPages, chapters, fallback, dividers)
 }
 
 export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
