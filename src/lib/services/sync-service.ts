@@ -26,6 +26,13 @@ function serverStamp(updatedAt: unknown, fallback: number): number {
   const ms = typeof updatedAt === 'string' ? Date.parse(updatedAt) : NaN
   return Number.isFinite(ms) ? ms : fallback
 }
+/**
+ * Server progress is a 0-1 float; locally it's a 0-100 integer percent. A bare
+ * `* 100` turns 0.57 into 56.99999999999999, which the chapter list prints raw.
+ */
+function percentFromServer(fraction: number): number {
+  return Math.round(fraction * 100)
+}
 const PENDING_VOCAB_DELETES_KEY = 'nibble_pendingVocabDeletes'
 const MAX_PENDING_VOCAB_DELETES = 200
 
@@ -1139,7 +1146,7 @@ class SyncService {
       lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : null,
       lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? null,
       lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
-        ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+        ? percentFromServer(sb.lastAccessedScrollProgress as number) // 0-1 → 0-100
         : null,
       lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
       completedAt: sb.completedAt ? new Date(sb.completedAt as string).getTime() : null,
@@ -1190,7 +1197,7 @@ class SyncService {
         isRead: (ss.isRead as boolean) ?? false,
         readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
         lastPageViewed: (ss.lastPageViewed as number) ?? null,
-        scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
+        scrollProgress: percentFromServer((ss.scrollProgress as number) ?? 0),
         updatedAt: serverStamp(ss.updatedAt, now),
       }).catch((err: { name?: string }) => {
         if (err?.name !== 'ConstraintError') throw err
@@ -1351,7 +1358,7 @@ class SyncService {
           lastReadAt: sb.lastReadAt ? new Date(sb.lastReadAt as string).getTime() : local.lastReadAt,
           lastAccessedSectionId: (sb.lastAccessedSectionId as string) ?? local.lastAccessedSectionId,
           lastAccessedScrollProgress: sb.lastAccessedScrollProgress != null
-            ? (sb.lastAccessedScrollProgress as number) * 100 // 0-1 → 0-100
+            ? percentFromServer(sb.lastAccessedScrollProgress as number) // 0-1 → 0-100
             : local.lastAccessedScrollProgress,
           lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? local.lastAccessedWordIndex,
           updatedAt: serverUpdated,
@@ -1429,7 +1436,7 @@ class SyncService {
           isRead: (ss.isRead as boolean) ?? false,
           readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
           lastPageViewed: (ss.lastPageViewed as number) ?? null,
-          scrollProgress: ((ss.scrollProgress as number) ?? 0) * 100,
+          scrollProgress: percentFromServer((ss.scrollProgress as number) ?? 0),
           updatedAt: serverStamp(ss.updatedAt, Date.now()),
         }).catch((err: { name?: string }) => {
           if (err?.name !== 'ConstraintError') throw err
@@ -1449,7 +1456,7 @@ class SyncService {
             readAt: ss.readAt ? new Date(ss.readAt as string).getTime() : null,
             scrollProgress: Math.max(
               local.scrollProgress ?? 0,
-              ((ss.scrollProgress as number) ?? 0) * 100,
+              percentFromServer((ss.scrollProgress as number) ?? 0),
             ),
             lastPageViewed: (ss.lastPageViewed as number) ?? local.lastPageViewed,
             extractedText: (ss.extractedText as string) ?? local.extractedText,

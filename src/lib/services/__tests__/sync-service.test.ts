@@ -1372,6 +1372,28 @@ describe('sync push — page sentinel round-trips as the server NULL', () => {
     expect(internals().chapterToSync(await db.chapters.get('ch-real'), bookMap)).toMatchObject({ startPage: 1, endPage: 12 })
     expect(internals().sectionToSync(await db.sections.get('sec-real'), bookMap)).toMatchObject({ startPage: 3, endPage: 7 })
   })
+
+  // 0.57 * 100 === 56.99999999999999 in JS; the chapter list printed it raw.
+  it('stores a pulled 0-1 scrollProgress as a whole percent on insert and merge', async () => {
+    await internals().applyServerChanges(
+      {
+        chapters: [{ id: 'ch-sp', bookId: 'remote-book-1', title: 'C', sortOrder: 0, startPage: 1, endPage: 2, updatedAt: serverTime }],
+        sections: [
+          { id: 'sec-sp-57', bookId: 'remote-book-1', chapterId: 'ch-sp', title: 'S', sortOrder: 0, startPage: 1, endPage: 1, scrollProgress: 0.57, updatedAt: serverTime },
+          { id: 'sec-sp-55', bookId: 'remote-book-1', chapterId: 'ch-sp', title: 'S', sortOrder: 1, startPage: 2, endPage: 2, scrollProgress: 0.1, updatedAt: serverTime },
+        ],
+      },
+      new Map([['local-book-1', 'remote-book-1']]),
+    )
+    expect((await db.sections.get('sec-sp-57'))?.scrollProgress).toBe(57)
+
+    const newer = new Date(Date.parse(serverTime) + 1000).toISOString()
+    await internals().applyServerChanges(
+      { sections: [{ id: 'sec-sp-55', bookId: 'remote-book-1', chapterId: 'ch-sp', title: 'S', sortOrder: 1, startPage: 2, endPage: 2, scrollProgress: 0.55, updatedAt: newer }] },
+      new Map([['local-book-1', 'remote-book-1']]),
+    )
+    expect((await db.sections.get('sec-sp-55'))?.scrollProgress).toBe(55)
+  })
 })
 
 // Every page load re-uploaded the entire library (prod: "sync:push: 13 books,

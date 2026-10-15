@@ -430,7 +430,7 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
                 </div>
                 <div className="flex items-center gap-2">
                   {!section.isRead && section.scrollProgress != null && section.scrollProgress > 0 && (
-                    <span className="text-xs text-muted-foreground">{section.scrollProgress}%</span>
+                    <span className="text-xs text-muted-foreground">{Math.round(section.scrollProgress)}%</span>
                   )}
                   <span className="text-xs text-muted-foreground">p.{section.startPage}-{section.endPage}</span>
                 </div>
