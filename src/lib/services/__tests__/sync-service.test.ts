@@ -1182,6 +1182,163 @@ describe('vocab delete durability — pending-delete queue (KAN-283)', () => {
   })
 })
 
+// Regression coverage for KAN-349: BookRepository.delete() drops the local rows
+// first, so a DELETE /books/:id that failed left the server book active and the
+// next init sync re-downloaded it as cloud-only. The remoteId is now parked and
+// retried, and held out of every download path until it lands.
+describe('book delete durability — pending-delete queue (KAN-349)', () => {
+  const PENDING_KEY = 'nibble_pendingBookDeletes'
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number }
+  const internals = () => syncService as unknown as Internals
+
+  /** Records the order of DELETE /books/:id and /sync calls; `settled` ids come back tombstoned. */
+  function installBookFetchMock(opts: {
+    deleteStatus: number | 'reject'
+    tokenStatus?: number
+    syncBody?: (settled: Set<string>) => unknown
+  }) {
+    const calls: string[] = []
+    const settled = new Set<string>()
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        const status = opts.tokenStatus ?? 200
+        return new Response(status === 200 ? JSON.stringify({ token: 'fake.jwt.token' }) : '', { status })
+      }
+      if (init?.method === 'DELETE' && url.includes('/books/')) {
+        const id = url.split('/books/')[1]
+        calls.push(`DELETE ${id}`)
+        if (opts.deleteStatus === 'reject') throw new Error('offline')
+        if (opts.deleteStatus >= 200 && opts.deleteStatus < 300) settled.add(id)
+        return new Response('', { status: opts.deleteStatus })
+      }
+      if (url.endsWith('/sync')) {
+        calls.push('SYNC')
+        return new Response(JSON.stringify(opts.syncBody?.(settled) ?? {}), { status: 200 })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+    return calls
+  }
+
+  const syncedAt = '2026-10-15T00:00:00.000Z'
+  /** /sync payload where server book `rb-1` (plus one vocab row) is active until its DELETE lands. */
+  const serverWithBook = (settled: Set<string>) => ({
+    syncedAt,
+    serverChanges: {
+      books: [{ id: 'rb-1', catalogId: 'c-1', title: 'Doomed', updatedAt: syncedAt, deletedAt: settled.has('rb-1') ? syncedAt : null }],
+      chapters: [],
+      sections: [],
+      vocabulary: [{ id: 'v-1', word: 'doomed', bookId: 'rb-1', updatedAt: syncedAt, createdAt: syncedAt, deletedAt: settled.has('rb-1') ? syncedAt : null }],
+      settings: null,
+    },
+    failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+  })
+
+  const addRemoteBook = async () => {
+    const { BookRepository } = await import('@/lib/repositories/book-repository')
+    const repo = new BookRepository()
+    const book = await repo.create({ title: 'Doomed', author: 'A', totalPages: 1, pdfBlob: new Blob(['x']) })
+    await db.books.update(book.id, { remoteId: 'rb-1' })
+    return { repo, id: book.id }
+  }
+
+  const pending = (): string[] => JSON.parse(localStorage.getItem(PENDING_KEY) || '[]')
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    internals().token = null
+    internals().tokenExp = 0
+    internals().hasInitSynced = true
+    internals().isSyncing = false
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+    internals().token = null
+    internals().tokenExp = 0
+  })
+
+  it('parks the remoteId when the backend DELETE fails, and still drops the local book', async () => {
+    const { repo, id } = await addRemoteBook()
+    const calls = installBookFetchMock({ deleteStatus: 500 })
+
+    expect(await repo.delete(id)).toEqual({ backendSyncFailed: true })
+
+    expect(calls).toEqual(['DELETE rb-1'])
+    expect(await db.books.get(id)).toBeUndefined()
+    expect(pending()).toEqual(['rb-1'])
+  })
+
+  it('parks the remoteId when the session is expired or the network throws', async () => {
+    const { repo, id } = await addRemoteBook()
+    const calls = installBookFetchMock({ deleteStatus: 200, tokenStatus: 401 })
+    expect(await repo.delete(id)).toEqual({ backendSyncFailed: true })
+    expect(calls).toEqual([])
+    expect(pending()).toEqual(['rb-1'])
+
+    localStorage.clear()
+    const second = await addRemoteBook()
+    installBookFetchMock({ deleteStatus: 'reject' })
+    expect(await second.repo.delete(second.id)).toEqual({ backendSyncFailed: true })
+    expect(pending()).toEqual(['rb-1'])
+  })
+
+  it('queues nothing on 2xx or 404', async () => {
+    for (const status of [200, 404]) {
+      const { repo, id } = await addRemoteBook()
+      installBookFetchMock({ deleteStatus: status })
+      expect(await repo.delete(id)).toEqual({ backendSyncFailed: false })
+      expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    }
+  })
+
+  it('init sync does not re-download a book whose delete is still pending', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['rb-1']))
+    internals().hasInitSynced = false
+    const calls = installBookFetchMock({ deleteStatus: 500, syncBody: serverWithBook })
+
+    await syncService.sync()
+
+    // Retried before the pull, failed again, so it stays parked...
+    expect(calls).toEqual(['DELETE rb-1', 'SYNC'])
+    expect(pending()).toEqual(['rb-1'])
+    // ...and the still-active server book is NOT treated as cloud-only.
+    expect(await db.books.count()).toBe(0)
+    expect(syncService.getSyncLog().some(l => l.includes('cloud-only: 0'))).toBe(true)
+  })
+
+  it('sync drains the parked delete before the pull and empties the queue', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['rb-1']))
+    internals().hasInitSynced = false
+    const calls = installBookFetchMock({ deleteStatus: 200, syncBody: serverWithBook })
+
+    await syncService.sync()
+
+    expect(calls).toEqual(['DELETE rb-1', 'SYNC'])
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    expect(await db.books.count()).toBe(0)
+  })
+
+  it('downloadFromCloud() withholds a still-pending book and its vocab', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['rb-1']))
+    installBookFetchMock({ deleteStatus: 500, syncBody: serverWithBook })
+
+    expect(await syncService.downloadFromCloud()).toEqual({ booksDownloaded: 0 })
+
+    expect(pending()).toEqual(['rb-1'])
+    expect(await db.books.count()).toBe(0)
+    expect(await db.vocabulary.get('v-1')).toBeUndefined()
+  })
+})
+
 // Mirrors SYNC_MAX_WAIT_MS in sync-service.ts (not exported).
 const SYNC_MAX_WAIT_MS_TEST = 120_000
 

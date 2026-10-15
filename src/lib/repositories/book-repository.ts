@@ -146,27 +146,10 @@ export class BookRepository {
     // Local-only book never reached the backend — nothing to delete remotely.
     if (!remoteId) return { backendSyncFailed: false }
 
-    try {
-      const tokenRes = await fetch('/api/auth/token')
-      if (!tokenRes.ok) {
-        console.warn(`Failed to delete book from backend: auth token fetch returned ${tokenRes.status}`)
-        return { backendSyncFailed: true }
-      }
-      const { token } = await tokenRes.json()
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
-      const res = await fetch(`${apiUrl}/books/${remoteId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      // 404 = already gone on server (parity with KAN-137 vocab delete)
-      if (!res.ok && res.status !== 404) {
-        console.warn(`Failed to delete book from backend: ${res.status}`)
-        return { backendSyncFailed: true }
-      }
-      return { backendSyncFailed: false }
-    } catch {
-      console.warn('Failed to delete book from backend')
-      return { backendSyncFailed: true }
-    }
+    // A failed DELETE is parked and retried every sync tick; without that the
+    // next init sync re-downloads the still-active server book (KAN-349).
+    const settled = await syncService.deleteBookRemote(remoteId)
+    if (!settled) console.warn('Failed to delete book from backend — queued for retry')
+    return { backendSyncFailed: !settled }
   }
 }

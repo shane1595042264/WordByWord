@@ -35,6 +35,9 @@ function percentFromServer(fraction: number): number {
 }
 const PENDING_VOCAB_DELETES_KEY = 'nibble_pendingVocabDeletes'
 const MAX_PENDING_VOCAB_DELETES = 200
+// Book remoteIds whose backend DELETE has not landed yet (KAN-349).
+const PENDING_BOOK_DELETES_KEY = 'nibble_pendingBookDeletes'
+const MAX_PENDING_BOOK_DELETES = 200
 
 export interface CloudStatus {
   bookCount: number
@@ -205,25 +208,33 @@ class SyncService {
   // Failed deletes are therefore parked in localStorage and re-issued on every
   // sync tick until the backend settles them.
 
-  private readPendingVocabDeletes(): string[] {
+  private readIdQueue(key: string): string[] {
     try {
-      const raw = JSON.parse(localStorage.getItem(PENDING_VOCAB_DELETES_KEY) || '[]')
+      const raw = JSON.parse(localStorage.getItem(key) || '[]')
       return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : []
     } catch {
       return []
     }
   }
 
-  private writePendingVocabDeletes(ids: string[]): void {
+  private writeIdQueue(key: string, ids: string[], max: number): void {
     try {
       if (ids.length === 0) {
-        localStorage.removeItem(PENDING_VOCAB_DELETES_KEY)
+        localStorage.removeItem(key)
         return
       }
       // Keep the newest ids if the queue ever runs away (sustained offline +
       // bulk deletes) so localStorage cannot grow without bound.
-      localStorage.setItem(PENDING_VOCAB_DELETES_KEY, JSON.stringify(ids.slice(-MAX_PENDING_VOCAB_DELETES)))
+      localStorage.setItem(key, JSON.stringify(ids.slice(-max)))
     } catch { /* ignore */ }
+  }
+
+  private readPendingVocabDeletes(): string[] {
+    return this.readIdQueue(PENDING_VOCAB_DELETES_KEY)
+  }
+
+  private writePendingVocabDeletes(ids: string[]): void {
+    this.writeIdQueue(PENDING_VOCAB_DELETES_KEY, ids, MAX_PENDING_VOCAB_DELETES)
   }
 
   /** Vocab ids whose backend soft-delete has not landed yet. */
@@ -252,8 +263,12 @@ class SyncService {
    * notFound). Returns false for anything retryable: 5xx, network, abort.
    */
   private async deleteVocabOnServer(id: string, token: string, signal?: AbortSignal): Promise<boolean> {
+    return this.deleteOnServer(`vocabulary/${id}`, token, signal)
+  }
+
+  private async deleteOnServer(path: string, token: string, signal?: AbortSignal): Promise<boolean> {
     try {
-      const res = await fetch(`${this.getApiUrl()}/vocabulary/${id}`, {
+      const res = await fetch(`${this.getApiUrl()}/${path}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
         signal,
@@ -304,6 +319,78 @@ class SyncService {
     const settled = pending.length - remaining.length
     this.log(
       'vocab:delete-drain',
+      `${settled}/${pending.length} pending delete${pending.length === 1 ? '' : 's'} settled${remaining.length ? `, ${remaining.length} still queued` : ''}`,
+    )
+  }
+
+  // ── Pending book deletes ─────────────────────────────────────
+  //
+  // Same shape as the vocab queue above. BookRepository.delete() removes the
+  // local rows first, so a DELETE /books/:id that fails leaves the server book
+  // ACTIVE and the next init sync re-downloads it as cloud-only (KAN-349).
+  // Failed deletes are parked by remoteId and re-issued every sync tick; until
+  // they land, the pending ids are held out of every download path.
+
+  private readPendingBookDeletes(): string[] {
+    return this.readIdQueue(PENDING_BOOK_DELETES_KEY)
+  }
+
+  private writePendingBookDeletes(ids: string[]): void {
+    this.writeIdQueue(PENDING_BOOK_DELETES_KEY, ids, MAX_PENDING_BOOK_DELETES)
+  }
+
+  /** Book remoteIds whose backend soft-delete has not landed yet. */
+  getPendingBookDeletes(): string[] {
+    return this.readPendingBookDeletes()
+  }
+
+  private queueBookDelete(remoteId: string): void {
+    const ids = this.readPendingBookDeletes()
+    if (ids.includes(remoteId)) return
+    ids.push(remoteId)
+    this.writePendingBookDeletes(ids)
+    this.log('book:delete-queued', `${remoteId} — backend delete failed, will retry next sync`)
+  }
+
+  private unqueueBookDelete(remoteId: string): void {
+    const ids = this.readPendingBookDeletes()
+    const next = ids.filter(x => x !== remoteId)
+    if (next.length !== ids.length) this.writePendingBookDeletes(next)
+  }
+
+  /**
+   * Soft-delete a book on the backend by its remoteId. Removing the local rows
+   * is the caller's job; on any failure the id is parked and retried on every
+   * later sync tick. Returns true once the server state is settled (2xx/404).
+   */
+  async deleteBookRemote(remoteId: string): Promise<boolean> {
+    const token = await this.getToken()
+    if (token && (await this.deleteOnServer(`books/${remoteId}`, token))) {
+      this.unqueueBookDelete(remoteId)
+      return true
+    }
+    this.queueBookDelete(remoteId)
+    return false
+  }
+
+  /**
+   * Re-issue every parked book delete. Runs at the head of a sync tick so a
+   * delete that settles here comes back tombstoned in the same pull.
+   */
+  private async drainBookDeletes(token: string, signal?: AbortSignal): Promise<void> {
+    const pending = this.readPendingBookDeletes()
+    if (pending.length === 0) return
+    const settledIds = new Set<string>()
+    for (const id of pending) {
+      if (await this.deleteOnServer(`books/${id}`, token, signal)) settledIds.add(id)
+    }
+    // Re-read rather than writing a snapshot: a delete that failed while this
+    // drain was awaiting the network must not be dropped from the queue.
+    const remaining = this.readPendingBookDeletes().filter(id => !settledIds.has(id))
+    this.writePendingBookDeletes(remaining)
+    const settled = settledIds.size
+    this.log(
+      'book:delete-drain',
       `${settled}/${pending.length} pending delete${pending.length === 1 ? '' : 's'} settled${remaining.length ? `, ${remaining.length} still queued` : ''}`,
     )
   }
@@ -426,7 +513,8 @@ class SyncService {
    * reintroduce the silent-loss path KAN-283 fixed (sign out before the retry
    * lands and the delete is gone for good). A stale id drained under a different
    * user's token just 404s — the backend scopes lookups by userId — and a 404
-   * counts as settled, so it self-cleans without touching their data.
+   * counts as settled, so it self-cleans without touching their data. The
+   * same holds for PENDING_BOOK_DELETES_KEY (KAN-349).
    */
   clearLocalSyncState(): void {
     localStorage.removeItem(LAST_SYNCED_KEY)
@@ -634,6 +722,7 @@ class SyncService {
       // already tombstoned in this cycle's serverChanges instead of coming back
       // as active rows (KAN-283). No-ops when the queue is empty.
       await this.drainVocabDeletes(token, signal)
+      await this.drainBookDeletes(token, signal)
 
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(pushSinceMs).toArray(),
@@ -734,7 +823,12 @@ class SyncService {
       const existingRemoteIds = new Set(allBooks.map(b => b.remoteId).filter(Boolean))
       const activeServerBooks = serverBooks.filter(sb => !sb.deletedAt)
       const deletedServerBooks = serverBooks.filter(sb => sb.deletedAt)
-      const cloudOnlyBooks = activeServerBooks.filter(sb => !existingRemoteIds.has(sb.id as string))
+      // A book whose delete is still parked is active on the server but gone
+      // here on purpose — downloading it would undo the delete (KAN-349).
+      const pendingBookDeletes = new Set(this.readPendingBookDeletes())
+      const cloudOnlyBooks = activeServerBooks.filter(
+        sb => !existingRemoteIds.has(sb.id as string) && !pendingBookDeletes.has(sb.id as string),
+      )
       // Only detect hard-deleted books on INIT sync (from epoch) where server returns ALL books.
       // On incremental syncs, missing books just means they weren't modified — NOT deleted.
       const localOnlyBooks = isInitSync
@@ -913,6 +1007,7 @@ class SyncService {
     // This bootstrap is the loudest resurrection path (it re-adds every active
     // server vocab row), so settle any parked deletes first (KAN-283).
     await this.drainVocabDeletes(token)
+    await this.drainBookDeletes(token)
 
     // Fetch + parse + shape-validate BEFORE touching local IDB. If any of
     // (network, non-2xx, parse, malformed payload) fails we throw with the
@@ -941,12 +1036,18 @@ class SyncService {
     if (!Array.isArray(serverBooks) || !Array.isArray(serverVocab)) {
       throw new Error('Sync failed: malformed server response')
     }
-    const activeBooks = (serverBooks as Record<string, unknown>[]).filter((sb) => !sb.deletedAt)
-    // Deletes still queued after the drain above (offline / server down) would
+    // Deletes still queued after the drains above (offline / server down) would
     // otherwise be re-downloaded as active rows — hold them out until they land.
+    const stillPendingBookDeletes = new Set(this.readPendingBookDeletes())
+    const activeBooks = (serverBooks as Record<string, unknown>[]).filter(
+      (sb) => !sb.deletedAt && !stillPendingBookDeletes.has(sb.id as string),
+    )
     const stillPendingDeletes = new Set(this.readPendingVocabDeletes())
     const activeVocab = (serverVocab as Record<string, unknown>[]).filter(
-      (sv) => !sv.deletedAt && !stillPendingDeletes.has(sv.id as string),
+      (sv) =>
+        !sv.deletedAt &&
+        !stillPendingDeletes.has(sv.id as string) &&
+        !stillPendingBookDeletes.has(sv.bookId as string),
     )
 
     // Past this point, the cloud payload is valid — commit to replacing local
