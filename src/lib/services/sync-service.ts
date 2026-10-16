@@ -724,12 +724,19 @@ class SyncService {
       await this.drainVocabDeletes(token, signal)
       await this.drainBookDeletes(token, signal)
 
+      const repairedVocab = await this.repairVocabServerBookIds()
+
       const [dirtyBooks, dirtyChapters, dirtySections, dirtyVocab] = await Promise.all([
         db.books.where('updatedAt').above(pushSinceMs).toArray(),
         db.chapters.where('updatedAt').above(pushSinceMs).toArray(),
         db.sections.where('updatedAt').above(pushSinceMs).toArray(),
         db.vocabulary.where('updatedAt').above(pushSinceMs).toArray(),
       ])
+      // Repaired rows go up once regardless of the push cursor, with their own
+      // updatedAt: the server's last-write-wins makes an untouched row a no-op
+      // and lands any edit that was stranded while the id was wrong.
+      const dirtyVocabIds = new Set(dirtyVocab.map(v => v.id))
+      dirtyVocab.push(...repairedVocab.filter(v => !dirtyVocabIds.has(v.id)))
 
       // Build local→remote ID map for books
       const bookRemoteIdMap = new Map<string, string>()
@@ -998,6 +1005,26 @@ class SyncService {
     return Number.isFinite(synced) ? synced : 0
   }
 
+  /**
+   * Before KAN-350, Download from Cloud stored vocab with the SERVER book id,
+   * which the push filter drops and the delete cascades never match. Rewrite
+   * any such row to its book's local id. Returns the rewritten rows.
+   */
+  private async repairVocabServerBookIds(): Promise<VocabEntry[]> {
+    const remoteToLocal = new Map<string, string>()
+    for (const b of await db.books.toArray()) {
+      if (b.remoteId && b.remoteId !== b.id) remoteToLocal.set(b.remoteId, b.id)
+    }
+    if (remoteToLocal.size === 0) return []
+    const stale = await db.vocabulary.where('bookId').anyOf([...remoteToLocal.keys()]).toArray()
+    for (const v of stale) {
+      v.bookId = remoteToLocal.get(v.bookId!)
+      await db.vocabulary.update(v.id, { bookId: v.bookId })
+    }
+    if (stale.length > 0) this.log('sync:vocab-repair', `${stale.length} vocab row(s) re-linked to their local book`)
+    return stale
+  }
+
   // ── Download from cloud: pull all server data ────────────────
 
   async downloadFromCloud(): Promise<{ booksDownloaded: number }> {
@@ -1060,12 +1087,20 @@ class SyncService {
     })
 
     // Create local books from cloud (parallel, concurrency of 3)
-    const { succeeded: booksDownloaded, failed: failedDownloads } = await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
+    const { succeeded: booksDownloaded, failed: failedDownloads, created: remoteToLocal } =
+      await this.downloadBooksWithProgress(activeBooks, result.serverChanges, token)
 
     // Download vocabulary (active rows only — server returns soft-deleted vocab
     // so the incremental sync path can mirror tombstones; bootstrap must skip them)
     let failedVocabCount = 0
     for (const sv of activeVocab) {
+      // Books get a fresh local id, so map the server bookId like the
+      // incremental pull does — a raw server id is never pushed and never
+      // matched by the delete cascades (KAN-350). Vocab of a book that failed
+      // to download is skipped; the partial-download error asks for a retry.
+      const remoteBookId = sv.bookId as string | undefined
+      const localBookId = remoteBookId ? remoteToLocal.get(remoteBookId) : undefined
+      if (remoteBookId && !localBookId) continue
       try {
         await db.vocabulary.add({
           id: sv.id as string,
@@ -1078,7 +1113,7 @@ class SyncService {
           bookTitle: (sv.bookTitle as string) ?? '',
           sectionTitle: (sv.sectionTitle as string) ?? '',
           pageNumber: (sv.page as number) ?? 0,
-          bookId: sv.bookId as string,
+          bookId: localBookId,
           reviewCount: (sv.reviewCount as number) ?? 0,
           lastReviewedAt: sv.lastReviewedAt ? new Date(sv.lastReviewedAt as string).getTime() : null,
           createdAt: sv.createdAt ? new Date(sv.createdAt as string).getTime() : Date.now(),
@@ -1132,9 +1167,11 @@ class SyncService {
     serverChanges: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
     token: string,
     signal?: AbortSignal,
-  ): Promise<{ succeeded: number; failed: Array<{ remoteId: string; title: string }> }> {
+  ): Promise<{ succeeded: number; failed: Array<{ remoteId: string; title: string }>; created: Map<string, string> }> {
+    // remoteId → local id of every book written to IndexedDB
+    const created = new Map<string, string>()
     const total = books.length
-    if (total === 0) return { succeeded: 0, failed: [] }
+    if (total === 0) return { succeeded: 0, failed: [], created }
 
     let processed = 0
     let succeeded = 0
@@ -1150,7 +1187,7 @@ class SyncService {
         batch.map(async (sb) => {
           const remoteId = sb.id as string
           this.log('sync:download', `"${sb.customTitle || remoteId}"`)
-          await this.createLocalBookFromServer(sb, serverChanges, token, signal)
+          return this.createLocalBookFromServer(sb, serverChanges, token, signal)
         }),
       )
 
@@ -1164,12 +1201,13 @@ class SyncService {
           failed.push({ remoteId: sb.id as string, title })
         } else {
           succeeded++
+          created.set(sb.id as string, result.value)
         }
         this.emitStatus('syncing', `:pull "${title}" (${processed}/${total})`, { current: processed, total })
       }
     }
 
-    return { succeeded, failed }
+    return { succeeded, failed, created }
   }
 
   // ── Create a local book from server data ──────────────────────

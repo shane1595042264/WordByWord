@@ -147,7 +147,7 @@ describe('syncService.downloadFromCloud()', () => {
             {
               id: 'cloud-v-1',
               word: 'cloud',
-              bookId: 'remote-book-1',
+              bookId: null,
               updatedAt: syncedAt,
               createdAt: syncedAt,
             },
@@ -317,8 +317,8 @@ describe('syncService.downloadFromCloud() — watermark guard on partial failure
           sections: [],
           // Two entries with the same id — the second .add() raises ConstraintError.
           vocabulary: [
-            { id: 'dup', word: 'a', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt },
-            { id: 'dup', word: 'b', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt },
+            { id: 'dup', word: 'a', bookId: null, updatedAt: syncedAt, createdAt: syncedAt },
+            { id: 'dup', word: 'b', bookId: null, updatedAt: syncedAt, createdAt: syncedAt },
           ],
         },
         failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
@@ -338,7 +338,7 @@ describe('syncService.downloadFromCloud() — watermark guard on partial failure
           books: [],
           chapters: [],
           sections: [],
-          vocabulary: [{ id: 'v-ok', word: 'ok', bookId: 'b', updatedAt: syncedAt, createdAt: syncedAt }],
+          vocabulary: [{ id: 'v-ok', word: 'ok', bookId: null, updatedAt: syncedAt, createdAt: syncedAt }],
         },
         failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
       },
@@ -1931,5 +1931,125 @@ describe('syncService.uploadBook() — surfacing the server sentence (KAN-322)',
     installUploadMock(502, { error: { code: 'BAD_GATEWAY', message: '   ', status: 502 } })
 
     await expect(upload()).rejects.toThrow('Upload failed (502)')
+  })
+})
+
+// Regression coverage for KAN-350: Download from Cloud stored vocab with the
+// SERVER book id while the book got a fresh local id, so the push filter
+// dropped the row forever and the book-delete cascade never matched it.
+describe('vocab bookId after Download from Cloud (KAN-350)', () => {
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number }
+  const internals = () => syncService as unknown as Internals
+  const SERVER_TIME = '2026-10-01T00:00:00.000Z'
+
+  type PushedVocab = { id: string; bookId: string | null; explanation: string | null; updatedAt: string }
+  let pushes: Array<{ changes: { vocabulary: PushedVocab[] } }>
+
+  const serverBook = { id: 'rb-1', customTitle: 'Cloud Book', catalogId: 'cat-1', updatedAt: SERVER_TIME, deletedAt: null }
+  const serverVocab = {
+    id: 'v-1', word: 'hola', bookId: 'rb-1', explanation: 'old', updatedAt: SERVER_TIME, createdAt: SERVER_TIME, deletedAt: null,
+  }
+
+  function installFetch(vocabulary: Record<string, unknown>[]) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (url === '/api/auth/token') return json({ token: 'fake.jwt.token' })
+      if (url.endsWith('/sync')) {
+        const req = JSON.parse(init!.body as string)
+        pushes.push(req)
+        const all = req.lastSyncedAt === '1970-01-01T00:00:00.000Z'
+        return json({
+          syncedAt: new Date().toISOString(),
+          serverChanges: { books: all ? [serverBook] : [], chapters: [], sections: [], vocabulary: all ? vocabulary : [], settings: null },
+          failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+        })
+      }
+      if (url.endsWith('/summary')) return json({ catalog: { format: 'epub', title: 'Cloud Book', author: '' } })
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  const reload = () => { internals().hasInitSynced = false; internals().isSyncing = false }
+  const lastPushedVocab = () => pushes[pushes.length - 1].changes.vocabulary
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    pushes = []
+    internals().token = null
+    internals().tokenExp = 0
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    reload()
+    vi.restoreAllMocks()
+  })
+
+  it('stores the LOCAL book id, so a later edit is pushed with the server id', async () => {
+    installFetch([serverVocab])
+    await syncService.downloadFromCloud()
+
+    const book = (await db.books.toArray())[0]
+    expect(book.remoteId).toBe('rb-1')
+    expect(book.id).not.toBe('rb-1')
+    expect((await db.vocabulary.get('v-1'))?.bookId).toBe(book.id)
+
+    await db.vocabulary.update('v-1', { explanation: 'edited', updatedAt: Date.now() + 1000 })
+    reload()
+    await syncService.sync()
+
+    expect(lastPushedVocab()).toEqual([expect.objectContaining({ id: 'v-1', bookId: 'rb-1', explanation: 'edited' })])
+    // ...and the delete cascade's query now finds it.
+    expect(await db.vocabulary.where('bookId').equals(book.id).count()).toBe(1)
+  })
+
+  it('skips vocab whose book failed to download, but keeps book-less vocab', async () => {
+    installFetch([serverVocab, { ...serverVocab, id: 'v-2', word: 'libre', bookId: null }])
+    vi.spyOn(db.books, 'add').mockRejectedValueOnce(new Error('quota'))
+
+    await syncService.downloadFromCloud()
+
+    expect(await db.books.count()).toBe(0)
+    expect(await db.vocabulary.get('v-1')).toBeUndefined()
+    expect((await db.vocabulary.get('v-2'))?.bookId).toBeUndefined()
+  })
+
+  it('sync repairs a row left holding the server id and pushes it once with its own updatedAt', async () => {
+    const OLD = Date.parse('2026-10-02T00:00:00.000Z')
+    await db.books.add({
+      id: 'local-book-1', title: 'Cloud Book', author: '', totalPages: 1, format: 'epub', coverImage: null,
+      structureSource: 'native', processingStatus: 'complete', createdAt: OLD, updatedAt: OLD,
+      lastReadAt: null, lastAccessedSectionId: null, lastAccessedScrollProgress: null, lastAccessedWordIndex: null,
+      completedAt: null, remoteId: 'rb-1', catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+    installFetch([])
+    reload()
+    await syncService.sync() // first sync sets the push cursor past OLD
+
+    // A row written by the pre-fix download, edited after it (stranded edit).
+    await db.vocabulary.add({
+      id: 'v-1', word: 'hola', pronunciation: '', translation: '', targetLanguage: '', contextSentence: '',
+      explanation: 'stranded edit', bookTitle: '', sectionTitle: '', pageNumber: 0, bookId: 'rb-1',
+      reviewCount: 0, lastReviewedAt: null, createdAt: OLD, updatedAt: OLD,
+    })
+    reload()
+    await syncService.sync()
+
+    expect((await db.vocabulary.get('v-1'))?.bookId).toBe('local-book-1')
+    expect(lastPushedVocab()).toEqual([
+      expect.objectContaining({ id: 'v-1', bookId: 'rb-1', explanation: 'stranded edit', updatedAt: new Date(OLD).toISOString() }),
+    ])
+
+    // Once repaired it is an ordinary row again: an unchanged reload pushes nothing.
+    reload()
+    await syncService.sync()
+    expect(lastPushedVocab()).toEqual([])
   })
 })
