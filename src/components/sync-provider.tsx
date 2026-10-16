@@ -7,9 +7,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Toaster } from 'sonner'
 import { useSyncStatus } from '@/hooks/use-sync-status'
+import { ensureLocalDataOwner } from '@/lib/auth/clear-local-data'
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
-  const { status } = useSession()
+  const { data: session, status } = useSession()
+  const userId = session?.user?.id
   const [conflict, setConflict] = useState<SyncConflict | null>(null)
   const [resolver, setResolver] = useState<((choice: 'cloud' | 'local' | 'auto') => void) | null>(null)
 
@@ -28,12 +30,19 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (status === 'authenticated') {
-      syncService.onConflict(handleConflict)
-      syncService.init()
-      return () => syncService.destroy()
+    if (status !== 'authenticated' || !userId) return
+    let cancelled = false
+    syncService.onConflict(handleConflict)
+    // A previous user's library must be gone before the first sync, or it gets
+    // shown, conflict-resolved and partly pushed under this account (KAN-351).
+    ensureLocalDataOwner(userId).then(() => {
+      if (!cancelled) syncService.init()
+    })
+    return () => {
+      cancelled = true
+      syncService.destroy()
     }
-  }, [status, handleConflict])
+  }, [status, userId, handleConflict])
 
   return (
     <>
