@@ -13,6 +13,8 @@ interface SideBySideViewerProps {
   endPage: number
   text: string | null
   nibDocument?: NibDocument | null
+  /** The parent's parse settled without a document; show the empty state, not the skeleton */
+  parseFailed?: boolean
   sectionTitle: string
   readingMode: 'scroll' | 'flip'
   showIndicators?: boolean
@@ -41,7 +43,7 @@ interface SideBySideViewerProps {
   textContainerRef?: React.MutableRefObject<HTMLDivElement | null>
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress, textContainerRef }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, parseFailed = false, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress, textContainerRef }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement | null>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const pdfViewerRef = useRef<PDFViewerHandle>(null)
@@ -217,7 +219,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
                 vimMode={vimMode}
                 onCursorLineChange={handleCursorLineChange}
               />
-            ) : !text ? (
+            ) : !text && !parseFailed ? (
               <NibTextViewerSkeleton />
             ) : (
               <TextViewer text={text} sectionTitle={sectionTitle} />

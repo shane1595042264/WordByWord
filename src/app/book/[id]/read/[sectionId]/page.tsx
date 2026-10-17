@@ -983,6 +983,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   endPage={effectiveEndPage}
                   text={sectionText}
                   nibDocument={nibDocument}
+                  parseFailed={parseError}
                   sectionTitle={section.title}
                   readingMode={readingMode}
                   showIndicators={showIndicators}
