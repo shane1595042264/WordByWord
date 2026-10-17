@@ -443,7 +443,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
 
   useEffect(() => {
     if (!book || !section) { setNibDocument(null); setParseError(false); return }
-    if (!sectionText && !section.richContent) { setNibDocument(null); setParseError(false); return }
+    // A section with no stored text (TOC Only uploads, divided/merged ranges)
+    // still has its words in book.pdfBlob, so only bail when there is nothing
+    // to parse at all.
+    if (!sectionText && !section.richContent && !book.pdfBlob) { setNibDocument(null); setParseError(false); return }
     setParseError(false)
 
     let cancelled = false
@@ -486,34 +489,46 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         nextSection?.title,
         nextSection?.startPage,
       ).then(doc => {
-        if (!cancelled) setNibDocument(doc)
+        if (cancelled) return
+        if (!sectionText && doc.wordCount === 0) {
+          // No stored text and no text layer on these pages: a real scan.
+          setNibDocument(null)
+          setParseError(true)
+          return
+        }
+        setNibDocument(doc)
       }).catch(() => {
+        if (cancelled) return
+        if (!sectionText) {
+          setNibDocument(null)
+          setParseError(true)
+          toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+          return
+        }
         // Fallback to text-based parsing
-        if (!cancelled) {
-          try {
-            const fallbackService = new NibService()
-            if (isIntroSection) {
-              setNibDocument(fallbackService.parseExtractedTextIntroOnly(
-                sectionText!,
-                book.title,
-                book.author,
-                section.startPage,
-              ))
-            } else {
-              setNibDocument(fallbackService.parseExtractedTextBodyOnly(
-                sectionText!,
-                book.title,
-                book.author,
-                section.startPage,
-                section.title,
-              ))
-            }
-          } catch (err) {
-            console.error('Nib text fallback parsing failed:', err)
-            setNibDocument(null)
-            setParseError(true)
-            toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
+        try {
+          const fallbackService = new NibService()
+          if (isIntroSection) {
+            setNibDocument(fallbackService.parseExtractedTextIntroOnly(
+              sectionText,
+              book.title,
+              book.author,
+              section.startPage,
+            ))
+          } else {
+            setNibDocument(fallbackService.parseExtractedTextBodyOnly(
+              sectionText,
+              book.title,
+              book.author,
+              section.startPage,
+              section.title,
+            ))
           }
+        } catch (err) {
+          console.error('Nib text fallback parsing failed:', err)
+          setNibDocument(null)
+          setParseError(true)
+          toast.error('Text extraction failed. Try switching to PDF view.', { duration: 5000 })
         }
       })
     } else if (sectionText) {
@@ -566,9 +581,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (/^(table of )?contents$/i.test(section.title) && sectionText) return true  // TocViewer
     if (nibDocument) return true                                                   // NibTextViewer
     if (parseError && !sectionText) return false                                   // extraction-failed panel
-    if (!parseError && (sectionText || section.richContent)) return false          // NibTextViewerSkeleton
+    if (!parseError && (sectionText || section.richContent || book?.pdfBlob)) return false  // NibTextViewerSkeleton
     return !!sectionText                                                           // TextViewer (empty state when null)
-  }, [section, sectionText, nibDocument, parseError])
+  }, [section, sectionText, nibDocument, parseError, book?.pdfBlob])
 
   // Select first visible word when entering text/side-by-side mode (normal mode = word cursor)
   // On first load, restore to saved word index if available from Continue Reading params,
@@ -949,7 +964,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                       Switch to PDF View
                     </button>
                   </div>
-                ) : !nibDocument && !parseError && (sectionText || section.richContent) ? (
+                ) : !nibDocument && !parseError && (sectionText || section.richContent || book.pdfBlob) ? (
                   <NibTextViewerSkeleton />
                 ) : (
                   <TextViewer text={sectionText} sectionTitle={section.title} />
