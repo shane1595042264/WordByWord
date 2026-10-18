@@ -24,6 +24,8 @@ interface SideBySideViewerProps {
   syncScroll?: boolean
   /** Forward ref for vim-driven word selection */
   nibTextViewerRef?: React.RefObject<NibTextViewerHandle | null>
+  /** Local book id, recorded on vocab saved from the word panel */
+  bookId?: string
   /** Book title for vocab context */
   bookTitle?: string
   /** Current vim mode */
@@ -43,7 +45,7 @@ interface SideBySideViewerProps {
   textContainerRef?: React.MutableRefObject<HTMLDivElement | null>
 }
 
-export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, parseFailed = false, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress, textContainerRef }: SideBySideViewerProps) {
+export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocument, parseFailed = false, sectionTitle, readingMode, showIndicators = false, currentPage, onPageChange, onPageProgress, syncScroll = false, nibTextViewerRef, bookId, bookTitle, vimMode, sectionEndPage, showLineNumbers = false, onTextScrollProgress, textContainerRef }: SideBySideViewerProps) {
   const textRef = useRef<HTMLDivElement | null>(null)
   const pdfScrollRef = useRef<HTMLDivElement>(null)
   const pdfViewerRef = useRef<PDFViewerHandle>(null)
@@ -215,6 +217,7 @@ export function SideBySideViewer({ pdfBlob, startPage, endPage, text, nibDocumen
                 onWordSelect={handleWordSelect}
                 onDeselect={handleDeselect}
                 scrollContainerRef={textRef}
+                bookId={bookId}
                 bookTitle={bookTitle}
                 vimMode={vimMode}
                 onCursorLineChange={handleCursorLineChange}

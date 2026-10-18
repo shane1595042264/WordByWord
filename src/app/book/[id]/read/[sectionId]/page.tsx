@@ -919,6 +919,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   enableTextCursor
                   textCursorRef={pdfCursorRef}
                   vimMode={vim.mode}
+                  bookId={book.id}
                   bookTitle={book.title}
                   sectionTitle={section.title}
                 />
@@ -950,6 +951,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                     sectionTitle={section.title}
                     showIndicators={showIndicators}
                     scrollContainerRef={textScrollRef}
+                    bookId={book.id}
                     bookTitle={book.title}
                     onCursorLineChange={handleCursorLineChange}
                     vimMode={vim.mode}
@@ -992,6 +994,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
                   onPageProgress={handlePageProgress}
                   syncScroll={syncScroll}
                   nibTextViewerRef={nibTextViewerRef}
+                  bookId={book.id}
                   bookTitle={book.title}
                   vimMode={vim.mode}
                   sectionEndPage={section.endPage}

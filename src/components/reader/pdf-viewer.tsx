@@ -72,6 +72,7 @@ interface PDFViewerProps {
   /** Current vim mode, so the cursor can anchor visual-mode ranges. */
   vimMode?: PdfVimMode
   /** Context for the word info panel opened from the PDF cursor. */
+  bookId?: string
   bookTitle?: string
   sectionTitle?: string
 }
@@ -97,7 +98,7 @@ function makePanelWord(sel: PdfSelectionInfo): NibWord {
   return sentence.words[idx]
 }
 
-export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord, pdfViewerRef, sectionEndPage, enableTextCursor = false, textCursorRef, vimMode = 'normal', bookTitle, sectionTitle }: PDFViewerProps) {
+export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPage: controlledPage, onPageChange, onPageProgress, scrollRef, highlightWord, pdfViewerRef, sectionEndPage, enableTextCursor = false, textCursorRef, vimMode = 'normal', bookId, bookTitle, sectionTitle }: PDFViewerProps) {
   const internalRef = useRef<HTMLDivElement>(null)
   // Use a callback ref to assign to both internal and external refs
   const containerRef = internalRef
@@ -883,6 +884,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           word={panelWord}
           anchorEl={panelSel.anchorEl}
           onClose={handlePanelClose}
+          bookId={bookId}
           bookTitle={bookTitle}
           sectionTitle={sectionTitle}
           panelMode={panelSel.mode === 'sentence' ? 'sentence' : 'word'}

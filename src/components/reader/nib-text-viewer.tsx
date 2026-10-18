@@ -65,6 +65,8 @@ interface NibTextViewerProps {
   vimSelectedIndices?: Set<number>
   /** The scroll container ref for finding visible words */
   scrollContainerRef?: React.RefObject<HTMLElement | null>
+  /** Local book id, recorded on vocab saved from the word panel */
+  bookId?: string
   /** Book title for vocab context */
   bookTitle?: string
   /** Called when cursor line changes (for relative line numbers) */
@@ -368,6 +370,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     onDeselect,
     vimSelectedIndices,
     scrollContainerRef,
+    bookId,
     bookTitle,
     onCursorLineChange,
     vimMode = 'normal',
@@ -1323,6 +1326,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
             anchorEl={wordAnchorEl}
             showIndicators={showIndicators}
             onClose={handleClosePanel}
+            bookId={bookId}
             bookTitle={bookTitle}
             sectionTitle={sectionTitle}
             panelMode={vimMode === 'sentence' ? 'sentence' : 'word'}

@@ -16,6 +16,8 @@ interface WordInfoPanelProps {
   anchorEl: HTMLElement | null
   showIndicators?: boolean
   onClose: () => void
+  /** Local id of the book, so saved vocab cascades when the book is deleted */
+  bookId?: string
   /** Book title for vocab context */
   bookTitle?: string
   /** Section title for vocab context */
@@ -56,7 +58,7 @@ async function findCachedVocabEntry(
  *  - Lazy-loaded explanation
  *  - Draggable + pinnable
  */
-export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTitle, sectionTitle, panelMode = 'word' }: WordInfoPanelProps) {
+export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId, bookTitle, sectionTitle, panelMode = 'word' }: WordInfoPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isPinned, setIsPinned] = useState(false)
   const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null)
@@ -449,6 +451,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
         bookTitle: bookTitle ?? '',
         sectionTitle: sectionTitle ?? '',
         pageNumber: word.page.pageNumber,
+        bookId,
       })
       addedVocabIdRef.current = id
       setAddedToVocab(true)
@@ -458,7 +461,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookTit
     } finally {
       addingVocabRef.current = false
     }
-  }, [translation, addedToVocab, word, targetLang, explanation, bookTitle, sectionTitle])
+  }, [translation, addedToVocab, word, targetLang, explanation, bookId, bookTitle, sectionTitle])
 
   // ── Positioning (same drag logic as before) ──
 
