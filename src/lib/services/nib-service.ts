@@ -375,6 +375,30 @@ export class NibService {
   }
 
   /**
+   * Parse the extracted text of an EPUB chapter, keeping every paragraph.
+   *
+   * An EPUB section's text is exactly one spine document, so unlike a PDF
+   * section there is no intro overflow from a neighbouring section to strip.
+   * The text parser still tags everything before the first header-like line
+   * as 'introduction'; that tag is cleared so the chapter's opening renders
+   * as ordinary body text.
+   */
+  parseExtractedTextWholeChapter(
+    text: string,
+    title: string,
+    author: string,
+    pageNumber?: number,
+  ): NibDocument {
+    const data = this.textParser.parseText(text, title, author, pageNumber)
+    for (const page of data.pages) {
+      page.paragraphs = page.paragraphs.map(p =>
+        p.blockType === 'introduction' ? { ...p, blockType: undefined } : p,
+      )
+    }
+    return NibDocument.fromData(data)
+  }
+
+  /**
    * Rehydrate a NibDocument from stored data (e.g. from IndexedDB).
    */
   static fromStoredData(data: NibDocumentData): NibDocument {

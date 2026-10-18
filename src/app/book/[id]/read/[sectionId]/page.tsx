@@ -535,7 +535,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       // Priority 3: Text-based parsing (when no PDF blob)
       try {
         const nibService = new NibService()
-        if (isIntroSection) {
+        if (book.format === 'epub') {
+          // One EPUB section is one whole chapter: no PDF intro overflow to strip.
+          setNibDocument(nibService.parseExtractedTextWholeChapter(
+            sectionText,
+            book.title,
+            book.author,
+            section.startPage,
+          ))
+        } else if (isIntroSection) {
           setNibDocument(nibService.parseExtractedTextIntroOnly(
             sectionText,
             book.title,
