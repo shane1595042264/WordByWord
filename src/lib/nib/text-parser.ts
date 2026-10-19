@@ -77,7 +77,7 @@ const DEFAULT_CONFIG: Required<NibTextParserConfig> = {
     /^[A-Z][A-Z\s]{10,}$/,                         // All-caps lines of 10+ chars
   ],
   footnotePatterns: [
-    /^(\d+|[*†‡§¶]|\(\d+\))\s+\S/,               // Lines starting with footnote markers
+    /^(\d+|[*†‡§¶]|\(\d+\))\s+(?=\S)/,           // Lines starting with footnote markers (lookahead keeps the text's first char)
   ],
   listItemPatterns: [
     /^\s*[\u2022\u2023\u25E6\u2043\u2219•·-]\s+/,   // Bullet points (•, ‣, ◦, ⁃, etc.)

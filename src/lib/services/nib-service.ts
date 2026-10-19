@@ -20,12 +20,16 @@ export class NibService {
   private _pdfService: any | null = null
   private parser: NibParser
   private textParser: NibTextParser
+  private chapterTextParser: NibTextParser
   private parserConfig?: NibParserConfig
 
   constructor(parserConfig?: NibParserConfig, textParserConfig?: NibTextParserConfig) {
     this.parserConfig = parserConfig
     this.parser = new NibParser(parserConfig)
     this.textParser = new NibTextParser(textParserConfig)
+    // EPUB footnotes are separate spine documents or <aside> elements, never
+    // trailing lines, so a line like "2 cups rice" is body text, not a footnote.
+    this.chapterTextParser = new NibTextParser({ ...textParserConfig, footnotePatterns: [] })
   }
 
   /** Lazy-load PDFService to avoid importing pdfjs-dist (DOMMatrix) in SSR */
@@ -381,7 +385,8 @@ export class NibService {
    * section there is no intro overflow from a neighbouring section to strip.
    * The text parser still tags everything before the first header-like line
    * as 'introduction'; that tag is cleared so the chapter's opening renders
-   * as ordinary body text.
+   * as ordinary body text. Footnote detection is off: numbered lines
+   * (ingredient quantities, steps) stay in the body.
    */
   parseExtractedTextWholeChapter(
     text: string,
@@ -389,7 +394,7 @@ export class NibService {
     author: string,
     pageNumber?: number,
   ): NibDocument {
-    const data = this.textParser.parseText(text, title, author, pageNumber)
+    const data = this.chapterTextParser.parseText(text, title, author, pageNumber)
     for (const page of data.pages) {
       page.paragraphs = page.paragraphs.map(p =>
         p.blockType === 'introduction' ? { ...p, blockType: undefined } : p,
