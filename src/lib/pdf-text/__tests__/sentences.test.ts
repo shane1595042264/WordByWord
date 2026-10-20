@@ -86,6 +86,46 @@ describe('splitWordsIntoSentences', () => {
   })
 })
 
+describe('splitWordsIntoSentences with maxChars', () => {
+  it('cuts an unpunctuated run so no range joins to more than maxChars', () => {
+    // A code listing: ~3,000 chars, no terminal punctuation anywhere.
+    const listing = Array.from({ length: 500 }, (_, i) => `tok${i}`)
+    const ranges = splitWordsIntoSentences(listing, 1000)
+    expect(ranges.length).toBeGreaterThan(1)
+    expect(ranges[0].start).toBe(0)
+    expect(ranges[ranges.length - 1].end).toBe(listing.length)
+    for (let i = 0; i < ranges.length; i++) {
+      if (i > 0) expect(ranges[i].start).toBe(ranges[i - 1].end)
+      const text = listing.slice(ranges[i].start, ranges[i].end).join(' ')
+      expect(text.length).toBeLessThanOrEqual(1000)
+      // Greedy: adding the next word would have crossed the cap.
+      if (i < ranges.length - 1) expect(text.length + 1 + listing[ranges[i].end].length).toBeGreaterThan(1000)
+    }
+  })
+
+  it('leaves sentences under the cap exactly as without it', () => {
+    const prose = words('The quick brown fox. Jumps over the lazy dog. Dr. Smith arrived late!')
+    expect(splitWordsIntoSentences(prose, 1000)).toEqual(splitWordsIntoSentences(prose))
+  })
+
+  it('cuts at the cap inside a long sentence and still honours later punctuation', () => {
+    // "aaaa bbbb" is 9 chars; with a cap of 9 "cccc" starts a new range.
+    expect(splitWordsIntoSentences(['aaaa', 'bbbb', 'cccc.', 'Next', 'one'], 9)).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 3 },
+      { start: 3, end: 5 },
+    ])
+  })
+
+  it('a word longer than the cap is its own range', () => {
+    expect(splitWordsIntoSentences(['a', 'x'.repeat(20), 'b'], 10)).toEqual([
+      { start: 0, end: 1 },
+      { start: 1, end: 2 },
+      { start: 2, end: 3 },
+    ])
+  })
+})
+
 describe('findSentenceIndex', () => {
   const ranges = [
     { start: 0, end: 3 },

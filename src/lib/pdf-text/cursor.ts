@@ -45,6 +45,12 @@ const LINE_THRESHOLD_FRACTION = 0.4
 const SAME_LINE_FRACTION = 0.5
 /** Vertical distance is weighted this much more than horizontal when picking the nearest word on the next line. */
 const VERTICAL_WEIGHT = 3
+/**
+ * Longest sentence the cursor will form. The confirmed sentence is sent as
+ * context to /ai/translate-word and friends, which reject anything over 2,000
+ * chars; unpunctuated runs (code listings, tables) would otherwise exceed it.
+ */
+const MAX_SENTENCE_CHARS = 1000
 
 /** Contiguous run of flat indices belonging to one page, in DOM order. */
 interface PageRun {
@@ -132,7 +138,7 @@ export class PdfTextCursor implements PdfTextCursorHandle {
     this._words = words
     this.indexOf = indexOf
     this.pageRuns = pageRuns
-    this.sentences = splitWordsIntoSentences(words.map(w => w.text))
+    this.sentences = splitWordsIntoSentences(words.map(w => w.text), MAX_SENTENCE_CHARS)
 
     if (this.cursorEl && !indexOf.has(this.cursorEl)) {
       // The page under the cursor was replaced (section change, re-render):

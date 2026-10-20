@@ -362,6 +362,39 @@ describe('PdfTextCursor', () => {
     expect(sentInfo.mode).toBe('sentence')
   })
 
+  it('confirmSelection keeps an unpunctuated run (code listing) under the AI routes 2,000-char cap', () => {
+    // KAN-358: a listing page with no . ! ? used to confirm as one multi-page "sentence".
+    const listing = document.createElement('div')
+    const layer = document.createElement('div')
+    layer.className = PDF_TEXT_LAYER_CLASS
+    layer.setAttribute(PDF_WORD_PAGE_ATTR, '1')
+    listing.appendChild(layer)
+    for (let i = 0; i < 600; i++) {
+      const w = document.createElement('span')
+      w.className = PDF_WORD_CLASS
+      w.setAttribute(PDF_WORD_PAGE_ATTR, '1')
+      w.textContent = `std::tok${i}`
+      layer.appendChild(w)
+    }
+    document.body.appendChild(listing)
+    const confirmed = vi.fn<(sel: PdfSelectionInfo) => void>()
+    const c = new PdfTextCursor(listing, { onConfirm: confirmed })
+
+    for (const index of [0, 300, 599]) {
+      c.selectWordByIndex(index)
+      c.confirmSelection()
+      const info = confirmed.mock.calls[confirmed.mock.calls.length - 1][0] as PdfSelectionInfo
+      expect(info.sentenceText.length).toBeLessThanOrEqual(2000)
+      expect(info.sentenceWords[info.wordIndexInSentence]).toBe(`std::tok${index}`)
+      expect(info.sentenceText).toBe(info.sentenceWords.join(' '))
+    }
+    // Sentence mode highlights the same bounded range that is sent.
+    c.setMode('sentence')
+    c.selectWordByIndex(300)
+    c.selectSentenceByDelta(0)
+    expect(c.getSelectedText().length).toBeLessThanOrEqual(2000)
+  })
+
   it('a click on a word moves the cursor there and fires onConfirm', () => {
     const target = f.wordEls()[17] // 'It'
     target.dispatchEvent(new MouseEvent('click', { bubbles: true }))

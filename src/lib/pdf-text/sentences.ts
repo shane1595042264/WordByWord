@@ -67,16 +67,28 @@ function startsSentence(word: string): boolean {
  * Group an ordered word list into sentences. The last range always runs to
  * the end of the list (a trailing fragment without terminal punctuation is
  * still a sentence as far as the cursor is concerned). Empty input → [].
+ *
+ * With `maxChars`, a range is also cut before the word that would push its
+ * space-joined text past that length. The PDF text layer has no line or
+ * paragraph breaks, so a code listing, table or answer key with no terminal
+ * punctuation would otherwise be one "sentence" spanning pages — too long to
+ * send to the AI routes as context (KAN-358). A single word longer than the
+ * cap still forms its own range.
  */
-export function splitWordsIntoSentences(words: readonly string[]): SentenceRange[] {
+export function splitWordsIntoSentences(words: readonly string[], maxChars = Infinity): SentenceRange[] {
   const ranges: SentenceRange[] = []
   if (words.length === 0) return ranges
 
   let start = 0
+  let length = words[0].length
   for (let i = 0; i < words.length - 1; i++) {
-    if (endsSentence(words[i]) && startsSentence(words[i + 1])) {
+    const next = words[i + 1]
+    if ((endsSentence(words[i]) && startsSentence(next)) || length + 1 + next.length > maxChars) {
       ranges.push({ start, end: i + 1 })
       start = i + 1
+      length = next.length
+    } else {
+      length += 1 + next.length
     }
   }
   ranges.push({ start, end: words.length })
