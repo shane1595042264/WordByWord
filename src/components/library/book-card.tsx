@@ -76,6 +76,26 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
     }
   }, [processing?.status, onProcessingComplete])
 
+  // A failed job is terminal too: polling stops, and nothing else tells the
+  // local row (sync only special-cases processing -> complete), so the overlay
+  // froze on its last % with a Cancel the server 409s (KAN-359). Flip the row
+  // to 'error' ourselves — backend-managed field, so no updatedAt bump / sync
+  // push, same as the Retry write — then refresh. Keyed on the job id so a
+  // later Retry (new jobId) re-arms it.
+  const failedJobRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (processing?.status !== 'failed' || !isProcessing || !book.jobId) return
+    if (failedJobRef.current === book.jobId) return
+    failedJobRef.current = book.jobId
+    const jobId = book.jobId
+    db.books
+      .where('id').equals(book.id)
+      .and((row) => row.jobId === jobId && row.processingStatus === 'processing')
+      .modify({ processingStatus: 'error' })
+      .then(() => onProcessingComplete?.())
+      .catch((err) => console.error('Failed to mark book as errored:', err))
+  }, [processing?.status, isProcessing, book.id, book.jobId, onProcessingComplete])
+
   const stageLabel = processing?.stage ? (STAGE_LABELS[processing.stage] || 'Processing...') : 'Processing...'
 
   const coverContent = (

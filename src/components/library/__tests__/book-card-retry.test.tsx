@@ -11,7 +11,7 @@ vi.mock('next/link', () => ({
 }))
 
 // Records which job id the card asks the hook to poll.
-const useProcessingStatus = vi.fn((_jobId: string | undefined) => ({ data: null, pollError: null, retry: vi.fn() }))
+const useProcessingStatus = vi.fn((_jobId: string | undefined): { data: unknown; pollError: null; retry: () => void } => ({ data: null, pollError: null, retry: vi.fn() }))
 vi.mock('@/hooks/use-processing-status', () => ({
   useProcessingStatus: (jobId: string | undefined) => useProcessingStatus(jobId),
 }))
@@ -101,5 +101,63 @@ describe('BookCard Retry adopts the new job id (KAN-347)', () => {
     const row = await db.books.get('book-1')
     expect(row?.jobId).toBe('old-job')
     expect(row?.processingStatus).toBe('error')
+  })
+})
+
+describe('BookCard leaves the processing state when the job fails (KAN-359)', () => {
+  const failed = { status: 'failed', progress: 45, stage: 'ocr', error: 'boom', bookId: 'remote-1' }
+
+  beforeEach(async () => {
+    await db.books.clear()
+    await db.books.add(makeBook({ processingStatus: 'processing', jobId: 'job-a' }))
+    useProcessingStatus.mockReset()
+    useProcessingStatus.mockImplementation(() => ({ data: failed, pollError: null, retry: vi.fn() }))
+  })
+
+  it('flips the local row to error once, without an updatedAt bump, and refreshes', async () => {
+    const onProcessingComplete = vi.fn()
+    const book = withProgress((await db.books.get('book-1'))!)
+    const { rerender } = render(<BookCard book={book} onProcessingComplete={onProcessingComplete} />)
+
+    await waitFor(() => expect(onProcessingComplete).toHaveBeenCalledTimes(1))
+    const row = await db.books.get('book-1')
+    expect(row?.processingStatus).toBe('error')
+    expect(row?.updatedAt).toBe(1234)
+
+    // A re-render with the same stale processing row must not fire again.
+    rerender(<BookCard book={book} onProcessingComplete={onProcessingComplete} />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(onProcessingComplete).toHaveBeenCalledTimes(1)
+
+    // The refreshed row renders the failed state: Retry, no Cancel, a link.
+    rerender(<BookCard book={withProgress(row!)} onProcessingComplete={onProcessingComplete} />)
+    expect(screen.getByText('Processing failed')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(screen.queryByText('45%')).toBeNull()
+    expect(document.querySelector('a[href="/book/book-1"]')).not.toBeNull()
+  })
+
+  it('re-arms for a new job after Retry', async () => {
+    const onProcessingComplete = vi.fn()
+    const { rerender } = render(
+      <BookCard book={withProgress((await db.books.get('book-1'))!)} onProcessingComplete={onProcessingComplete} />,
+    )
+    await waitFor(() => expect(onProcessingComplete).toHaveBeenCalledTimes(1))
+
+    await db.books.update('book-1', { processingStatus: 'processing', jobId: 'job-b' })
+    rerender(<BookCard book={withProgress((await db.books.get('book-1'))!)} onProcessingComplete={onProcessingComplete} />)
+    await waitFor(() => expect(onProcessingComplete).toHaveBeenCalledTimes(2))
+    expect((await db.books.get('book-1'))?.processingStatus).toBe('error')
+  })
+
+  it('does nothing while the job is still running', async () => {
+    useProcessingStatus.mockImplementation(() => ({ data: { ...failed, status: 'processing' }, pollError: null, retry: vi.fn() }))
+    const onProcessingComplete = vi.fn()
+    render(<BookCard book={withProgress((await db.books.get('book-1'))!)} onProcessingComplete={onProcessingComplete} />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(onProcessingComplete).not.toHaveBeenCalled()
+    expect((await db.books.get('book-1'))?.processingStatus).toBe('processing')
+    expect(screen.getByText('45%')).toBeTruthy()
   })
 })
