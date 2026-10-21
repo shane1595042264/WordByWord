@@ -316,10 +316,11 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                     }
                     return
                   }
-                  // Force sync and refresh
+                  // Force sync and refresh. Wait out any in-flight sync — a plain sync() would
+                  // skip and refresh() would re-read the old chapters (KAN-360).
                   const { syncService } = await import('@/lib/services/sync-service')
                   syncService.markDirty()
-                  await syncService.sync()
+                  await syncService.syncAfterInFlight()
                   setShowChapterEditor(false)
                   refresh()
                 }}

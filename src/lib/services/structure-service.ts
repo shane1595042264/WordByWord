@@ -110,8 +110,10 @@ export class StructureService {
     // Stale token. Something bumped books.updatedAt since our last sync — another device,
     // or one of this app's own non-sync writes. Pull once to converge serverUpdatedAt and
     // retry exactly once, so the user doesn't lose the divider layout they just built.
+    // A plain sync() is a no-op skip while another sync is running, which would leave the
+    // stale token in place and turn the retry into a false StaleBookError (KAN-360).
     const { syncService } = await import('@/lib/services/sync-service')
-    await syncService.sync().catch(() => { /* fall through to the retry with what we have */ })
+    await syncService.syncAfterInFlight().catch(() => { /* fall through to the retry with what we have */ })
 
     const retryToken = await this.getLockToken(bookRemoteId)
     const second = await this.putStructure(bookRemoteId, chapters, retryToken, token)

@@ -192,7 +192,8 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
     }
     const { syncService } = await import('@/lib/services/sync-service')
     syncService.markDirty()
-    await syncService.sync()
+    // A plain sync() skips while another is in flight, leaving the old sections on screen (KAN-360).
+    await syncService.syncAfterInFlight()
     setDividingChapter(null)
     // Trigger a page refresh
     window.dispatchEvent(new CustomEvent('nibble:sync-complete'))
