@@ -694,12 +694,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
    * side-by-side viewer's left pane in side-by-side. That is the pane the reader
    * is actually reading, so it matches what the percent is supposed to mean.
    */
-  const persistScrollProgress = useCallback((percent: number) => {
+  const persistScrollProgress = useCallback((percent: number, initial = false) => {
     if (scrollDbTimerRef.current) clearTimeout(scrollDbTimerRef.current)
     scrollDbTimerRef.current = setTimeout(() => {
       import('@/lib/db/database').then(({ db }) => {
         const now = Date.now()
-        db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now }).catch((err) => {
+        // `initial` is the post-mount fit check, taken before the reader
+        // scrolled: same raise-only rule as handlePageProgress's initial report.
+        const write = initial
+          ? db.sections.get(sectionId).then(s => {
+              if (percent > (s?.scrollProgress ?? 0)) return db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
+            })
+          : db.sections.update(sectionId, { scrollProgress: percent, updatedAt: now })
+        write.catch((err) => {
           console.error('Failed to save scroll progress:', err)
           if (!saveErrorShownRef.current) {
             saveErrorShownRef.current = true
@@ -753,15 +760,17 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (pageDbTimerRef.current) clearTimeout(pageDbTimerRef.current)
   }, [])
 
-  const handleTextScroll = useCallback(() => {
+  const measureTextScroll = useCallback((initial: boolean) => {
     const el = textScrollRef.current
     if (!el) return
     const { scrollTop, scrollHeight, clientHeight } = el
     const maxScroll = scrollHeight - clientHeight
     const percent = maxScroll <= 0 ? 100 : Math.min(100, Math.round((scrollTop / maxScroll) * 100))
     setSectionProgress(percent)
-    persistScrollProgress(percent)
+    persistScrollProgress(percent, initial)
   }, [persistScrollProgress])
+
+  const handleTextScroll = useCallback(() => measureTextScroll(false), [measureTextScroll])
 
   /**
    * Side-by-side text pane progress. Previously this only fed React state for
@@ -782,13 +791,16 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   }, [])
 
   // Check initial text scroll state when text view mounts (e.g. content fits without scrolling)
+  // Gated on `textContentReady` like the restore effect: the skeleton and the
+  // extraction-failed panel fit the pane, so measuring them would save 100.
   useEffect(() => {
     if (viewMode !== 'text') return
     if (!textScrollRef.current) return
+    if (!textContentReady) return
     // Delay longer than scroll restore (300ms) to avoid overwriting restored position
-    const timer = setTimeout(() => handleTextScroll(), 600)
+    const timer = setTimeout(() => measureTextScroll(true), 600)
     return () => clearTimeout(timer)
-  }, [viewMode, textScrollReady]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewMode, textScrollReady, textContentReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keyboard shortcuts ──
   useShortcut('toggle-indicators', 'Toggle Element Labels', globalKeyOverrides['toggle-indicators'] || 'Ctrl+i', useCallback(() => {
