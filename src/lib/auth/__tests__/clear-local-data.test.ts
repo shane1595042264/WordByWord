@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { db } from '@/lib/db/database'
 import type { Book } from '@/lib/db/models'
 import { clearLocalUserData, ensureLocalDataOwner, LOCAL_OWNER_KEY } from '../clear-local-data'
+import { SettingsService } from '@/lib/services/settings-service'
 
 function seedBook(id: string) {
   return db.books.add({
@@ -53,6 +54,31 @@ describe('ensureLocalDataOwner (KAN-351)', () => {
 
     expect(await db.books.count()).toBe(1)
     expect(localStorage.getItem(LOCAL_OWNER_KEY)).toBe('user-a')
+  })
+
+  it('an owner change drops the previous user\'s settings and API key instead of pushing them (KAN-364)', async () => {
+    localStorage.setItem(LOCAL_OWNER_KEY, 'user-a')
+    const svc = new SettingsService()
+    svc.updateSettings({ targetLanguage: 'ja', anthropicApiKey: 'sk-user-a' })
+    svc.markSettingsSynced(svc.getSettingsUpdatedAt())
+
+    await ensureLocalDataOwner('user-b')
+
+    expect(localStorage.getItem('bbb-settings')).toBeNull()
+    expect(svc.hasPendingSettingsPush()).toBe(false)
+    expect(svc.getApiKey()).toBeNull()
+  })
+
+  it('sign-out leaves no settings for the next user to push or inherit (KAN-364)', async () => {
+    const svc = new SettingsService()
+    svc.updateSettings({ keymapOverrides: { 'normal:j': 'x' }, anthropicApiKey: 'sk-user-a' })
+    svc.markSettingsSynced(svc.getSettingsUpdatedAt())
+
+    await clearLocalUserData()
+
+    expect(svc.hasPendingSettingsPush()).toBe(false)
+    expect(svc.getApiKey()).toBeNull()
+    expect(svc.getSettings().keymapOverrides).toEqual({})
   })
 
   it('sign-out clears the owner so the next user claims an empty DB', async () => {

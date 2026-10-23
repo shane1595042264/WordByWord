@@ -191,12 +191,23 @@ export class SettingsService {
     this.writeNumber(SETTINGS_SYNCED_AT_KEY, marker)
   }
 
-  /** Drop both markers so a different user on this browser starts clean. */
-  clearSyncMarkers(): void {
+  /**
+   * Forget this browser's settings so a different user on it starts clean: the
+   * blob (including the device-local anthropicApiKey) and both markers.
+   *
+   * The blob is removed, not rewritten to defaults: any stored blob with no
+   * synced marker is the backfill branch of hasPendingSettingsPush, so a
+   * defaults blob would be pushed over the next user's cloud row (KAN-364).
+   */
+  clearLocalSettings(): void {
     try {
+      localStorage.removeItem(SETTINGS_KEY)
       localStorage.removeItem(SETTINGS_UPDATED_AT_KEY)
       localStorage.removeItem(SETTINGS_SYNCED_AT_KEY)
     } catch { /* ignore */ }
+    // The owner-change wipe runs without a reload, so mounted listeners (the
+    // root shortcut provider) would keep firing the previous user's keymap.
+    try { window.dispatchEvent(new Event(SETTINGS_SYNCED_EVENT)) } catch { /* ignore */ }
   }
 
   /**

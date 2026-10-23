@@ -81,12 +81,21 @@ describe('SettingsService cloud sync (KAN-288)', () => {
       expect(svc.getSettingsUpdatedAt()).toBeGreaterThan(before)
     })
 
-    it('clearSyncMarkers wipes both markers so a second user starts clean', () => {
-      svc.updateSettings({ readingMode: 'flip' })
+    it('clearLocalSettings leaves nothing for the next user to push or inherit (KAN-364)', () => {
+      svc.updateSettings({ readingMode: 'flip', keymapOverrides: { 'normal:j': 'x' }, anthropicApiKey: 'sk-user-a' })
       svc.markSettingsSynced(svc.getSettingsUpdatedAt())
-      svc.clearSyncMarkers()
+      const seen = vi.fn()
+      window.addEventListener(SETTINGS_SYNCED_EVENT, seen)
+
+      svc.clearLocalSettings()
+
+      window.removeEventListener(SETTINGS_SYNCED_EVENT, seen)
       expect(localStorage.getItem(UPDATED_AT_KEY)).toBeNull()
       expect(localStorage.getItem(SYNCED_AT_KEY)).toBeNull()
+      expect(svc.hasPendingSettingsPush()).toBe(false)
+      expect(svc.getApiKey()).toBeNull()
+      expect(svc.getSettings().keymapOverrides).toEqual({})
+      expect(seen).toHaveBeenCalledTimes(1)
     })
   })
 

@@ -520,13 +520,14 @@ class SyncService {
     localStorage.removeItem(LAST_SYNCED_KEY)
     localStorage.removeItem(LAST_PUSHED_KEY)
     localStorage.removeItem(SYNC_LOG_KEY)
-    // bbb-settings itself survives sign-out, so without this a second user on
-    // the same browser would look "dirty" and push the previous user's
-    // preferences into their account. Cleared = pull theirs instead (KAN-288).
+    // Settings go too, blob and markers both. Leaving the blob makes a second
+    // user on this browser look like an unsynced backfill, so their first sync
+    // would push the previous user's preferences (and keep their API key) into
+    // the new account. With nothing stored they pull their own row (KAN-364).
     try {
-      new SettingsService().clearSyncMarkers()
+      new SettingsService().clearLocalSettings()
     } catch (err) {
-      console.warn('[sync] could not clear settings sync markers', err)
+      console.warn('[sync] could not clear local settings', err)
     }
   }
 
