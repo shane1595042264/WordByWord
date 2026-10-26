@@ -28,6 +28,33 @@ function getLangLabel(code: TargetLanguage): string {
   return TARGET_LANGUAGES.find(l => l.code === code)?.label ?? code
 }
 
+/** Reader-facing text for the statuses a retry fixes, or null for the rest. */
+function friendlyStatusMessage(status: number): string | null {
+  if (status === 429) return 'Too many lookups — wait a moment and try again.'
+  if (status >= 500) return 'The AI service is busy — try again in a moment.'
+  return null
+}
+
+/**
+ * The message the word/sentence panel renders for a failed nibble-api call.
+ * err.message is shown verbatim (word-info-panel), so the raw response body
+ * must never be interpolated — it used to put
+ * `{"error":{"code":"INTERNAL_ERROR",...}}` in front of the reader (KAN-366).
+ * Other 4xx keep the server's own human-written envelope message.
+ */
+async function apiErrorMessage(res: Response): Promise<string> {
+  const friendly = friendlyStatusMessage(res.status)
+  if (friendly) return friendly
+  try {
+    const body = await res.json()
+    const message = body?.error?.message
+    if (typeof message === 'string' && message) return message
+  } catch {
+    // Non-JSON body — fall through to the generic message.
+  }
+  return `Translation failed (${res.status}) — try again.`
+}
+
 /**
  * Translation service. Calls nibble-api endpoints which proxy Anthropic
  * server-side using ANTHROPIC_API_KEY from the backend env — no
@@ -98,8 +125,7 @@ export class TranslationService {
       throw err
     }
     if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Translation API error (${res.status}): ${text.slice(0, 200)}`)
+      throw new Error(await apiErrorMessage(res))
     }
     return res.json() as Promise<T>
   }
@@ -213,8 +239,10 @@ export class TranslationService {
       throw err
     })
     if (!res.ok) {
-      const errorText = await res.text()
-      throw new Error(`Vision API error (${res.status}): ${errorText.slice(0, 200)}`)
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Your Anthropic API key in Settings was rejected.')
+      }
+      throw new Error(friendlyStatusMessage(res.status) ?? `Figure explanation failed (${res.status}) — try again.`)
     }
     const data = await res.json()
     return data.content?.[0]?.text ?? ''
