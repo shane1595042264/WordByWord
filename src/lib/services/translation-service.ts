@@ -28,8 +28,13 @@ function getLangLabel(code: TargetLanguage): string {
   return TARGET_LANGUAGES.find(l => l.code === code)?.label ?? code
 }
 
-/** Reader-facing text for the statuses a retry fixes, or null for the rest. */
+/**
+ * Reader-facing text for the statuses a retry fixes, plus the AI-access 402, or
+ * null for the rest. The 402 is mapped here because its server copy was billing
+ * text ("Processing job not yet paid") that meant nothing in the reader (KAN-367).
+ */
 function friendlyStatusMessage(status: number): string | null {
+  if (status === 402) return "AI features aren't enabled for this account."
   if (status === 429) return 'Too many lookups — wait a moment and try again.'
   if (status >= 500) return 'The AI service is busy — try again in a moment.'
   return null

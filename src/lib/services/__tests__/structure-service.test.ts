@@ -82,3 +82,29 @@ describe('StructureService.saveStructure() — 409 retry with a sync in flight (
     expect(putTokens).toEqual([STALE, FRESH])
   })
 })
+
+describe('StructureService.suggestFromTOC() failure copy', () => {
+  const realFetch = globalThis.fetch
+  afterEach(() => { globalThis.fetch = realFetch })
+
+  function installSuggestFetch(status: number, body: unknown) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input)
+      if (url === '/api/auth/token') return new Response(JSON.stringify({ token: 't' }), { status: 200 })
+      return new Response(JSON.stringify(body), { status })
+    }) as typeof fetch
+  }
+
+  // KAN-367: the AI-access gate's 402 carried billing copy the editor printed verbatim.
+  it('maps the AI-access 402 to its own copy instead of the server string', async () => {
+    installSuggestFetch(402, { error: { code: 'PAYMENT_REQUIRED', message: 'Processing job not yet paid', status: 402 } })
+    const { StructureService } = await import('../structure-service')
+    await expect(new StructureService().suggestFromTOC('remote-1', [1])).rejects.toThrow("AI Suggest isn't enabled for this account.")
+  })
+
+  it("keeps the server's own message for other failures (KAN-313)", async () => {
+    installSuggestFetch(502, { error: { code: 'AI_ERROR', message: 'AI response was truncated', status: 502 } })
+    const { StructureService } = await import('../structure-service')
+    await expect(new StructureService().suggestFromTOC('remote-1', [1])).rejects.toThrow('AI response was truncated')
+  })
+})

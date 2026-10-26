@@ -110,6 +110,13 @@ describe('TranslationService error messages (KAN-366)', () => {
     expect(err.message).not.toContain('<')
   })
 
+  // KAN-367: the AI-access gate's 402 carried billing copy the panel printed verbatim.
+  it('a 402 from the AI-access gate shows reader-facing copy, not the server string', async () => {
+    installErrorFetch(402, envelope('PAYMENT_REQUIRED', 'Processing job not yet paid', 402))
+    const err = await new TranslationService().translateWord('hola', 'hola mundo', 'es').catch((e) => e)
+    expect(err.message).toBe("AI features aren't enabled for this account.")
+  })
+
   it("keeps the server's own message for other 4xx envelopes", async () => {
     installErrorFetch(400, envelope('VALIDATION_ERROR', 'Invalid request body', 400))
     await expect(new TranslationService().translateSentence('hola', '', 'es')).rejects.toThrow('Invalid request body')
