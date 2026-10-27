@@ -5,7 +5,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 import { useShortcut } from '@/hooks/use-shortcuts'
-import { clearLocalUserData } from '@/lib/auth/clear-local-data'
+import { signOutLocalData } from '@/lib/auth/clear-local-data'
 
 const EMOJI_AVATARS = [
   '🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐵', '🦉', '🦋', '🐙',
@@ -51,7 +51,7 @@ export function UserMenu() {
   const handleSignOut = useCallback(async () => {
     if (signingOut) return
     setSigningOut(true)
-    await clearLocalUserData()
+    await signOutLocalData()
     await signOut({ callbackUrl: '/auth/login' })
   }, [signingOut])
 

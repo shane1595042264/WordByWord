@@ -44,6 +44,24 @@ export async function clearLocalUserData(): Promise<void> {
   }
 }
 
+/** How long Sign Out waits for pending changes to reach the server. */
+export const SIGN_OUT_FLUSH_TIMEOUT_MS = 8000
+
+/**
+ * The Sign Out path: push pending changes while the session token is still
+ * valid, then wipe. A failed or timed-out flush still wipes — sign-out must
+ * not be blockable by the network (KAN-368).
+ */
+export async function signOutLocalData(): Promise<void> {
+  try {
+    const flushed = await syncService.flushPending(SIGN_OUT_FLUSH_TIMEOUT_MS)
+    if (!flushed) console.warn('[signOutLocalData] recent changes could not be saved before sign-out')
+  } catch (err) {
+    console.warn('[signOutLocalData] flush failed', err)
+  }
+  await clearLocalUserData()
+}
+
 /**
  * Make sure the local data belongs to `userId` before sync starts. A
  * different stored owner means their session ended without Sign Out, so wipe

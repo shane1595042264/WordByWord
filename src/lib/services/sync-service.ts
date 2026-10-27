@@ -179,6 +179,45 @@ class SyncService {
     this.inFlight = null
   }
 
+  /**
+   * Push what is still waiting on the debounce, and let an in-flight push
+   * finish, before Sign Out wipes IndexedDB — destroy() would cancel both and
+   * drop up to 30s of progress (KAN-368). Never rejects: resolves false when
+   * the flush did not complete within timeoutMs, and the caller's destroy()
+   * then aborts whatever is still running.
+   */
+  async flushPending(timeoutMs: number): Promise<boolean> {
+    if (this.firstDirtyAt === null && !this.inFlight) return true
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+      this.debounceTimer = null
+    }
+    this.log('sync:signout-flush', 'pushing pending changes before sign-out')
+
+    const flush = (async () => {
+      let result: SyncResult | null = null
+      while (this.inFlight) result = await this.inFlight
+      // A write that landed mid-flight re-sets firstDirtyAt and missed that
+      // payload; a failed push left its rows dirty. Either way, one more go.
+      if (result === null || result.status !== 'complete' || this.firstDirtyAt !== null) {
+        result = await this.syncAfterInFlight()
+      }
+      return result.status === 'complete'
+    })().catch(() => false)
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), timeoutMs)
+    })
+    try {
+      const ok = await Promise.race([flush, timedOut])
+      if (!ok) this.log('sync:signout-flush', 'pending changes were not pushed before sign-out')
+      return ok
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   // ── Logging ───────────────────────────────────────────────────
 
   private log(action: string, details?: string) {
