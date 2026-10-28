@@ -1068,6 +1068,24 @@ class SyncService {
   // ── Download from cloud: pull all server data ────────────────
 
   async downloadFromCloud(): Promise<{ booksDownloaded: number }> {
+    // An in-flight sync() keeps downloading its own snapshot of cloud-only
+    // books after the wipe below, and a sync that starts mid-download reads a
+    // half-empty library — either way a book lands twice (KAN-370). Wait it
+    // out, then hold the sync lock for the whole download.
+    while (this.inFlight) await this.inFlight
+    // No await between the loop and claiming inFlight, same as forceUpload().
+    const run = this.runDownloadFromCloud()
+    const lock: Promise<SyncResult> = run.then(
+      (): SyncResult => ({ status: 'complete' }),
+      (err): SyncResult => ({ status: 'failed', reason: err instanceof Error ? err.message : String(err) }),
+    ).finally(() => {
+      if (this.inFlight === lock) this.inFlight = null
+    })
+    this.inFlight = lock
+    return run
+  }
+
+  private async runDownloadFromCloud(): Promise<{ booksDownloaded: number }> {
     const token = await this.getToken()
     if (!token) return { booksDownloaded: 0 }
 
@@ -1306,6 +1324,14 @@ class SyncService {
     // write this book — a post-destroy write can leak the prior user's book into
     // the next session after clearLocalSyncState().
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+
+    // Something else already wrote this book while our fetches were in flight
+    // — a second row with the same remoteId duplicates the library card (KAN-370).
+    const existing = await db.books.where('remoteId').equals(remoteId).first()
+    if (existing) {
+      this.log('sync:download-skip', `"${title}" already exists locally`)
+      return existing.id
+    }
 
     const localId = uuid()
     const now = Date.now()

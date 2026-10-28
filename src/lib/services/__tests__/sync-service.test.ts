@@ -1731,6 +1731,61 @@ describe('sync push — only rows changed since the last push go up', () => {
     expect(Number(localStorage.getItem('nibble_lastPushedAt'))).toBeGreaterThanOrEqual(releasedAt - 1)
   })
 
+  // KAN-370: Download from Cloud wiped the library and re-created every book
+  // while the init sync was still downloading its own cloud-only list, so the
+  // books in the sync's later batches landed twice.
+  it('downloadFromCloud() during an in-flight sync waits for it and leaves one row per remoteId', async () => {
+    reload()
+    server.books = [1, 2, 3, 4, 5].map((n) => ({ id: `remote-${n}`, customTitle: `Cloud ${n}`, catalogId: `cat-${n}`, updatedAt: SERVER_ROW_TIME }))
+    const fetchImpl = globalThis.fetch
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let heldSummaries = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url.endsWith('/summary') && pushes.length === 1) { heldSummaries++; await held }
+      return fetchImpl(input, init)
+    }) as typeof fetch
+
+    const background = syncService.sync()
+    await vi.waitFor(() => expect(heldSummaries).toBe(3)) // first batch is mid-download
+    const download = syncService.downloadFromCloud()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(pushes).toHaveLength(1) // the download's fetch waits for the held sync
+    release()
+
+    expect(await background).toEqual({ status: 'complete' })
+    expect(await download).toEqual({ booksDownloaded: 5 })
+    const remoteIds = (await db.books.toArray()).map((b) => b.remoteId).sort()
+    expect(remoteIds).toEqual(['remote-1', 'remote-2', 'remote-3', 'remote-4', 'remote-5'])
+  })
+
+  it('a sync() started while downloadFromCloud() runs is skipped instead of interleaving', async () => {
+    reload()
+    server.books = [{ id: 'remote-1', customTitle: 'Cloud 1', catalogId: 'cat-1', updatedAt: SERVER_ROW_TIME }]
+    let release!: () => void
+    duringRequest = () => new Promise<void>((r) => { release = r })
+    const download = syncService.downloadFromCloud()
+    await vi.waitFor(() => expect(pushes).toHaveLength(1))
+
+    expect(await syncService.sync()).toEqual({ status: 'skipped', reason: 'in-progress' })
+    release()
+    expect(await download).toEqual({ booksDownloaded: 1 })
+    expect(await syncService.sync()).toEqual({ status: 'complete' })
+    expect(await db.books.count()).toBe(1)
+  })
+
+  it('a cloud-only book that already has a local row is not added again', async () => {
+    reload()
+    server.books = [{ id: 'remote-1', customTitle: 'Cloud 1', catalogId: 'cat-1', updatedAt: SERVER_ROW_TIME }]
+    const create = (syncService as unknown as {
+      createLocalBookFromServer: (sb: Record<string, unknown>, sc: object, token: string) => Promise<string>
+    }).createLocalBookFromServer.bind(syncService)
+    const first = await create(server.books[0], {}, 'fake.jwt.token')
+    expect(await create(server.books[0], {}, 'fake.jwt.token')).toBe(first)
+    expect(await db.books.count()).toBe(1)
+  })
+
   // coverImage is usually a page-1 PNG data: URL rendered on this device (upload,
   // import, cloud download, "generate cover"). Pushing it put megabytes on every
   // book push, and once nibble-api applied book updates it would land in
