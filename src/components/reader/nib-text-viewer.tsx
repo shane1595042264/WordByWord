@@ -40,6 +40,14 @@ export interface NibTextViewerHandle {
   getVimCursorIndex: () => number
   /** Select a specific word by flat index (for position restore) */
   selectWordByIndex: (index: number) => void
+  /** Whether the word at a flat index is (at least partly) inside the scroll viewport */
+  isWordInView: (index: number) => boolean
+  /**
+   * The word at the viewport's vertical middle (falling back to the first
+   * visible word), or null when no word is on screen. Middle, not top, because
+   * selectWordByIndex restores with block: 'center'.
+   */
+  getViewportWordIndex: () => number | null
 }
 
 /** Callback for when cursor line changes */
@@ -954,6 +962,30 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         reportCursorLineForWord(clampedIdx)
         onWordSelect?.(word)
       }
+    },
+    isWordInView(index: number): boolean {
+      const container = scrollContainerRef?.current
+      const span = wordSpanRefs.current.get(index)
+      if (!container || !span) return false
+      const containerRect = container.getBoundingClientRect()
+      const rect = span.getBoundingClientRect()
+      return rect.bottom > containerRect.top && rect.top < containerRect.bottom
+    },
+    getViewportWordIndex(): number | null {
+      const container = scrollContainerRef?.current
+      if (!container) return null
+      const containerRect = container.getBoundingClientRect()
+      const midY = containerRect.top + containerRect.height / 2
+      let firstVisible: number | null = null
+      for (let i = 0; i < allWords.length; i++) {
+        const span = wordSpanRefs.current.get(i)
+        if (!span) continue
+        const rect = span.getBoundingClientRect()
+        if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) continue
+        if (firstVisible === null) firstVisible = i
+        if (rect.bottom > midY) return i
+      }
+      return firstVisible
     },
   }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
 

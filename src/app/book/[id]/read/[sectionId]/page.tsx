@@ -23,6 +23,7 @@ import { EDGE_DELTA } from '@/lib/vim/use-vim-mode'
 import { NibService } from '@/lib/services/nib-service'
 import { BookRepository } from '@/lib/repositories'
 import { resolvePdfPageNav, clampPage } from '@/lib/reader/page-navigation'
+import { resolveTextViewPosition, type SavedTextPosition } from '@/lib/reader/text-view-position'
 import type { PdfTextCursorHandle } from '@/lib/pdf-text/types'
 import type { NibDocument } from '@/lib/nib'
 import type { VimRule } from '@/lib/vim'
@@ -237,19 +238,43 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => { positionRef.current.progress = effectiveProgress }, [effectiveProgress])
   useEffect(() => { positionRef.current.wordIndex = selectedWordIndex }, [selectedWordIndex])
 
-  // Debounced save: fires 2s after any position change
+  // The text pane renders for text view and for every book without a PDF (EPUBs).
+  const textPaneOnScreenRef = useRef(false)
+  textPaneOnScreenRef.current = viewMode === 'text' || !hasPdf
+
+  /**
+   * The position to save right now. In the text pane a mouse/trackpad scroll
+   * never moves the vim cursor, so once the cursor is off screen the viewport
+   * decides the position instead (KAN-372, see resolveTextViewPosition).
+   */
+  const resolvePosition = useCallback((): SavedTextPosition => {
+    const { progress, wordIndex } = positionRef.current
+    const viewer = nibTextViewerRef.current
+    const el = textScrollRef.current
+    if (!textPaneOnScreenRef.current || !viewer || !el) return { progress, wordIndex }
+    const cursor = viewer.getVimCursorIndex()
+    const cursorInView = viewer.isWordInView(cursor)
+    return resolveTextViewPosition({
+      cursorProgress: progress,
+      cursorWordIndex: cursor,
+      cursorInView,
+      viewportWordIndex: cursorInView ? null : viewer.getViewportWordIndex(),
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    })
+  }, [])
+
+  // Debounced save: fires 2s after any position change. `sectionProgress`
+  // follows text-pane scrolling, so a scroll-only session schedules a save too.
   useEffect(() => {
     if (!bookId || !sectionId) return
     const timer = setTimeout(() => {
-      bookRepoRef.current?.updateLastAccessed(
-        bookId,
-        positionRef.current.sectionId,
-        positionRef.current.progress,
-        positionRef.current.wordIndex,
-      )
+      const { progress, wordIndex } = resolvePosition()
+      bookRepoRef.current?.updateLastAccessed(bookId, positionRef.current.sectionId, progress, wordIndex)
     }, 2000)
     return () => clearTimeout(timer)
-  }, [bookId, sectionId, effectiveProgress, selectedWordIndex])
+  }, [bookId, sectionId, effectiveProgress, selectedWordIndex, sectionProgress, resolvePosition])
 
   // Save immediately on page unload / tab hide (best-effort).
   // Must be synchronous — the browser does not await async work during these
@@ -257,12 +282,8 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   useEffect(() => {
     if (!bookId) return
     const flush = () => {
-      bookRepoRef.current?.updateLastAccessed(
-        bookId,
-        positionRef.current.sectionId,
-        positionRef.current.progress,
-        positionRef.current.wordIndex,
-      )
+      const { progress, wordIndex } = resolvePosition()
+      bookRepoRef.current?.updateLastAccessed(bookId, positionRef.current.sectionId, progress, wordIndex)
     }
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') flush()
@@ -273,7 +294,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
       window.removeEventListener('beforeunload', flush)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [bookId])
+  }, [bookId, resolvePosition])
 
   // ── Page-level navigation ──
   const startPage = section?.startPage ?? 1
