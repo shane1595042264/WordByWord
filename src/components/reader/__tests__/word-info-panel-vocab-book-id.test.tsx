@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { NibWord } from '@/lib/nib'
+import { NibPage, type NibWord } from '@/lib/nib'
 
 /**
  * KAN-354: handleAddVocab never passed a bookId to svc.add(), so every word saved
@@ -28,11 +28,15 @@ import { WordInfoPanel } from '../word-info-panel'
 import { ShortcutProvider } from '@/hooks/use-shortcuts'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
-const word = {
-  text: 'test',
-  sentence: { text: 'This is a test.' },
-  page: { pageNumber: 3 },
-} as unknown as NibWord
+const word: NibWord = new NibPage({
+  pageNumber: 3,
+  header: null,
+  footer: null,
+  footnotes: [],
+  paragraphs: [{ index: 0, sentences: [{ index: 0, words: ['This', 'is', 'a', 'test', '.'].map((text, index) => ({ text, index })) }] }],
+  figures: [],
+  listItems: [],
+}).paragraphs[0].sentences[0].words[3]
 
 function renderPanel(bookId?: string) {
   return render(

@@ -9,6 +9,7 @@ import type { TranslationResult } from '@/lib/services/translation-service'
 import { SettingsService, type TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
+import { translationContext, MAX_SENTENCE_CHARS } from '@/lib/services/translation-context'
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -292,7 +293,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
 
         import('@/lib/services/translation-service').then(({ TranslationService }) => {
           const svc = new TranslationService()
-          svc.translateWord(word.text, word.sentence.text, targetLang, controller.signal)
+          svc.translateWord(word.text, translationContext(word).sentence, targetLang, controller.signal)
             .then(result => {
               if (!cancelled) {
                 setTranslation(result)
@@ -336,10 +337,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     setSentenceTranslating(true)
     setSentenceTranslation(null)
 
-    const sentenceText = word.sentence.text
-    const paragraphText = word.paragraph?.sentences
-      ? word.paragraph.sentences.map((s: any) => s.text).join(' ')
-      : sentenceText
+    // Windowed to the server's caps — a long paragraph used to 400 on every
+    // sentence inside it (KAN-374).
+    const { sentence: sentenceText, paragraph: paragraphText } = translationContext(word)
 
     import('@/lib/services/translation-service').then(({ TranslationService }) => {
       const svc = new TranslationService()
@@ -396,7 +396,10 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
       const { TranslationService } = await import('@/lib/services/translation-service')
       const svc = new TranslationService()
       const contentText = word.latexSource || word.text
-      const contextText = word.latexSource ? `${contentText}\n\nContext: ${word.sentence.text}` : word.sentence.text
+      const sentenceText = translationContext(word).sentence
+      const contextText = word.latexSource
+        ? `${contentText}\n\nContext: ${sentenceText}`.slice(0, MAX_SENTENCE_CHARS)
+        : sentenceText
       const result = await svc.explainTranslation(
         contentText,
         contextText,
