@@ -26,6 +26,9 @@ interface ChapterGroup {
   title: string
   chapters: ChapterWithSections[]
   progress: { read: number; total: number; percentage: number }
+  // Set while searching when only the group's own title matched. Its chapters are
+  // then shown whole, so they must not filter their sections by the query (KAN-375).
+  titleOnlyMatch?: boolean
 }
 
 // Group chapters by their prefix (Part > Chapter structure)
@@ -243,7 +246,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
   const filteredGroups = useMemo(() => {
     if (!isSearching) return groups
     return groups
-      .map(group => {
+      .map((group): ChapterGroup | null => {
         const filteredChs = group.chapters.filter(ch => {
           const chapterMatches = ch.title.toLowerCase().includes(query)
           const sectionMatches = ch.sections.some(s => s.title.toLowerCase().includes(query))
@@ -257,6 +260,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
           ...group,
           chapters: filteredChs.length > 0 ? filteredChs : group.chapters,
           progress: filteredChs.length > 0 ? { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 } : group.progress,
+          titleOnlyMatch: filteredChs.length === 0,
         }
       })
       .filter((g): g is ChapterGroup => g !== null)
@@ -289,6 +293,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
       {filteredGroups.map(group => {
         const isGroupExpanded = isSearching || expandedGroup === group.key
         const isSingleChapter = group.chapters.length === 1 && group.chapters[0].title === group.title
+        const childQuery = group.titleOnlyMatch ? '' : query
 
         if (isSingleChapter) {
           // Standalone chapter — render flat
@@ -312,7 +317,9 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
             >
               <div className="flex items-center gap-3">
                 <span className={`text-xs transition-transform ${isGroupExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
-                <span className="text-sm font-semibold">{group.title}</span>
+                <span className="text-sm font-semibold">
+                  {isSearching ? <HighlightText text={group.title} query={query} /> : group.title}
+                </span>
                 <Badge variant="outline" className="text-xs">
                   {group.progress.read}/{group.progress.total}
                 </Badge>
@@ -332,7 +339,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
                     onToggle={() => setExpandedChapter(expandedChapter === chapter.id ? null : chapter.id)}
                     canDivide={!!pdfBlob && !!bookRemoteId}
                     onDivide={() => setDividingChapter(chapter)}
-                    searchQuery={query}
+                    searchQuery={childQuery}
                   />
                 ))}
               </div>
