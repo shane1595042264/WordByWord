@@ -2,6 +2,7 @@ import { v4 as uuid } from 'uuid'
 import { db } from '../db/database'
 import type { Book, Chapter, Section, VocabEntry } from '../db/models'
 import { SettingsService, type SyncedSettings } from './settings-service'
+import { capVocabContext } from './translation-context'
 
 const SYNC_DEBOUNCE_MS = 30_000
 /**
@@ -1507,7 +1508,9 @@ class SyncService {
       pronunciation: v.pronunciation ?? null,
       translation: v.translation ?? null,
       targetLanguage: v.targetLanguage ?? null,
-      contextSentence: v.contextSentence ?? null,
+      // Capped to the server bound so rows saved uncapped before KAN-377 drain
+      // instead of failing and re-queuing on every sync.
+      contextSentence: v.contextSentence != null ? capVocabContext(v.contextSentence, v.word) : null,
       explanation: v.explanation ?? null,
       bookTitle: v.bookTitle ?? null,
       sectionTitle: v.sectionTitle ?? null,

@@ -71,4 +71,14 @@ describe('VocabService.findByWordAndContext', () => {
   it('returns an empty array when the word was never saved', async () => {
     expect(await svc.findByWordAndContext('perro', 'El gato duerme.')).toEqual([])
   })
+
+  // KAN-377: a long sentence is saved capped now, but rows saved before the cap
+  // hold the full text, so the panel passes both forms.
+  it('matches any of several candidate contexts', async () => {
+    await db.vocabulary.add(entry({ id: 'old', contextSentence: 'El gato duerme mucho.' }))
+
+    const found = await svc.findByWordAndContext('gato', ['El gato duerme.', 'El gato duerme mucho.'])
+
+    expect(found.map(e => e.id)).toEqual(['old'])
+  })
 })

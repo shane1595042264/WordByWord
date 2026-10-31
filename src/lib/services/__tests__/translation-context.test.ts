@@ -5,6 +5,9 @@ import {
   translationContext,
   MAX_SENTENCE_CHARS,
   MAX_PARAGRAPH_CONTEXT_CHARS,
+  MAX_VOCAB_CONTEXT_CHARS,
+  vocabContextSentence,
+  capVocabContext,
 } from '../translation-context'
 
 // KAN-374: the text view sent the whole paragraph as paragraphContext and the
@@ -80,5 +83,44 @@ describe('translationContext', () => {
       expect(sentence.split(' ')).toContain(word.text)
       expect(ctx).toBe(sentence)
     }
+  })
+})
+
+// KAN-377: Add to Vocabulary stored the whole sentence as contextSentence, and
+// /sync rejects one over 2000 chars, so the row re-queued on every sync forever.
+describe('vocabContextSentence', () => {
+  it('keeps a sentence within the bound byte-identical', () => {
+    const p = paragraph([['Hello', 'world.']])
+    expect(vocabContextSentence(p.sentences[0].words[1])).toBe(p.sentences[0].text)
+  })
+
+  it('windows a 2,500-char sentence to the bound, around the clicked word', () => {
+    const words = sentenceWords('v', 250)
+    const p = paragraph([words])
+    expect(p.sentences[0].text.length).toBeGreaterThan(MAX_VOCAB_CONTEXT_CHARS)
+    for (const i of [0, 125, 249]) {
+      const out = vocabContextSentence(p.sentences[0].words[i])
+      expect(out.length).toBeLessThanOrEqual(MAX_VOCAB_CONTEXT_CHARS)
+      expect(out.split(' ')).toContain(words[i])
+    }
+  })
+})
+
+describe('capVocabContext', () => {
+  it('leaves a context within the bound unchanged', () => {
+    expect(capVocabContext('El gato duerme.', 'gato')).toBe('El gato duerme.')
+  })
+
+  it('caps a stored 3,000-char context around the word', () => {
+    const words = sentenceWords('c', 300)
+    const text = words.join(' ')
+    const out = capVocabContext(text, words[280])
+    expect(out.length).toBeLessThanOrEqual(MAX_VOCAB_CONTEXT_CHARS)
+    expect(out.split(' ')).toContain(words[280])
+  })
+
+  it('falls back to the start when the word is not in the context', () => {
+    const out = capVocabContext('x'.repeat(3000), 'missing')
+    expect(out).toBe('x'.repeat(MAX_VOCAB_CONTEXT_CHARS))
   })
 })

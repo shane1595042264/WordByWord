@@ -33,12 +33,16 @@ export class VocabService {
    * itself, not a boolean. Returning the whole (tiny) match set keeps it to one
    * IDB read for callers that want both "is this word saved at all?" and "is
    * there a row for the language I'm displaying?".
+   *
+   * Accepts several candidate contexts so a long sentence matches both its
+   * capped form and the uncapped text saved before KAN-377.
    */
-  async findByWordAndContext(word: string, contextSentence: string): Promise<VocabEntry[]> {
+  async findByWordAndContext(word: string, contextSentence: string | string[]): Promise<VocabEntry[]> {
+    const contexts = Array.isArray(contextSentence) ? contextSentence : [contextSentence]
     return db.vocabulary
       .where('word')
       .equals(word)
-      .filter(v => v.contextSentence === contextSentence)
+      .filter(v => contexts.includes(v.contextSentence))
       .toArray()
   }
 

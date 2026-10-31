@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { syncService } from '../sync-service'
 import { db } from '@/lib/db/database'
+import type { VocabEntry } from '@/lib/db/models'
 
 // Regression coverage for KAN-187: downloadFromCloud() must never wipe local
 // IDB before the cloud payload has been received and validated, otherwise a
@@ -1550,6 +1551,29 @@ describe('sync push — page sentinel round-trips as the server NULL', () => {
       new Map([['local-book-1', 'remote-book-1']]),
     )
     expect((await db.sections.get('sec-sp-55'))?.scrollProgress).toBe(55)
+  })
+})
+
+// KAN-377: /sync rejects a vocab contextSentence over 2000 chars, so a row
+// saved uncapped re-queued and failed on every sync, never reaching the server.
+describe('sync push — vocab contextSentence is capped to the server bound', () => {
+  type Internals = { vocabToSync: (v: VocabEntry, m: Map<string, string>) => Record<string, unknown> }
+  const vocabToSync = (v: VocabEntry) => (syncService as unknown as Internals).vocabToSync(v, new Map())
+  const row = (contextSentence: string, word: string): VocabEntry => ({
+    id: 'v-long', word, pronunciation: '', translation: 't', targetLanguage: 'en', contextSentence,
+    explanation: null, bookTitle: '', sectionTitle: '', pageNumber: 0, reviewCount: 0,
+    lastReviewedAt: null, createdAt: 0, updatedAt: 0,
+  })
+
+  it('serializes a stored 3,000-char context at <= 2000 chars, still holding the word', () => {
+    const words = Array.from({ length: 300 }, (_, i) => `w${String(i).padStart(8, '0')}`)
+    const out = vocabToSync(row(words.join(' '), words[200])).contextSentence as string
+    expect(out.length).toBeLessThanOrEqual(2000)
+    expect(out.split(' ')).toContain(words[200])
+  })
+
+  it('pushes a context within the bound unchanged', () => {
+    expect(vocabToSync(row('El gato duerme.', 'gato')).contextSentence).toBe('El gato duerme.')
   })
 })
 

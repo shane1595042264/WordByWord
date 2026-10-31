@@ -9,7 +9,7 @@ import type { TranslationResult } from '@/lib/services/translation-service'
 import { SettingsService, type TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
-import { translationContext, MAX_SENTENCE_CHARS } from '@/lib/services/translation-context'
+import { translationContext, vocabContextSentence, MAX_SENTENCE_CHARS } from '@/lib/services/translation-context'
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -38,17 +38,26 @@ interface WordInfoPanelProps {
  */
 async function findCachedVocabEntry(
   word: string,
-  contextSentence: string,
+  contextSentences: string[],
   targetLang: TargetLanguage,
 ): Promise<VocabEntry | null> {
   try {
     const { VocabService } = await import('@/lib/services/vocab-service')
-    const entries = await new VocabService().findByWordAndContext(word, contextSentence)
+    const entries = await new VocabService().findByWordAndContext(word, contextSentences)
     return entries.find(e => e.targetLanguage === targetLang) ?? null
   } catch (err) {
     console.warn('vocab cache lookup failed; falling back to the translation API:', err)
     return null
   }
+}
+
+/**
+ * The contextSentence values a saved entry for `word` may hold: the capped
+ * form saved today, plus the uncapped sentence rows saved before KAN-377 kept.
+ */
+function vocabContextKeys(word: NibWord): string[] {
+  const capped = vocabContextSentence(word)
+  return capped === word.sentence.text ? [capped] : [capped, word.sentence.text]
 }
 
 /**
@@ -192,7 +201,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     import('@/lib/services/vocab-service').then(({ VocabService }) => {
       if (cancelled) return
       const svc = new VocabService()
-      svc.findByWordAndContext(word.text, word.sentence.text).then(entries => {
+      svc.findByWordAndContext(word.text, vocabContextKeys(word)).then(entries => {
         if (!cancelled) {
           // Language-agnostic on purpose: the Add button reflects "this word is
           // in the vocab book", same as the count() > 0 check this replaced.
@@ -266,7 +275,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     } else {
       // Regular word → saved vocab row first, backend-proxied translation on miss
       setTranslating(true)
-      findCachedVocabEntry(word.text, word.sentence.text, targetLang).then(cached => {
+      findCachedVocabEntry(word.text, vocabContextKeys(word), targetLang).then(cached => {
         if (cancelled) return
 
         if (cached) {
@@ -449,7 +458,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
         pronunciation: translation.pronunciation,
         translation: translation.translation,
         targetLanguage: targetLang,
-        contextSentence: word.sentence.text,
+        contextSentence: vocabContextSentence(word),
         explanation: explanation,
         bookTitle: bookTitle ?? '',
         sectionTitle: sectionTitle ?? '',
