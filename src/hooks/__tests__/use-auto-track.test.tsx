@@ -427,6 +427,58 @@ describe('useAutoTrack', () => {
     })
   })
 
+  describe('manual un-mark (KAN-376)', () => {
+    /** Mounts as read, then replays the toolbar's un-mark: suppress, then the isRead refresh. */
+    function renderReadThenUnmark(container: HTMLDivElement, { suppress }: { suppress: boolean }) {
+      const ref = { current: container }
+      const hook = renderHook(
+        ({ isRead, sectionId }: { isRead: boolean; sectionId: string }) =>
+          useAutoTrack(opts({ isRead, sectionId, textScrollRef: ref })),
+        { initialProps: { isRead: true, sectionId: 'sec-1' } },
+      )
+      if (suppress) act(() => hook.result.current.suppressAutoMark())
+      hook.rerender({ isRead: false, sectionId: 'sec-1' })
+      return hook
+    }
+
+    it('does NOT re-mark a fitting section after the reader un-marks it', async () => {
+      renderReadThenUnmark(fitting(), { suppress: true })
+
+      await advanceTenSeconds()
+      expect(markAsRead).not.toHaveBeenCalled()
+    })
+
+    it('does NOT re-mark a pane already at the bottom, even when it scrolls again', async () => {
+      const container = overflowing()
+      Object.defineProperty(container, 'scrollTop', { value: BOTTOM, configurable: true })
+      renderReadThenUnmark(container, { suppress: true })
+
+      await advanceTenSeconds()
+      await scrollTo(container, BOTTOM)
+      expect(markAsRead).not.toHaveBeenCalled()
+    })
+
+    it('control: an isRead flip with no manual un-mark still re-arms (the pre-fix bounce)', async () => {
+      renderReadThenUnmark(fitting(), { suppress: false })
+
+      await advancePastInitialCheck()
+      expect(markAsRead).toHaveBeenCalledWith('sec-1')
+    })
+
+    it('tracks normally again after leaving the section and coming back', async () => {
+      const { rerender } = renderReadThenUnmark(fitting(), { suppress: true })
+      await advanceTenSeconds()
+
+      rerender({ isRead: false, sectionId: 'sec-2' })
+      await advancePastInitialCheck()
+      expect(markAsRead).toHaveBeenLastCalledWith('sec-2')
+
+      rerender({ isRead: false, sectionId: 'sec-1' })
+      await advancePastInitialCheck()
+      expect(markAsRead).toHaveBeenLastCalledWith('sec-1')
+    })
+  })
+
   describe('write failures (KAN-344)', () => {
     it('toasts, keeps listening, and marks read on the next scroll-to-bottom', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => {})

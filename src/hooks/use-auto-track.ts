@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import { toast } from 'sonner'
 
 /**
@@ -33,6 +33,13 @@ import { toast } from 'sonner'
  * Side-by-side used to watch the reader's outer `overflow-hidden` wrapper,
  * which never scrolls and so always looked like it "fit" — firing the shortcut
  * the moment the section opened. It now watches the text pane, like text view.
+ *
+ * A manual un-mark (toolbar badge / Ctrl+Enter) must stick. The hook re-arms
+ * the moment `isRead` flips false, and on a section that fits — or a pane
+ * already at the bottom — the re-armed check would mark it read again 1.5s
+ * later (KAN-376). The un-mark path calls the returned `suppressAutoMark`, which
+ * stands the hook down for the rest of that section visit; opening another
+ * section (or coming back to this one) tracks normally again.
  */
 
 /** How long to let content render before the first fits/bottom (or last-page) check. */
@@ -84,12 +91,23 @@ export function useAutoTrack({
   pdfScrollRef,
   contentReady,
   pdfOnLastPage,
-}: UseAutoTrackOptions): void {
+}: UseAutoTrackOptions): { suppressAutoMark: () => void } {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollCleanupRef = useRef<(() => void) | null>(null)
+  // The section the reader un-marked by hand during this visit, if any. A ref,
+  // not state: the un-mark's own `isRead` flip already re-runs the effect, and
+  // the ref is set before that refresh lands.
+  const suppressedSectionIdRef = useRef<string | null>(null)
+
+  const suppressAutoMark = useCallback(() => {
+    suppressedSectionIdRef.current = sectionId
+  }, [sectionId])
+
+  // Leaving the section ends the visit — including leaving and coming back.
+  useEffect(() => () => { suppressedSectionIdRef.current = null }, [sectionId])
 
   useEffect(() => {
-    if (isRead) return
+    if (isRead || suppressedSectionIdRef.current === sectionId) return
 
     let cancelled = false
     let marked = false
@@ -267,4 +285,6 @@ export function useAutoTrack({
       detachScroll()
     }
   }, [sectionId, isRead, onMarkedRead, viewMode, readingMode, textScrollRef, pdfScrollRef, contentReady, pdfOnLastPage])
+
+  return { suppressAutoMark }
 }

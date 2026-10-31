@@ -21,6 +21,8 @@ interface ReaderToolbarProps {
   readingMode: 'scroll' | 'flip'
   onReadingModeChange: (mode: 'scroll' | 'flip') => void
   onReadToggle: (bookJustCompleted?: boolean) => void
+  /** Fired after a manual un-mark lands, before onReadToggle — lets auto-track stand down. */
+  onMarkedUnread?: () => void
   sectionProgress: number
   showIndicators?: boolean
   onToggleIndicators?: () => void
@@ -52,6 +54,7 @@ export function ReaderToolbar({
   viewMode, onViewModeChange,
   readingMode, onReadingModeChange,
   onReadToggle,
+  onMarkedUnread,
   sectionProgress,
   showIndicators, onToggleIndicators,
   syncScroll, onSyncScrollChange,
@@ -85,6 +88,7 @@ export function ReaderToolbar({
       const sectionRepo = new SectionRepository()
       if (isRead) {
         await sectionRepo.markAsUnread(sectionId)
+        onMarkedUnread?.()
         onReadToggle()
       } else {
         const bookJustCompleted = await sectionRepo.markAsRead(sectionId)
@@ -97,7 +101,7 @@ export function ReaderToolbar({
       togglingRef.current = false
       setIsTogglingRead(false)
     }
-  }, [isRead, sectionId, onReadToggle])
+  }, [isRead, sectionId, onReadToggle, onMarkedUnread])
 
   const handleBackToDashboard = useCallback(() => {
     router.push(`/book/${bookId}`)

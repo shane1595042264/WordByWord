@@ -677,7 +677,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   // Position-based read tracking (there is no timer): the section is read when
   // the reader reaches the end of its content in whichever pane they are using.
   // Only tracks after loading completes so the scroll containers are mounted.
-  useAutoTrack({
+  const { suppressAutoMark } = useAutoTrack({
     sectionId,
     isRead: loading ? true : (section?.isRead ?? false),
     onMarkedRead: handleMarkedRead,
@@ -913,6 +913,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
         readingMode={readingMode}
         onReadingModeChange={setReadingMode}
         onReadToggle={handleMarkedRead}
+        onMarkedUnread={suppressAutoMark}
         sectionProgress={effectiveProgress}
         showIndicators={showIndicators}
         onToggleIndicators={() => setShowIndicators(prev => !prev)}
