@@ -313,10 +313,11 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
             {/* Group header */}
             <button
               onClick={() => setExpandedGroup(isGroupExpanded ? null : group.key)}
+              aria-expanded={isGroupExpanded}
               className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
             >
               <div className="flex items-center gap-3">
-                <span className={`text-xs transition-transform ${isGroupExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
+                <span className={`text-xs transition-transform ${isGroupExpanded ? 'rotate-90' : ''}`} aria-hidden="true">&#9654;</span>
                 <span className="text-sm font-semibold">
                   {isSearching ? <HighlightText text={group.title} query={query} /> : group.title}
                 </span>
@@ -391,10 +392,11 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
       <div className="flex items-center">
         <button
           onClick={onToggle}
+          aria-expanded={expanded}
           className="flex-1 flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <span className={`text-xs transition-transform ${expanded ? 'rotate-90' : ''}`}>&#9654;</span>
+            <span className={`text-xs transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden="true">&#9654;</span>
             <span className={`text-sm ${nested ? '' : 'font-medium'}`}>
               {isSearching ? <HighlightText text={chapter.title} query={searchQuery} /> : chapter.title}
             </span>
@@ -431,7 +433,8 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
                 className="flex items-center justify-between py-2 px-3 rounded hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : (section.scrollProgress && section.scrollProgress > 0) ? 'bg-yellow-500' : 'bg-muted-foreground/30'}`} />
+                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : (section.scrollProgress && section.scrollProgress > 0) ? 'bg-yellow-500' : 'bg-muted-foreground/30'}`} aria-hidden="true" />
+                  <span className="sr-only">{section.isRead ? 'Read: ' : (section.scrollProgress && section.scrollProgress > 0) ? 'In progress: ' : 'Unread: '}</span>
                   <span className="text-sm">
                     {isSearching ? <HighlightText text={section.title} query={searchQuery} /> : section.title}
                   </span>
