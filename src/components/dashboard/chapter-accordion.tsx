@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ChapterWithSections } from '@/hooks/use-book-detail'
+import { toProgressPercentage } from '@/lib/progress-percentage'
 import type { Divider } from '@/components/editor/page-strip-editor'
 
 interface ChapterAccordionProps {
@@ -71,7 +72,7 @@ export function buildChapterGroups(chapters: ChapterWithSections[]): ChapterGrou
       key,
       title: entry.title,
       chapters: chs,
-      progress: { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 },
+      progress: { read, total, percentage: toProgressPercentage(total > 0 ? weightedSum / total : 0, read, total) },
     })
   }
   return result
@@ -259,7 +260,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
         return {
           ...group,
           chapters: filteredChs.length > 0 ? filteredChs : group.chapters,
-          progress: filteredChs.length > 0 ? { read, total, percentage: total > 0 ? Math.round(weightedSum / total) : 0 } : group.progress,
+          progress: filteredChs.length > 0 ? { read, total, percentage: toProgressPercentage(total > 0 ? weightedSum / total : 0, read, total) } : group.progress,
           titleOnlyMatch: filteredChs.length === 0,
         }
       })

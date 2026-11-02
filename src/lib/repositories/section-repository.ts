@@ -1,6 +1,7 @@
 import { db } from '@/lib/db/database'
 import type { Section } from '@/lib/db/models'
 import { syncService } from '../services/sync-service'
+import { toProgressPercentage } from '../progress-percentage'
 
 export interface SectionProgress {
   read: number
@@ -17,8 +18,10 @@ export interface SectionProgress {
 export function computeSectionProgress(sections: Section[]): SectionProgress {
   const read = sections.filter(s => s.isRead).length
   const total = sections.length
-  const percentage = total === 0 ? 0 : Math.round(
-    sections.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total
+  const percentage = total === 0 ? 0 : toProgressPercentage(
+    sections.reduce((sum, s) => sum + (s.isRead ? 100 : (s.scrollProgress ?? 0)), 0) / total,
+    read,
+    total,
   )
   return { read, total, percentage }
 }

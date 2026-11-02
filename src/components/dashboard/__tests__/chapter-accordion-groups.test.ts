@@ -82,4 +82,16 @@ describe('buildChapterGroups', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].progress).toEqual({ read: 4, total: 8, percentage: 50 })
   })
+
+  it('does not round an unfinished Part up to 100% (KAN-381)', () => {
+    // (99 * 100 + 100 * 100) / 200 = 99.5 -> plain Math.round would say 100
+    const groups = buildChapterGroups([
+      chapter('Part 1 > A', 99, 100),
+      chapter('Part 1 > B', 100, 100),
+    ])
+    expect(groups[0].progress).toEqual({ read: 199, total: 200, percentage: 99 })
+
+    const done = buildChapterGroups([chapter('Part 2 > A', 2, 2), chapter('Part 2 > B', 2, 2)])
+    expect(done[0].progress.percentage).toBe(100)
+  })
 })
