@@ -393,11 +393,21 @@ export function getEffectiveRulebook(overrides: Record<string, string>): VimRule
   return RULEBOOK.map(rule => {
     const customKey = overrides[rule.id]
     if (!customKey) return rule
-    const isShift = customKey.startsWith('Shift+')
-    const isCtrl = customKey.startsWith('Ctrl+')
+    // Strip modifier prefixes in any order, so 'Ctrl+Shift+x' round-trips too.
+    let isShift = false
+    let isCtrl = false
     let actualKey = customKey
-    if (isShift) actualKey = actualKey.slice(6)
-    if (isCtrl) actualKey = actualKey.slice(5)
+    for (;;) {
+      if (!isShift && actualKey.startsWith('Shift+') && actualKey.length > 6) {
+        isShift = true
+        actualKey = actualKey.slice(6)
+      } else if (!isCtrl && actualKey.startsWith('Ctrl+') && actualKey.length > 5) {
+        isCtrl = true
+        actualKey = actualKey.slice(5)
+      } else {
+        break
+      }
+    }
 
     return { ...rule, key: actualKey, shift: isShift || undefined, ctrl: isCtrl || undefined }
   })

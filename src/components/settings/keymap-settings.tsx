@@ -123,10 +123,22 @@ function KeyBadge({ keyStr, variant = 'outline' }: { keyStr: string; variant?: '
   )
 }
 
-/** Format the default key for a rule */
+/** Format the default key for a rule — same `Ctrl+Shift+key` form the overrides use. */
 function getDefaultKeyDisplay(rule: VimRule): string {
-  if (rule.shift) return `Shift+${rule.key}`
-  return rule.key
+  return effectiveVimCombo(rule, {})
+}
+
+/**
+ * The only Ctrl combos the vim engine ever sees: use-vim-mode drops every other
+ * Ctrl/Meta/Alt keystroke before it reaches findRule, so binding a vim action
+ * to anything else would persist a shortcut that can never fire.
+ */
+const VIM_CTRL_COMBOS = ['ctrl+e', 'ctrl+y']
+
+/** True when `combo` carries Ctrl but is not one of the combos the vim engine dispatches. */
+function isUndispatchableVimCombo(combo: string): boolean {
+  const normalized = normalizeCombo(combo)
+  return normalized.split('+').includes('ctrl') && !VIM_CTRL_COMBOS.includes(normalized)
 }
 
 /** Single keymap row with inline remap */
@@ -176,6 +188,9 @@ function KeymapRow({
       let keyStr = e.key
       if (e.shiftKey && keyStr.length === 1) {
         keyStr = `Shift+${keyStr}`
+      }
+      if (e.ctrlKey) {
+        keyStr = `Ctrl+${keyStr}`
       }
 
       onRemap(rule.id, keyStr)
@@ -392,6 +407,13 @@ export function KeymapSettings({ overrides, onChange }: KeymapSettingsProps) {
     if (isUnbindableCombo(newKey)) {
       toast.error(`"${formatKeyCombo(newKey, { separator: '+' })}" can't be used as a shortcut`, {
         description: 'Tab moves focus and Escape cancels — both stay reserved for keyboard navigation.',
+      })
+      return
+    }
+
+    if (RULEBOOK.some(r => r.id === ruleId) && isUndispatchableVimCombo(newKey)) {
+      toast.error(`"${formatKeyCombo(newKey, { separator: '+' })}" can't be used for a Vim action`, {
+        description: 'Ctrl+E and Ctrl+Y are the only Ctrl shortcuts the reader passes to Vim mode.',
       })
       return
     }
