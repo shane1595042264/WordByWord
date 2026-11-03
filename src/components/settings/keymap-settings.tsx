@@ -71,10 +71,23 @@ function effectiveGlobalCombo(shortcut: GlobalShortcutDef, overrides: KeymapOver
 }
 
 /**
+ * Combos the vim engine handles outside the rulebook (use-vim-mode's hardcoded
+ * yank), so a global bound to one would fire alongside the vim copy.
+ */
+const VIM_HARDCODED_COMBOS: { combo: string; label: string }[] = [
+  { combo: 'ctrl+c', label: 'Yank (copy)' },
+  { combo: 'meta+c', label: 'Yank (copy)' },
+]
+
+/**
  * Resolve whether binding `newKey` to the action `id` would collide with a
- * different action in an overlapping scope. Vim rules only conflict with other
- * vim rules that share at least one mode; global shortcuts only conflict with
- * other global shortcuts. Returns the conflicting entry (for its label) or null.
+ * different action in an overlapping scope. Vim rules conflict with other vim
+ * rules that share at least one mode. Global shortcuts conflict with other
+ * global shortcuts AND with every vim rule: both handlers are bubble-phase
+ * keydown listeners on window, so the global's stopPropagation() can't stop
+ * the vim one and a shared key runs both actions. Globals fire in every vim
+ * mode, so the cross-scope check ignores modes. Returns the conflicting entry
+ * (for its label) or null.
  */
 function findRemapConflict(
   id: string,
@@ -91,7 +104,10 @@ function findRemapConflict(
         other.modes.some(m => vimRule.modes.includes(m)) &&
         normalizeCombo(effectiveVimCombo(other, overrides)) === target,
     )
-    return clash ?? null
+    if (clash) return clash
+    return GLOBAL_SHORTCUTS.find(
+      s => normalizeCombo(effectiveGlobalCombo(s, overrides)) === target,
+    ) ?? null
   }
 
   const shortcut = GLOBAL_SHORTCUTS.find(s => s.id === id)
@@ -101,7 +117,12 @@ function findRemapConflict(
         other.id !== id &&
         normalizeCombo(effectiveGlobalCombo(other, overrides)) === target,
     )
-    return clash ?? null
+    if (clash) return clash
+    return (
+      RULEBOOK.find(r => normalizeCombo(effectiveVimCombo(r, overrides)) === target) ??
+      VIM_HARDCODED_COMBOS.find(c => c.combo === target) ??
+      null
+    )
   }
 
   return null
