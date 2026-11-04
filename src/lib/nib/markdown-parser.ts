@@ -72,12 +72,48 @@ export class NibMarkdownParser {
     }
   }
 
-  /** Split markdown on double newlines into blocks, filtering empties */
+  /**
+   * Split markdown on double newlines into blocks, filtering empties.
+   * A ``` or $$ block that isn't closed in its own chunk is re-joined with the
+   * following chunks (keeping the original blank lines) up to its closing fence,
+   * so code/math containing blank lines stays one block. An unterminated fence
+   * falls back to the plain split.
+   */
   private splitBlocks(markdown: string): string[] {
-    return markdown
-      .split(/\n\n+/)
-      .map(b => b.trim())
-      .filter(b => b.length > 0)
+    // Even indices are chunks, odd indices are the blank-line separators between them
+    const parts = markdown.split(/(\n\n+)/)
+    const blocks: string[] = []
+
+    for (let i = 0; i < parts.length; i += 2) {
+      const chunk = parts[i].trim()
+      if (!chunk) continue
+
+      const fence = ['```', '$$'].find(f => chunk.startsWith(f))
+      const closed = fence && chunk.length >= fence.length * 2 && chunk.endsWith(fence)
+      if (fence && !closed) {
+        const end = this.findClosingChunk(parts, i + 2, fence)
+        if (end !== -1) {
+          blocks.push(parts.slice(i, end + 1).join('').trim())
+          i = end
+          continue
+        }
+      }
+
+      blocks.push(chunk)
+    }
+
+    return blocks
+  }
+
+  /** Index of the chunk that closes an open fence, or -1 if another block opens first */
+  private findClosingChunk(parts: string[], from: number, fence: string): number {
+    for (let j = from; j < parts.length; j += 2) {
+      const chunk = parts[j].trim()
+      if (chunk === fence) return j
+      if (chunk.startsWith(fence)) return -1
+      if (chunk.endsWith(fence)) return j
+    }
+    return -1
   }
 
   /** Classify a block by its leading characters */

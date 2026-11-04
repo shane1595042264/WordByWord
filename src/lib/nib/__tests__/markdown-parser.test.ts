@@ -209,4 +209,44 @@ The result uses $\\gamma$ in context.`
     const sentence = doc.pages[0].paragraphs[0].sentences[0]
     expect(sentence.hasLatex).toBeUndefined()
   })
+
+  describe('fenced blocks containing blank lines', () => {
+    const types = (md: string) => parser.parse(md, 'Title', 'Author').pages[0].paragraphs.map(p => p.blockType)
+
+    it('keeps a code block with one internal blank line as one code-block', () => {
+      const doc = parser.parse('Before.\n\n```\nline 1\n\nline 2\n```\n\nAfter.', 'Title', 'Author')
+      const paras = doc.pages[0].paragraphs
+      expect(paras.map(p => p.blockType)).toEqual(['body', 'code-block', 'body'])
+      expect(paras[1].sentences[0].words).toHaveLength(1)
+      expect(paras[1].sentences[0].words[0].latexSource).toBe('line 1\n\nline 2')
+      expect(paras[0].sentences[0].words.map(w => w.text)).toEqual(['Before.'])
+      expect(paras[2].sentences[0].words.map(w => w.text)).toEqual(['After.'])
+    })
+
+    it('keeps the original blank lines and indentation of a code block with two internal gaps', () => {
+      const doc = parser.parse('```text\na\n\n\n  b\n\nc\n```', 'Title', 'Author')
+      const paras = doc.pages[0].paragraphs
+      expect(paras.map(p => p.blockType)).toEqual(['code-block'])
+      expect(paras[0].sentences[0].words[0].latexSource).toBe('a\n\n\n  b\n\nc')
+    })
+
+    it('treats a closing fence on its own after a blank line as the close', () => {
+      expect(types('```\ncode\n\n```\n\nAfter.')).toEqual(['code-block', 'body'])
+    })
+
+    it('does not let an unterminated fence swallow the following text', () => {
+      expect(types('Intro.\n\n```\nopen\n\nMore text.\n\nEnd.')).toEqual(['body', 'body', 'body', 'body'])
+    })
+
+    it('does not join an unterminated fence with a later complete code block', () => {
+      expect(types('```\nopen\n\nText.\n\n```\nok\n```')).toEqual(['body', 'body', 'code-block'])
+    })
+
+    it('keeps a $$ block with an internal blank line as one latex-display', () => {
+      const doc = parser.parse('Text.\n\n$$\nx = 1\n\ny = 2\n$$', 'Title', 'Author')
+      const paras = doc.pages[0].paragraphs
+      expect(paras.map(p => p.blockType)).toEqual(['body', 'latex-display'])
+      expect(paras[1].sentences[0].words[0].latexSource).toBe('x = 1\n\ny = 2')
+    })
+  })
 })
