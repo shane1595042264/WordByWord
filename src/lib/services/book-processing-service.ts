@@ -441,40 +441,45 @@ export class BookProcessingService {
       } else {
         // Has nested children → grouping level, recurse
         const prefix = parentPrefix ? `${parentPrefix} > ${item.title}` : item.title
-        // But first, collect any direct leaf children as a standalone chapter
-        const directLeaves = children.filter((c: any) => !c.children || c.children.length === 0)
-        const nestedChildren = children.filter((c: any) => c.children && c.children.length > 0)
 
         // If parent starts before its first child, inject an "Introduction" section
-        const allChildren = [...directLeaves, ...nestedChildren]
-        const firstPage = allChildren.reduce((min: number | null, c: any) => {
+        const firstPage = children.reduce((min: number | null, c: any) => {
           if (c.pageNumber == null) return min
           if (min == null) return c.pageNumber
           return c.pageNumber < min ? c.pageNumber : min
         }, null as number | null)
 
-        const introSections: { title: string; pageNumber: number | null }[] = []
+        let pending: { title: string; pageNumber: number | null }[] = []
         if (
           item.pageNumber != null &&
           firstPage != null &&
           item.pageNumber < firstPage
         ) {
-          introSections.push({
+          pending.push({
             title: `${item.title} — Introduction`,
             pageNumber: item.pageNumber,
           })
         }
 
-        if (directLeaves.length > 0 || introSections.length > 0) {
-          result.push({
-            chapterTitle: prefix,
-            sections: [
-              ...introSections,
-              ...directLeaves.map((c: any) => ({ title: c.title, pageNumber: c.pageNumber })),
-            ],
-          })
+        // Walk children in outline order (KAN-384): consecutive direct leaves
+        // share a chapter, and each nested child recurses in place, so the flat
+        // leaf list — and every page range computed from it — stays in document
+        // order. A trailing leaf run (e.g. "Summary") becomes its own chapter.
+        const flush = () => {
+          if (pending.length > 0) {
+            result.push({ chapterTitle: prefix, sections: pending })
+            pending = []
+          }
         }
-        this.walkOutlineTree(nestedChildren, prefix, result)
+        for (const c of children) {
+          if (c.children && c.children.length > 0) {
+            flush()
+            this.walkOutlineTree([c], prefix, result)
+          } else {
+            pending.push({ title: c.title, pageNumber: c.pageNumber })
+          }
+        }
+        flush()
       }
     }
   }
