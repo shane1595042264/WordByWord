@@ -1355,7 +1355,8 @@ class SyncService {
         ? percentFromServer(sb.lastAccessedScrollProgress as number) // 0-1 → 0-100
         : null,
       lastAccessedWordIndex: (sb.lastAccessedWordIndex as number) ?? null,
-      completedAt: sb.completedAt ? new Date(sb.completedAt as string).getTime() : null,
+      // The server has no completedAt column; derived from the sections below (KAN-386).
+      completedAt: null,
       remoteId,
       catalogId: sb.catalogId as string,
     })
@@ -1410,8 +1411,30 @@ class SyncService {
         console.warn('Skipped duplicate section during download:', ss.id, err)
       })
     }
+    await this.deriveCompletedAt(localId)
 
     return localId
+  }
+
+  // completedAt is local-only (no server column), so every path that writes
+  // section read state from the server has to re-derive it the way markAsRead /
+  // markAsUnread do. Same serialization as the repository methods. The book's
+  // updatedAt is deliberately left alone: completedAt never goes up, so a bump
+  // would only make the next push resend an unchanged book.
+  private async deriveCompletedAt(bookId: string): Promise<void> {
+    await db.transaction('rw', [db.sections, db.books], async () => {
+      const book = await db.books.get(bookId)
+      if (!book) return
+      const sections = await db.sections.where('bookId').equals(bookId).toArray()
+      if (sections.length === 0) return
+      const complete = sections.every(s => s.isRead)
+      if (complete && !book.completedAt) {
+        const lastReadAt = Math.max(0, ...sections.map(s => s.readAt ?? 0))
+        await db.books.update(bookId, { completedAt: lastReadAt || Date.now() })
+      } else if (!complete && book.completedAt) {
+        await db.books.update(bookId, { completedAt: null })
+      }
+    })
   }
 
   // ── Best-effort sync on tab close ────────────────────────────
@@ -1682,22 +1705,7 @@ class SyncService {
     }
 
     for (const bookId of readStateBooks) {
-      // Same serialization as the repository methods. The book's updatedAt is
-      // deliberately left alone: completedAt never goes up, so a bump would
-      // only make the next push resend an unchanged book.
-      await db.transaction('rw', [db.sections, db.books], async () => {
-        const book = await db.books.get(bookId)
-        if (!book) return
-        const sections = await db.sections.where('bookId').equals(bookId).toArray()
-        if (sections.length === 0) return
-        const complete = sections.every(s => s.isRead)
-        if (complete && !book.completedAt) {
-          const lastReadAt = Math.max(0, ...sections.map(s => s.readAt ?? 0))
-          await db.books.update(bookId, { completedAt: lastReadAt || Date.now() })
-        } else if (!complete && book.completedAt) {
-          await db.books.update(bookId, { completedAt: null })
-        }
-      })
+      await this.deriveCompletedAt(bookId)
     }
 
     // Update/create/delete vocabulary

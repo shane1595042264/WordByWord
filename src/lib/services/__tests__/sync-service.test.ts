@@ -1635,6 +1635,59 @@ describe('syncService.applyServerChanges() — book completion follows pulled re
   })
 })
 
+// KAN-386: the server sends no book completedAt, so a downloaded book has to
+// derive it from the sections it arrives with or a finished book shows "100%".
+describe('syncService download — book completion follows downloaded read state', () => {
+  const realFetch = globalThis.fetch
+  type Internals = {
+    createLocalBookFromServer: (
+      sb: Record<string, unknown>,
+      c: { chapters?: Record<string, unknown>[]; sections?: Record<string, unknown>[] },
+      token: string,
+    ) => Promise<string>
+  }
+  const t0 = Date.parse('2026-11-01T00:00:00.000Z')
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const serverBook = { id: 'remote-dl', catalogId: 'cat-dl', updatedAt: iso(t0) }
+  const serverSection = (i: number, readAt: number | null) => ({
+    id: `dl-sec-${i}`, bookId: 'remote-dl', chapterId: 'dl-ch', title: `S${i}`, sortOrder: i,
+    startPage: 1, endPage: 1, scrollProgress: 0, updatedAt: iso(t0),
+    isRead: readAt !== null, readAt: readAt === null ? null : iso(readAt),
+  })
+  const download = (sections: Record<string, unknown>[]) =>
+    (syncService as unknown as Internals).createLocalBookFromServer(
+      serverBook,
+      { chapters: [{ id: 'dl-ch', bookId: 'remote-dl', title: 'C', sortOrder: 0, updatedAt: iso(t0) }], sections },
+      'fake.jwt.token',
+    ).then(id => db.books.get(id))
+
+  beforeEach(async () => {
+    await db.delete()
+    await db.open()
+    globalThis.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ catalog: { format: 'epub', title: 'Cloud Book', author: '' } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch
+  })
+  afterEach(() => { globalThis.fetch = realFetch })
+
+  it('sets completedAt to the latest readAt when every section arrives read', async () => {
+    const book = await download([serverSection(0, t0 + 5_000), serverSection(1, t0 + 60_000)])
+    expect(book?.completedAt).toBe(t0 + 60_000)
+    expect(book?.updatedAt).toBe(t0)
+  })
+
+  it('leaves completedAt null when one section arrives unread', async () => {
+    const book = await download([serverSection(0, t0 + 5_000), serverSection(1, null)])
+    expect(book?.completedAt).toBeNull()
+  })
+
+  it('leaves completedAt null for a book with no sections', async () => {
+    const book = await download([])
+    expect(book?.completedAt).toBeNull()
+  })
+})
+
 // KAN-377: /sync rejects a vocab contextSentence over 2000 chars, so a row
 // saved uncapped re-queued and failed on every sync, never reaching the server.
 describe('sync push — vocab contextSentence is capped to the server bound', () => {
