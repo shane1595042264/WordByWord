@@ -1620,6 +1620,10 @@ class SyncService {
     }
 
     // Update/create/delete sections
+    // Books whose read state this pull changed. completedAt is local-only (no
+    // server column), so the pull has to re-derive it the way markAsRead /
+    // markAsUnread do, or the library badge goes stale across devices (KAN-385).
+    const readStateBooks = new Set<string>()
     for (const ss of serverChanges.sections ?? []) {
       if (ss.deletedAt) {
         await db.sections.delete(ss.id as string)
@@ -1650,10 +1654,12 @@ class SyncService {
           if (err?.name !== 'ConstraintError') throw err
           console.warn('Skipped duplicate section during sync apply:', ss.id, err)
         })
+        readStateBooks.add(localBookId)
       } else if (local) {
         // Update existing section (reading progress merge)
         const serverUpdated = new Date(ss.updatedAt as string).getTime()
         if (serverUpdated > local.updatedAt) {
+          if (local.isRead !== ss.isRead) readStateBooks.add(local.bookId)
           await db.sections.update(ss.id as string, {
             // Server row is authoritatively newer (gated above), so read-state is
             // last-write-wins — NOT monotonic. A previous `server || local` OR
@@ -1673,6 +1679,25 @@ class SyncService {
           })
         }
       }
+    }
+
+    for (const bookId of readStateBooks) {
+      // Same serialization as the repository methods. The book's updatedAt is
+      // deliberately left alone: completedAt never goes up, so a bump would
+      // only make the next push resend an unchanged book.
+      await db.transaction('rw', [db.sections, db.books], async () => {
+        const book = await db.books.get(bookId)
+        if (!book) return
+        const sections = await db.sections.where('bookId').equals(bookId).toArray()
+        if (sections.length === 0) return
+        const complete = sections.every(s => s.isRead)
+        if (complete && !book.completedAt) {
+          const lastReadAt = Math.max(0, ...sections.map(s => s.readAt ?? 0))
+          await db.books.update(bookId, { completedAt: lastReadAt || Date.now() })
+        } else if (!complete && book.completedAt) {
+          await db.books.update(bookId, { completedAt: null })
+        }
+      })
     }
 
     // Update/create/delete vocabulary

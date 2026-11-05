@@ -1554,6 +1554,87 @@ describe('sync push — page sentinel round-trips as the server NULL', () => {
   })
 })
 
+// KAN-385: completedAt is local-only, so the pull must re-derive it when
+// another device flips a section's read state.
+describe('syncService.applyServerChanges() — book completion follows pulled read state', () => {
+  type Internals = {
+    applyServerChanges: (c: { sections?: Record<string, unknown>[] }, m: Map<string, string>) => Promise<void>
+  }
+  const apply = (sections: Record<string, unknown>[]) =>
+    (syncService as unknown as Internals).applyServerChanges(
+      { sections },
+      new Map([['local-book-1', 'remote-book-1']]),
+    )
+  const t0 = Date.parse('2026-11-01T00:00:00.000Z')
+  const later = new Date(t0 + 60_000).toISOString()
+  const serverRow = (id: string, over: Record<string, unknown>) => ({
+    id, bookId: 'remote-book-1', chapterId: 'ch-1', title: id, sortOrder: 0,
+    startPage: 1, endPage: 1, scrollProgress: 0, updatedAt: later, ...over,
+  })
+
+  async function seed(completedAt: number | null, read: [boolean, boolean]) {
+    await db.delete()
+    await db.open()
+    await db.books.add({
+      id: 'local-book-1', title: 'Book', author: '', totalPages: 0, format: 'epub',
+      coverImage: null, structureSource: 'native', processingStatus: 'complete',
+      createdAt: t0, updatedAt: t0, lastReadAt: null, lastAccessedSectionId: null,
+      lastAccessedScrollProgress: null, lastAccessedWordIndex: null,
+      completedAt, remoteId: 'remote-book-1', catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+    await db.sections.bulkAdd(read.map((isRead, i) => ({
+      id: `sec-${i}`, chapterId: 'ch-1', bookId: 'local-book-1', title: `S${i}`, order: i,
+      startPage: 1, endPage: 1, extractedText: null, richContent: null,
+      isRead, readAt: isRead ? t0 : null, lastPageViewed: null, scrollProgress: 0, updatedAt: t0,
+    })))
+  }
+
+  it('clears completedAt when a newer server row marks a section unread', async () => {
+    await seed(t0, [true, true])
+    await apply([serverRow('sec-1', { isRead: false, readAt: null })])
+
+    const book = await db.books.get('local-book-1')
+    expect(book?.completedAt).toBeNull()
+    expect(book?.updatedAt).toBe(t0)
+  })
+
+  it('sets completedAt to the pulled readAt when the last unread section arrives read', async () => {
+    await seed(null, [true, false])
+    await apply([serverRow('sec-1', { isRead: true, readAt: later })])
+
+    const book = await db.books.get('local-book-1')
+    expect(book?.completedAt).toBe(Date.parse(later))
+    expect(book?.updatedAt).toBe(t0)
+  })
+
+  it('sets completedAt when the pull inserts the remaining sections already read', async () => {
+    await seed(null, [true, true])
+    await db.sections.delete('sec-1')
+    await db.books.update('local-book-1', { completedAt: null })
+    await db.sections.update('sec-0', { isRead: false, readAt: null })
+    await apply([
+      serverRow('sec-0', { isRead: true, readAt: later }),
+      serverRow('sec-new', { isRead: true, readAt: later }),
+    ])
+
+    expect((await db.books.get('local-book-1'))?.completedAt).toBe(Date.parse(later))
+  })
+
+  it('leaves completedAt alone when the pull changes only scroll progress', async () => {
+    await seed(t0, [true, true])
+    await apply([serverRow('sec-1', { isRead: true, readAt: new Date(t0).toISOString(), scrollProgress: 0.5 })])
+
+    expect((await db.books.get('local-book-1'))?.completedAt).toBe(t0)
+  })
+
+  it('leaves completedAt alone when the server row is older than the local one', async () => {
+    await seed(t0, [true, true])
+    await apply([serverRow('sec-1', { isRead: false, readAt: null, updatedAt: new Date(t0 - 1000).toISOString() })])
+
+    expect((await db.books.get('local-book-1'))?.completedAt).toBe(t0)
+  })
+})
+
 // KAN-377: /sync rejects a vocab contextSentence over 2000 chars, so a row
 // saved uncapped re-queued and failed on every sync, never reaching the server.
 describe('sync push — vocab contextSentence is capped to the server bound', () => {
