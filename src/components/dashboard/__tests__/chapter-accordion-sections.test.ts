@@ -133,4 +133,26 @@ describe('buildSectionsFromDividers', () => {
       'Querying JSON',
     ])
   })
+
+  it('drops dividers outside the chapter and duplicate pages (KAN-388)', () => {
+    // Process TOC inside Divide Sections used to hand back every later chapter's
+    // start as a divider, plus repeats when two TOC lines share a page.
+    const sections = buildSectionsFromDividers(chapter(namedFirst), [
+      { page: 20, title: 'Setting up Redis Stack' },
+      { page: 31, title: 'Querying JSON' },
+      { page: 31, title: 'Querying JSON (again)' },
+      { page: 10, title: 'At the chapter start' },
+      { page: 41, title: 'Next chapter' },
+      { page: 95, title: 'Much later chapter' },
+    ])
+
+    expect(sections).toEqual([
+      { title: 'Technical requirements', startPage: 10, endPage: 19 },
+      { title: 'Setting up Redis Stack', startPage: 20, endPage: 30 },
+      { title: 'Querying JSON', startPage: 31, endPage: 40 },
+    ])
+    for (const s of sections) {
+      expect(s.startPage).toBeLessThanOrEqual(s.endPage)
+    }
+  })
 })

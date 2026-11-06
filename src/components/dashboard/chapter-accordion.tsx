@@ -108,7 +108,13 @@ function buildSegmentsFromDividers(
   }
   const firstTitle = openingTitle || fallback
 
-  const sorted = [...dividers].sort((a, b) => a.page - b.page)
+  // A divider at or before rangeStart, past rangeEnd, or on a page another divider
+  // already holds would close a segment before it opens (startPage > endPage), which
+  // the structure PUT rejects with a 400 (KAN-388). Drop those; first title wins.
+  const sorted = [...dividers]
+    .filter(d => d.page > rangeStart && d.page <= rangeEnd)
+    .sort((a, b) => a.page - b.page)
+    .filter((d, i, arr) => i === 0 || d.page !== arr[i - 1].page)
   const segments: Array<{ title: string; startPage: number; endPage: number }> = []
   let cs = rangeStart
   for (let i = 0; i < sorted.length; i++) {

@@ -23,6 +23,47 @@ export interface PageStripEditorProps {
   onClose: () => void
 }
 
+interface TocEntry {
+  title?: string
+  startPage?: number
+  sections?: TocEntry[]
+}
+
+// Turn a /suggest-structure response into dividers for the strip's page range.
+// The AI reads the whole book's TOC, so entries routinely start outside the range
+// (every later chapter, when dividing one chapter into sections) or repeat a page.
+// A divider past endPage has no bar to remove and a repeated page yields a
+// startPage > endPage segment, both of which the structure PUT rejects (KAN-388).
+// Keep integer starts in (startPage, endPage], first title per page, ascending.
+// Divide Sections also looks at each chapter's nested sections, since those are
+// the starts that fall inside a chapter.
+export function dividersFromTocSuggestion(
+  data: { suggestions?: { chapters?: TocEntry[] }; chapters?: TocEntry[] } | null | undefined,
+  startPage: number,
+  endPage: number,
+  level: 'chapter' | 'section'
+): Divider[] {
+  const chapters = data?.suggestions?.chapters || data?.chapters || []
+  const entries: TocEntry[] = []
+  for (const ch of chapters) {
+    entries.push(ch)
+    if (level === 'section' && Array.isArray(ch.sections)) entries.push(...ch.sections)
+  }
+
+  const byPage = new Map<number, string>()
+  for (const entry of entries) {
+    const page = entry.startPage
+    if (typeof page !== 'number' || !Number.isInteger(page)) continue
+    if (page <= startPage || page > endPage || byPage.has(page)) continue
+    byPage.set(page, entry.title || '')
+  }
+
+  const labelForLevel = level === 'chapter' ? 'Chapter' : 'Section'
+  return [...byPage.keys()]
+    .sort((a, b) => a - b)
+    .map((page, i) => ({ page, title: byPage.get(page) || `${labelForLevel} ${i + 2}` }))
+}
+
 export function PageStripEditor({
   pdfBlob,
   startPage,
@@ -142,16 +183,9 @@ export function PageStripEditor({
       const { StructureService } = await import('@/lib/services/structure-service')
       const svc = new StructureService()
       const data = await svc.suggestFromTOC(bookRemoteId, [...selectedTocPages].sort((a, b) => a - b))
-      // Convert suggestions to dividers
-      const chapters = data.suggestions?.chapters || data.chapters || []
-      const newDividers: Divider[] = []
-      for (const ch of chapters) {
-        if (ch.startPage && ch.startPage > startPage) {
-          newDividers.push({ page: ch.startPage, title: ch.title || `${labelForLevel} ${newDividers.length + 2}` })
-        }
-      }
+      const newDividers = dividersFromTocSuggestion(data, startPage, endPage, level)
       if (newDividers.length === 0) {
-        setTocError('No chapters detected in the selected TOC pages. Try selecting different pages.')
+        setTocError(`No ${level === 'chapter' ? 'chapters' : 'sections'} detected in the selected TOC pages. Try selecting different pages.`)
         return
       }
       setDividers(newDividers)
@@ -163,7 +197,7 @@ export function PageStripEditor({
     } finally {
       setProcessing(false)
     }
-  }, [selectedTocPages, bookRemoteId, startPage, labelForLevel])
+  }, [selectedTocPages, bookRemoteId, startPage, endPage, level])
 
   const handleSave = useCallback(async () => {
     setSaving(true)
