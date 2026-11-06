@@ -351,12 +351,15 @@ class SyncService {
   private async drainVocabDeletes(token: string, signal?: AbortSignal): Promise<void> {
     const pending = this.readPendingVocabDeletes()
     if (pending.length === 0) return
-    const remaining: string[] = []
+    const settledIds = new Set<string>()
     for (const id of pending) {
-      if (!(await this.deleteVocabOnServer(id, token, signal))) remaining.push(id)
+      if (await this.deleteVocabOnServer(id, token, signal)) settledIds.add(id)
     }
+    // Re-read rather than writing a snapshot: a delete that failed while this
+    // drain was awaiting the network must not be dropped from the queue.
+    const remaining = this.readPendingVocabDeletes().filter(id => !settledIds.has(id))
     this.writePendingVocabDeletes(remaining)
-    const settled = pending.length - remaining.length
+    const settled = settledIds.size
     this.log(
       'vocab:delete-drain',
       `${settled}/${pending.length} pending delete${pending.length === 1 ? '' : 's'} settled${remaining.length ? `, ${remaining.length} still queued` : ''}`,

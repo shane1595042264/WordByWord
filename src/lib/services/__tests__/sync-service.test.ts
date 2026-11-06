@@ -1170,6 +1170,47 @@ describe('vocab delete durability — pending-delete queue (KAN-283)', () => {
     expect(await db.vocabulary.get('v-pending')).toBeUndefined()
   })
 
+  it('keeps a delete that fails while the drain is awaiting the network (KAN-387)', async () => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(['v-parked']))
+    let releaseParked!: () => void
+    const parkedHeld = new Promise<void>(resolve => { releaseParked = resolve })
+    let parkedIssued!: () => void
+    const parkedStarted = new Promise<void>(resolve => { parkedIssued = resolve })
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (init?.method === 'DELETE' && url.endsWith('/vocabulary/v-parked')) {
+        parkedIssued()
+        await parkedHeld
+        return new Response('', { status: 200 })
+      }
+      if (init?.method === 'DELETE' && url.endsWith('/vocabulary/v-new')) {
+        return new Response('', { status: 500 })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+
+    const svc = syncService as unknown as {
+      drainVocabDeletes: (token: string) => Promise<void>
+    }
+    const drain = svc.drainVocabDeletes('fake.jwt.token')
+    await parkedStarted
+    // The user deletes another word mid-drain and its DELETE fails.
+    expect(await syncService.deleteVocabRemote('v-new')).toBe(false)
+    expect(pending()).toEqual(['v-parked', 'v-new'])
+
+    releaseParked()
+    await drain
+
+    // v-parked settled; v-new must still be queued for the next tick.
+    expect(pending()).toEqual(['v-new'])
+  })
+
   it('caps the queue so localStorage cannot grow without bound', () => {
     const svc = syncService as unknown as { writePendingVocabDeletes: (ids: string[]) => void }
     const ids = Array.from({ length: 250 }, (_, i) => `v-${i}`)
