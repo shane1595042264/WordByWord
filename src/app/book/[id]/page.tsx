@@ -235,7 +235,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 <h1 className="text-2xl font-bold">{book.title}</h1>
                 <button
                   onClick={startEditing}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
                   aria-label="Edit book details"
                   title="Edit book details"
                 >
