@@ -226,6 +226,10 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   const [highlightRect, setHighlightRect] = useState<{
     pageNum: number; x: number; y: number; width: number; height: number
   } | null>(null)
+  // Bumped whenever a page finishes drawing. The refs above don't re-render,
+  // so without this a highlight aimed at a page that wasn't drawn yet (a big
+  // jump in the side-by-side text pane) would never resolve once it is.
+  const [renderedVersion, setRenderedVersion] = useState(0)
 
   const setCurrentFlipPage = useCallback((updater: number | ((p: number) => number)) => {
     const newPage = typeof updater === 'function' ? updater(currentFlipPage) : updater
@@ -476,6 +480,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           wrapper.style.height = 'auto' // let canvas determine height now
           wrapper.style.backgroundColor = ''
           wrapper.appendChild(canvas)
+          setRenderedVersion(v => v + 1)
           await mountTextLayer(wrapper, pdfjsRef.current, textContent, viewport, pageNum, () => cancelled)
         }
       } catch (err) {
@@ -689,6 +694,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
           pageWrapper.appendChild(canvas)
           container.appendChild(pageWrapper)
           pageWrappersRef.current.set(currentFlipPage, pageWrapper)
+          setRenderedVersion(v => v + 1)
           await mountTextLayer(pageWrapper, pdfjsRef.current, textContent, viewport, currentFlipPage, () => cancelled)
         }
       } catch (err) {
@@ -708,9 +714,20 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
   // If pdfRect is available (stored during parsing), convert directly from
   // PDF user-space to viewport coordinates — no text searching needed.
   // Falls back to text-based search when pdfRect is not available.
+  // Also re-runs as pages finish drawing (renderedVersion). On those re-runs an
+  // unchanged result keeps the previous object, so the overlay effect — and its
+  // scroll into view — doesn't fire again for a highlight that didn't move. A
+  // new pick (even of the same word) still always re-places and re-scrolls.
+  const lastHighlightWordRef = useRef<HighlightWordInfo | null | undefined>(undefined)
   useEffect(() => {
+    const isNewPick = lastHighlightWordRef.current !== highlightWord
+    lastHighlightWordRef.current = highlightWord
+    const setRect = (next: typeof highlightRect) => setHighlightRect(prev =>
+      !isNewPick && prev && next && prev.pageNum === next.pageNum && prev.x === next.x && prev.y === next.y
+        && prev.width === next.width && prev.height === next.height ? prev : next)
+
     if (!highlightWord) {
-      setHighlightRect(null)
+      setRect(null)
       return
     }
 
@@ -729,7 +746,7 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         const scaledHeight = rawHeight * viewport.scale
         // Ascent is ~85% of em square, descent ~15% — only subtract ascent for top edge
         const ascent = scaledHeight * 0.85
-        setHighlightRect({
+        setRect({
           pageNum: sourcePageNum,
           x: vx,
           y: vy - ascent,
@@ -763,12 +780,8 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       }
     }
 
-    if (result) {
-      setHighlightRect(result)
-    } else {
-      setHighlightRect(null)
-    }
-  }, [highlightWord])
+    setRect(result)
+  }, [highlightWord, renderedVersion])
 
   // Render overlay highlight elements into page wrappers
   useEffect(() => {
