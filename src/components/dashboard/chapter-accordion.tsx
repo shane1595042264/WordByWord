@@ -154,6 +154,47 @@ export function buildChaptersFromDividers(
   return buildSegmentsFromDividers(1, totalPages, chapters, fallback, dividers)
 }
 
+// The structure PUT's per-chapter section cap (nibble-api chapterItemSchema).
+const MAX_SECTIONS_PER_CHAPTER = 200
+
+type PageRange = { title: string; startPage: number; endPage: number }
+
+// Carry the book's existing sections into the chapters Reorganize rebuilt. The PUT
+// turns a chapter sent without sections into ONE section spanning it, and only a
+// section with an unchanged page range keeps its extracted text (KAN-352), so
+// sending bare chapters wiped every chapter's split and text (KAN-394).
+//
+// Old sections overlapping a chapter are clamped to it, and pages none of them
+// cover get a section named after the chapter. An unchanged chapter therefore gets
+// its exact old sections back. A chapter no old section touches, or one that would
+// exceed the PUT's section cap, is sent bare as before.
+export function attachSectionsToChapters(
+  rebuilt: PageRange[],
+  oldChapters: Array<{ sections: Array<PageRange> }>
+): Array<PageRange & { sections?: PageRange[] }> {
+  const oldSections = oldChapters
+    .flatMap(ch => ch.sections)
+    .sort((a, b) => a.startPage - b.startPage || a.endPage - b.endPage)
+
+  return rebuilt.map(ch => {
+    const sections: PageRange[] = []
+    let cursor = ch.startPage
+    for (const s of oldSections) {
+      if (cursor > ch.endPage) break
+      const start = Math.max(s.startPage, cursor)
+      const end = Math.min(s.endPage, ch.endPage)
+      if (end < start) continue
+      if (start > cursor) sections.push({ title: ch.title, startPage: cursor, endPage: start - 1 })
+      sections.push({ title: s.title, startPage: start, endPage: end })
+      cursor = end + 1
+    }
+    if (sections.length === 0) return ch
+    if (cursor <= ch.endPage) sections.push({ title: ch.title, startPage: cursor, endPage: ch.endPage })
+    if (sections.length > MAX_SECTIONS_PER_CHAPTER) return ch
+    return { ...ch, sections }
+  })
+}
+
 export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, totalBookPages, searchQuery }: ChapterAccordionProps) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
   const [expandedChapter, setExpandedChapter] = useState<string | null>(null)

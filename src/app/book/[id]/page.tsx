@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useBookDetail } from '@/hooks/use-book-detail'
 import { ProgressDrilldown } from '@/components/dashboard/progress-drilldown'
 import { ProcessButton } from '@/components/dashboard/process-button'
-import { buildChaptersFromDividers } from '@/components/dashboard/chapter-accordion'
+import { attachSectionsToChapters, buildChaptersFromDividers } from '@/components/dashboard/chapter-accordion'
 import type { Divider } from '@/components/editor/page-strip-editor'
 
 export default function BookDashboardPage({ params }: { params: Promise<{ id: string }> }) {
@@ -304,7 +304,10 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 onSave={async (dividers: Divider[]) => {
                   const { StructureService, StaleBookError } = await import('@/lib/services/structure-service')
                   const svc = new StructureService()
-                  const finalChapters = buildChaptersFromDividers(book.chapters, book.totalPages, dividers)
+                  const finalChapters = attachSectionsToChapters(
+                    buildChaptersFromDividers(book.chapters, book.totalPages, dividers),
+                    book.chapters
+                  )
 
                   try {
                     await svc.saveStructure(book.remoteId!, finalChapters)
