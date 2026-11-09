@@ -164,32 +164,41 @@ type PageRange = { title: string; startPage: number; endPage: number }
 // section with an unchanged page range keeps its extracted text (KAN-352), so
 // sending bare chapters wiped every chapter's split and text (KAN-394).
 //
-// Old sections overlapping a chapter are clamped to it, and pages none of them
-// cover get a section named after the chapter. An unchanged chapter therefore gets
-// its exact old sections back. A chapter no old section touches, or one that would
-// exceed the PUT's section cap, is sent bare as before.
+// A chapter whose range is unchanged gets its own sections back verbatim, as Divide
+// Sections sends untouched chapters: AI layouts can hold same-page or out-of-range
+// sections, and rewriting any of them would cost that section its text. A changed
+// chapter takes the sections of the old chapters it overlaps, clamped to its range,
+// plus a section named after the chapter for any pages none of them cover. A chapter
+// with nothing to take, or one that would exceed the PUT's section cap, is sent bare.
 export function attachSectionsToChapters(
   rebuilt: PageRange[],
-  oldChapters: Array<{ sections: Array<PageRange> }>
+  oldChapters: Array<PageRange & { sections: PageRange[] }>
 ): Array<PageRange & { sections?: PageRange[] }> {
-  const oldSections = oldChapters
-    .flatMap(ch => ch.sections)
-    .sort((a, b) => a.startPage - b.startPage || a.endPage - b.endPage)
+  const strip = (s: PageRange): PageRange => ({ title: s.title, startPage: s.startPage, endPage: s.endPage })
+  const byPage = [...oldChapters].sort((a, b) => a.startPage - b.startPage)
 
   return rebuilt.map(ch => {
-    const sections: PageRange[] = []
-    let cursor = ch.startPage
-    for (const s of oldSections) {
-      if (cursor > ch.endPage) break
-      const start = Math.max(s.startPage, cursor)
-      const end = Math.min(s.endPage, ch.endPage)
-      if (end < start) continue
-      if (start > cursor) sections.push({ title: ch.title, startPage: cursor, endPage: start - 1 })
-      sections.push({ title: s.title, startPage: start, endPage: end })
-      cursor = end + 1
+    const same = oldChapters.find(o => o.startPage === ch.startPage && o.endPage === ch.endPage && o.sections.length > 0)
+    let sections: PageRange[]
+    if (same) {
+      sections = same.sections.map(strip)
+    } else {
+      const clamped = byPage
+        .filter(o => o.startPage <= ch.endPage && o.endPage >= ch.startPage)
+        .flatMap(o => o.sections)
+        .map(s => ({ title: s.title, startPage: Math.max(s.startPage, ch.startPage), endPage: Math.min(s.endPage, ch.endPage) }))
+        .filter(s => s.startPage <= s.endPage)
+      if (clamped.length === 0) return ch
+      const gaps: PageRange[] = []
+      let cursor = ch.startPage
+      for (const s of [...clamped].sort((a, b) => a.startPage - b.startPage)) {
+        if (s.startPage > cursor) gaps.push({ title: ch.title, startPage: cursor, endPage: s.startPage - 1 })
+        cursor = Math.max(cursor, s.endPage + 1)
+      }
+      if (cursor <= ch.endPage) gaps.push({ title: ch.title, startPage: cursor, endPage: ch.endPage })
+      // Stable sort: sections sharing a start page keep their original order.
+      sections = [...clamped, ...gaps].sort((a, b) => a.startPage - b.startPage)
     }
-    if (sections.length === 0) return ch
-    if (cursor <= ch.endPage) sections.push({ title: ch.title, startPage: cursor, endPage: ch.endPage })
     if (sections.length > MAX_SECTIONS_PER_CHAPTER) return ch
     return { ...ch, sections }
   })
