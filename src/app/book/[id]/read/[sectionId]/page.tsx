@@ -417,10 +417,45 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
   const canGoPrev = isTextMode ? !!prevSection : isPdfPane ? pdfPrevTarget !== null : (currentPage > startPage || !!prevSection)
   const canGoNext = isTextMode ? !!nextSection : isPdfPane ? pdfNextTarget !== null : (currentPage < navEndPage || !!nextSection)
 
-  const applyPdfNav = useCallback((target: typeof pdfNextTarget) => {
+  /** A cross-section hop held back until the completion celebration closes. */
+  const pendingPdfNavRef = useRef<string | null>(null)
+
+  const applyPdfNav = useCallback(async (target: typeof pdfNextTarget) => {
     if (!target) return
-    if (target.kind === 'page') setCurrentPage(target.page)
-    else router.push(`/book/${bookId}/read/${target.sectionId}?page=${target.page}`)
+    if (target.kind === 'page') {
+      setCurrentPage(target.page)
+      return
+    }
+    const href = `/book/${bookId}/read/${target.sectionId}?page=${target.page}`
+    // Sections a forward hop skipped are never opened, so auto-track can't mark
+    // them; they hold only pages the reader just paged through.
+    let bookJustCompleted = false
+    if (target.skippedSectionIds) {
+      try {
+        const { SectionRepository } = await import('@/lib/repositories')
+        const { db } = await import('@/lib/db/database')
+        const sectionRepo = new SectionRepository()
+        for (const id of target.skippedSectionIds) {
+          const s = await db.sections.get(id)
+          if (!s || s.isRead) continue
+          if (await sectionRepo.markAsRead(id)) bookJustCompleted = true
+        }
+      } catch (err) {
+        console.error('Failed to mark skipped sections as read:', err)
+        toast.error('Could not mark section as read', {
+          description: 'Open the skipped section and use Mark as Read in the toolbar.',
+          duration: 5000,
+        })
+      }
+    }
+    // This page remounts on a section change, so the celebration has to show
+    // here, before the push.
+    if (bookJustCompleted) {
+      pendingPdfNavRef.current = href
+      setShowCelebration(true)
+      return
+    }
+    router.push(href)
   }, [bookId, router])
 
   const goToPrevPage = useCallback(() => {
@@ -598,7 +633,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     if (bookJustCompleted) setShowCelebration(true)
   }, [refreshReadStatus])
 
-  const handleCelebrationDismiss = useCallback(() => setShowCelebration(false), [])
+  const handleCelebrationDismiss = useCallback(() => {
+    setShowCelebration(false)
+    const href = pendingPdfNavRef.current
+    pendingPdfNavRef.current = null
+    if (href) router.push(href)
+  }, [router])
 
   // Whether the text pane is showing real section content rather than a
   // skeleton, the parse-error panel or the "no extractable text layer" empty

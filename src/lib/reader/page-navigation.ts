@@ -10,6 +10,10 @@
  * next/previous PDF page", skipping sections that live entirely on pages already
  * shown and bridging gaps in page coverage by landing on the nearest edge of the
  * next section that has any pages in that direction.
+ *
+ * A forward hop reports the sections it skipped in `skippedSectionIds`: they
+ * hold only pages the reader just paged through, but are never opened, so the
+ * caller must mark them read or a book read cover to cover never reaches 100%.
  */
 
 export interface PageRangeSection {
@@ -20,7 +24,7 @@ export interface PageRangeSection {
 
 export type PageNavTarget =
   | { kind: 'page'; page: number }
-  | { kind: 'section'; sectionId: string; page: number }
+  | { kind: 'section'; sectionId: string; page: number; skippedSectionIds?: string[] }
   | null
 
 /** Clamp `page` into the inclusive range of `section`. */
@@ -49,13 +53,22 @@ export function resolvePdfPageNav(
   }
 
   if (direction === 1) {
+    const skipped: string[] = []
     for (let i = curIndex + 1; i < sections.length; i++) {
       const s = sections[i]
-      if (s.endPage < target) continue // entirely on pages already shown
+      if (s.endPage < target) { // entirely on pages already shown
+        skipped.push(s.id)
+        continue
+      }
       const page = s.startPage <= target ? target : s.startPage // contains target, or gap
-      return { kind: 'section', sectionId: s.id, page: clampPage(page, s) }
+      return withSkipped({ kind: 'section', sectionId: s.id, page: clampPage(page, s) }, skipped)
     }
-    return null
+    // Every later section sits on pages already shown (back matter sharing the
+    // last page). Land on the last one, re-showing its final page, rather than
+    // leave them all unreachable.
+    const last = skipped.pop()
+    if (last === undefined) return null
+    return withSkipped({ kind: 'section', sectionId: last, page: sections[sections.length - 1].endPage }, skipped)
   }
 
   for (let i = curIndex - 1; i >= 0; i--) {
@@ -65,4 +78,11 @@ export function resolvePdfPageNav(
     return { kind: 'section', sectionId: s.id, page: clampPage(page, s) }
   }
   return null
+}
+
+function withSkipped(
+  target: { kind: 'section'; sectionId: string; page: number },
+  skipped: string[],
+): PageNavTarget {
+  return skipped.length > 0 ? { ...target, skippedSectionIds: skipped } : target
 }

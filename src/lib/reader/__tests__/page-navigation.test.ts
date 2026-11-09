@@ -77,6 +77,86 @@ describe('resolvePdfPageNav — prev (direction -1)', () => {
   })
 })
 
+describe('resolvePdfPageNav — skipped sections (KAN-393)', () => {
+  // A 5..5, B 5..5 (same page as A), C 6..8.
+  const samePage: PageRangeSection[] = [
+    { id: 'A', startPage: 5, endPage: 5 },
+    { id: 'B', startPage: 5, endPage: 5 },
+    { id: 'C', startPage: 6, endPage: 8 },
+  ]
+
+  it('A@5 next → section C page 6, reporting B as skipped', () => {
+    expect(resolvePdfPageNav(samePage, 'A', 5, 1)).toEqual({
+      kind: 'section', sectionId: 'C', page: 6, skippedSectionIds: ['B'],
+    })
+  })
+
+  it('reports every skipped section, in reading order', () => {
+    const run: PageRangeSection[] = [
+      { id: 'P', startPage: 1, endPage: 2 },
+      { id: 'Q', startPage: 2, endPage: 2 },
+      { id: 'R', startPage: 2, endPage: 2 },
+      { id: 'S', startPage: 3, endPage: 4 },
+    ]
+    expect(resolvePdfPageNav(run, 'P', 2, 1)).toEqual({
+      kind: 'section', sectionId: 'S', page: 3, skippedSectionIds: ['Q', 'R'],
+    })
+  })
+
+  it('C@6 prev skips nothing and reports nothing', () => {
+    expect(resolvePdfPageNav(samePage, 'C', 6, -1)).toEqual({ kind: 'section', sectionId: 'B', page: 5 })
+  })
+
+  it('a hop over no sections carries no skipped list', () => {
+    expect(resolvePdfPageNav(samePage, 'B', 5, 1)).toEqual({ kind: 'section', sectionId: 'C', page: 6 })
+  })
+
+  it('trailing sections on the last page shown → lands on the last one, the rest skipped', () => {
+    const tail: PageRangeSection[] = [
+      { id: 'X', startPage: 1, endPage: 2 },
+      { id: 'Y', startPage: 2, endPage: 2 },
+      { id: 'Z', startPage: 2, endPage: 2 },
+    ]
+    expect(resolvePdfPageNav(tail, 'X', 2, 1)).toEqual({
+      kind: 'section', sectionId: 'Z', page: 2, skippedSectionIds: ['Y'],
+    })
+    expect(resolvePdfPageNav(tail, 'Z', 2, 1)).toBeNull()
+  })
+
+  it('a single trailing section → lands on it with nothing skipped', () => {
+    const tail: PageRangeSection[] = [
+      { id: 'X', startPage: 1, endPage: 2 },
+      { id: 'Y', startPage: 2, endPage: 2 },
+    ]
+    expect(resolvePdfPageNav(tail, 'X', 2, 1)).toEqual({ kind: 'section', sectionId: 'Y', page: 2 })
+  })
+
+  it('walking Next from the first page lands on or skips every section', () => {
+    const book: PageRangeSection[] = [
+      { id: 's1', startPage: 1, endPage: 1 },
+      { id: 's2', startPage: 1, endPage: 1 },
+      { id: 's3', startPage: 1, endPage: 3 },
+      { id: 's4', startPage: 3, endPage: 3 },
+      { id: 's5', startPage: 6, endPage: 6 },
+      { id: 's6', startPage: 6, endPage: 6 },
+      { id: 's7', startPage: 6, endPage: 6 },
+    ]
+    const seen = new Set<string>(['s1'])
+    let sectionId = 's1'
+    let page = 1
+    for (let step = 0; step < 50; step++) {
+      const t = resolvePdfPageNav(book, sectionId, page, 1)
+      if (!t) break
+      if (t.kind === 'page') { page = t.page; continue }
+      for (const id of t.skippedSectionIds ?? []) seen.add(id)
+      seen.add(t.sectionId)
+      sectionId = t.sectionId
+      page = t.page
+    }
+    expect([...seen].sort()).toEqual(book.map(s => s.id).sort())
+  })
+})
+
 describe('resolvePdfPageNav — defensive cases', () => {
   it('unknown current section id → null', () => {
     expect(resolvePdfPageNav(sections, 'nope', 1, 1)).toBeNull()
