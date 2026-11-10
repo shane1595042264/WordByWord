@@ -463,7 +463,9 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
         canvas.style.display = 'block'
         canvas.dataset.pageNum = String(pageNum)
 
-        const ctx = canvas.getContext('2d')!
+        // Null under canvas-memory pressure (long sections on mobile).
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('Canvas 2D context unavailable')
         await page.render({ canvasContext: ctx, viewport, canvas } as any).promise
 
         // One getTextContent() feeds both the highlight positions and the
@@ -486,9 +488,38 @@ export function PDFViewer({ pdfBlob, startPage, endPage, readingMode, currentPag
       } catch (err) {
         // Mark as not rendered so it can be retried
         renderedPagesRef.current.delete(pageNum)
+        // The doc was destroyed under us (section change / unmount): not a failure.
+        if (cancelled) return
         toast.error(`Failed to render page ${pageNum}`, { duration: 5000 })
         console.error(`PDF page ${pageNum} render error:`, err)
+        showPageFailed(wrapper, pageNum)
       }
+    }
+
+    /**
+     * Leave a failed page visibly failed with a Retry control. The observer
+     * won't re-deliver a page that's still in its rootMargin, so without this
+     * the page would stay a blank placeholder until scrolled far away and back.
+     * The placeholder keeps its height, so the scroll position doesn't move.
+     */
+    const showPageFailed = (wrapper: HTMLElement, pageNum: number) => {
+      wrapper.innerHTML = ''
+      const failed = document.createElement('div')
+      failed.dataset.pageFailed = 'true'
+      failed.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#71717a;font-size:13px;font-family:sans-serif;'
+      const message = document.createElement('span')
+      message.textContent = `Couldn't render page ${pageNum}`
+      const retry = document.createElement('button')
+      retry.type = 'button'
+      retry.textContent = 'Retry'
+      retry.style.cssText = 'padding:4px 12px;border:1px solid #d4d4d8;border-radius:6px;background:#fff;color:#18181b;cursor:pointer;'
+      retry.addEventListener('click', (e) => {
+        e.stopPropagation()
+        wrapper.innerHTML = ''
+        renderPage(pageNum)
+      })
+      failed.append(message, retry)
+      wrapper.appendChild(failed)
     }
 
     setup()
