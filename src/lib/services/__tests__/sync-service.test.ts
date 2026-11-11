@@ -2307,3 +2307,114 @@ describe('vocab bookId after Download from Cloud (KAN-350)', () => {
     expect(lastPushedVocab()).toEqual([])
   })
 })
+
+// KAN-397: /sync pages chapters and sections. A capped first page used to be the
+// whole pull, so a fresh device lost the rest and its watermark moved past them.
+describe('sync pull paging (KAN-397)', () => {
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number }
+  const internals = () => syncService as unknown as Internals
+  const T = '2026-11-01T00:00:00.000Z'
+  const FIRST_SYNCED_AT = '2026-11-10T12:00:00.000Z'
+  const PAGE = 3
+
+  const serverBook = { id: 'rb-big', customTitle: 'Big Book', catalogId: 'cat-big', updatedAt: T, deletedAt: null }
+  const serverChapter = { id: 'ch-big', bookId: 'rb-big', title: 'C', sortOrder: 0, updatedAt: T }
+  const serverSections = Array.from({ length: 7 }, (_, i) => ({
+    id: `sec-${i}`, bookId: 'rb-big', chapterId: 'ch-big', title: `S${i}`, sortOrder: i,
+    startPage: 1, endPage: 1, scrollProgress: 0, isRead: false, readAt: null, updatedAt: T,
+  }))
+
+  let requests: Array<{ lastSyncedAt: string; changes: Record<string, unknown>; pullCursor?: { sections?: string } }>
+
+  // Pages the first `count` sections by id like the server; `failPage` answers that request with a 500.
+  function installFetch(opts: { failPage?: number; count?: number } = {}) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (url === '/api/auth/token') return json({ token: 'fake.jwt.token' })
+      if (url.endsWith('/sync')) {
+        const req = JSON.parse(init!.body as string)
+        requests.push(req)
+        if (opts.failPage === requests.length) return new Response('', { status: 500 })
+        const after = req.pullCursor?.sections
+        const rest = serverSections.slice(0, opts.count).filter(s => !after || s.id > after)
+        const page = rest.slice(0, PAGE)
+        const first = !req.pullCursor
+        return json({
+          syncedAt: first ? FIRST_SYNCED_AT : new Date().toISOString(),
+          serverChanges: {
+            books: first ? [serverBook] : [], chapters: first ? [serverChapter] : [], sections: page,
+            vocabulary: [], settings: null,
+          },
+          failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+          pullCursor: rest.length > PAGE ? { sections: page[page.length - 1].id } : null,
+        })
+      }
+      if (url.endsWith('/summary')) return json({ catalog: { format: 'epub', title: 'Big Book', author: '' } })
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  const localSectionIds = async () => (await db.sections.toArray()).map(s => s.id).sort()
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    requests = []
+    internals().token = null
+    internals().tokenExp = 0
+    internals().hasInitSynced = false
+    internals().isSyncing = false
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    internals().hasInitSynced = false
+    internals().isSyncing = false
+    vi.restoreAllMocks()
+  })
+
+  it('a fresh-device sync pulls every page, and keeps the first page watermark', async () => {
+    installFetch()
+    await syncService.sync()
+
+    expect(await localSectionIds()).toEqual(serverSections.map(s => s.id))
+    expect(requests).toHaveLength(3)
+    expect(requests.slice(1).map(r => r.pullCursor)).toEqual([{ sections: 'sec-2' }, { sections: 'sec-5' }])
+    for (const r of requests.slice(1)) {
+      expect(r.lastSyncedAt).toBe(requests[0].lastSyncedAt)
+      expect(r.changes).toMatchObject({ books: [], chapters: [], sections: [], vocabulary: [], settings: null })
+    }
+    expect(localStorage.getItem('nibble_lastSyncedAt')).toBe(FIRST_SYNCED_AT)
+  })
+
+  it('Download from Cloud pulls every page', async () => {
+    installFetch()
+    await syncService.downloadFromCloud()
+
+    expect(await localSectionIds()).toEqual(serverSections.map(s => s.id))
+    expect(localStorage.getItem('nibble_lastSyncedAt')).toBe(FIRST_SYNCED_AT)
+  })
+
+  it('a failed continuation page fails the sync without advancing the watermark', async () => {
+    installFetch({ failPage: 2 })
+    await syncService.sync().catch(() => {})
+
+    expect(localStorage.getItem('nibble_lastSyncedAt')).toBeNull()
+    expect(await db.sections.count()).toBe(0)
+  })
+
+  it('a single-page pull makes one request', async () => {
+    installFetch({ count: PAGE })
+    await syncService.sync()
+
+    expect(requests).toHaveLength(1)
+    expect(await localSectionIds()).toEqual(['sec-0', 'sec-1', 'sec-2'])
+  })
+})

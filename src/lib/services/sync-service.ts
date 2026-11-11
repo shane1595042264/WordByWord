@@ -17,6 +17,9 @@ const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
 // before the last successful push read its dirty rows.
 const LAST_PUSHED_KEY = 'nibble_lastPushedAt'
 const SYNC_LOG_KEY = 'nibble_syncLog'
+// Each /sync pull page carries up to 5000 chapters and 5000 sections; this many
+// pages is far past any real library and only stops a server that never ends.
+const MAX_PULL_PAGES = 100
 
 /**
  * A row written from server data is already in sync, so it carries the server's
@@ -518,6 +521,51 @@ class SyncService {
     return process.env.NEXT_PUBLIC_API_URL || ''
   }
 
+  /**
+   * /sync sends chapters and sections one page at a time; a non-null pullCursor
+   * means more remain. Fetch the rest (same lastSyncedAt, empty push) and append
+   * them to the first page, so everything downstream sees the whole pull. The
+   * first page's syncedAt stays the watermark: a row edited mid-paging is newer
+   * than it and comes back next sync. Throws rather than return a partial pull,
+   * so the caller never advances LAST_SYNCED_KEY past unsent rows (KAN-397).
+   */
+  private async fetchRemainingPullPages(
+    result: { serverChanges: { chapters?: unknown[]; sections?: unknown[] }; pullCursor?: unknown },
+    lastSyncedAt: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let cursor = result.pullCursor
+    for (let page = 2; cursor; page++) {
+      if (page > MAX_PULL_PAGES) throw new Error(`Sync pull did not finish after ${MAX_PULL_PAGES} pages`)
+      this.emitStatus('syncing', `:pull page ${page}`)
+      const res = await fetch(`${this.getApiUrl()}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          lastSyncedAt,
+          changes: { books: [], chapters: [], sections: [], vocabulary: [], settings: null, exerciseProgress: [] },
+          pullCursor: cursor,
+        }),
+        signal,
+      })
+      if (!res.ok) throw new Error(`Sync pull page ${page} failed: HTTP ${res.status}`)
+      const next = await res.json()
+      const chapters = next?.serverChanges?.chapters
+      const sections = next?.serverChanges?.sections
+      if (!Array.isArray(chapters) || !Array.isArray(sections)) {
+        throw new Error(`Sync pull page ${page} failed: malformed server response`)
+      }
+      result.serverChanges.chapters = [...(result.serverChanges.chapters ?? []), ...chapters]
+      result.serverChanges.sections = [...(result.serverChanges.sections ?? []), ...sections]
+      this.log('sync:pull-page', `page ${page}: ${chapters.length} chapters, ${sections.length} sections`)
+      cursor = next.pullCursor
+    }
+  }
+
   // ── Cloud status ─────────────────────────────────────────────
 
   async getCloudStatus(): Promise<CloudStatus | null> {
@@ -868,6 +916,8 @@ class SyncService {
         this.log('sync:settings-push', 'pushed local settings to cloud')
       }
 
+      await this.fetchRemainingPullPages(result, lastSyncedAt, token, signal)
+
       const serverBooks = (result.serverChanges.books ?? []) as Record<string, unknown>[]
 
       // Detect what the server has
@@ -1125,6 +1175,7 @@ class SyncService {
     if (!Array.isArray(serverBooks) || !Array.isArray(serverVocab)) {
       throw new Error('Sync failed: malformed server response')
     }
+    await this.fetchRemainingPullPages(result, '1970-01-01T00:00:00.000Z', token)
     // Deletes still queued after the drains above (offline / server down) would
     // otherwise be re-downloaded as active rows — hold them out until they land.
     const stillPendingBookDeletes = new Set(this.readPendingBookDeletes())
