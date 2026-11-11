@@ -17,6 +17,30 @@ export interface PDFOutlineItem {
   children: PDFOutlineItem[]
 }
 
+// Matches the backend's upload and /sync bounds on title/author (BOOK_CUSTOM_TITLE_MAX).
+export const PDF_METADATA_FIELD_MAX = 500
+
+/**
+ * Normalize a Title/Author string from the PDF Info dictionary. A file's own
+ * metadata can be arbitrarily long (40-name author lists, a subtitle and series
+ * stuffed into Title), and over the backend's bound the whole upload 400ed
+ * (KAN-398). Long values are cut at the last list separator, else the last
+ * space, and end in an ellipsis.
+ */
+export function capMetadataField(value: unknown, fallback: string, max = PDF_METADATA_FIELD_MAX): string {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
+  if (!text) return fallback
+  const chars = Array.from(text)
+  if (chars.length <= max) return text
+
+  const head = chars.slice(0, max - 1).join('')
+  const minCut = Math.floor(head.length / 2)
+  const separator = Math.max(head.lastIndexOf(','), head.lastIndexOf(';'))
+  const space = head.lastIndexOf(' ')
+  const cut = separator >= minCut ? separator : space >= minCut ? space : head.length
+  return head.slice(0, cut).replace(/[\s,;:]+$/, '') + '…'
+}
+
 export class PDFService {
   async extractMetadata(blob: Blob): Promise<PDFMetadata> {
     const arrayBuffer = await blob.arrayBuffer()
@@ -25,8 +49,8 @@ export class PDFService {
       const metadata = await doc.getMetadata()
       const info = metadata.info as Record<string, any>
       return {
-        title: info?.Title || 'Untitled',
-        author: info?.Author || 'Unknown',
+        title: capMetadataField(info?.Title, 'Untitled'),
+        author: capMetadataField(info?.Author, 'Unknown'),
         totalPages: doc.numPages,
       }
     } finally {
