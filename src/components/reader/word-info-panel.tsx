@@ -236,6 +236,14 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     setExplaining(false)
     setShowExplanation(false)
 
+    // Sentence mode never renders the word translation or explanation, and the
+    // e/a buttons that need them only mount in word mode — don't buy an unseen
+    // Anthropic call (and a /ai rate-limit slot) per sentence (KAN-399).
+    if (panelMode === 'sentence') {
+      setTranslating(false)
+      return
+    }
+
     if (isBlockContent) {
       // Block content (table/code/figure) → skip translation, auto-explain
       setTranslating(false)
@@ -331,7 +339,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
       cancelled = true
       controller.abort()
     }
-  }, [word, apiKey, targetLang, isBlockContent, isImageContent])
+  }, [word, apiKey, targetLang, isBlockContent, isImageContent, panelMode])
 
   // Auto-translate sentence when in sentence mode (backend-proxied)
   useEffect(() => {
