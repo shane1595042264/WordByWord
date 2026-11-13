@@ -3,6 +3,20 @@ import { syncService } from '../sync-service'
 import { db } from '@/lib/db/database'
 import type { VocabEntry } from '@/lib/db/models'
 
+// A failed sync arms a backoff retry (KAN-402). Drop it after every test so a
+// leftover timer can't fire a real sync() into a later test's fetch mock.
+afterEach(() => {
+  const s = syncService as unknown as {
+    debounceTimer: ReturnType<typeof setTimeout> | null
+    firstDirtyAt: number | null
+    consecutiveFailures: number
+  }
+  if (s.debounceTimer) clearTimeout(s.debounceTimer)
+  s.debounceTimer = null
+  s.firstDirtyAt = null
+  s.consecutiveFailures = 0
+})
+
 // Regression coverage for KAN-187: downloadFromCloud() must never wipe local
 // IDB before the cloud payload has been received and validated, otherwise a
 // transient network failure destroys the user's library.
@@ -2416,5 +2430,144 @@ describe('sync pull paging (KAN-397)', () => {
 
     expect(requests).toHaveLength(1)
     expect(await localSectionIds()).toEqual(['sec-0', 'sec-1', 'sec-2'])
+  })
+})
+
+// KAN-402: runSync() clears firstDirtyAt the moment it starts. A push that then
+// failed left it null, so flushPending() (Sign Out) resolved true with no request
+// and IndexedDB was wiped with the rows never pushed, and nothing retried them
+// until the next local write.
+describe('a failed sync stays pending (KAN-402)', () => {
+  const realFetch = globalThis.fetch
+  type Internals = {
+    hasInitSynced: boolean
+    isSyncing: boolean
+    token: string | null
+    tokenExp: number
+    firstDirtyAt: number | null
+    debounceTimer: ReturnType<typeof setTimeout> | null
+  }
+  const internals = () => syncService as unknown as Internals
+  const okBody = {
+    syncedAt: '2026-11-13T00:00:00.000Z',
+    serverChanges: { books: [], chapters: [], sections: [], vocabulary: [], settings: null },
+    failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+  }
+  let syncCalls: number
+
+  // Answers the n-th POST /sync with responses[n], or the last entry once they run out.
+  function install(responses: Array<number | 'reject' | 'hang'>) {
+    syncCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), { status: 200 })
+      }
+      if (url.endsWith('/sync')) {
+        const r = responses[Math.min(syncCalls++, responses.length - 1)]
+        if (r === 'reject') throw new TypeError('Failed to fetch')
+        if (r === 'hang') {
+          return new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+          })
+        }
+        return new Response(r === 200 ? JSON.stringify(okBody) : '', { status: r })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    const s = internals()
+    s.token = null
+    s.tokenExp = 0
+    s.hasInitSynced = true
+    s.isSyncing = false
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  /** Pull the armed retry out of setTimeout so the test can see its delay and run it. */
+  function captureRetry() {
+    const realSetTimeout = globalThis.setTimeout
+    const armed: Array<{ fn: () => void; ms: number }> = []
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms !== undefined && ms >= 30_000) {
+        armed.push({ fn, ms })
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      }
+      return realSetTimeout(fn, ms)
+    }) as typeof setTimeout)
+    return armed
+  }
+
+  it('Sign Out after a failed push issues a real /sync instead of resolving with nothing pending', async () => {
+    install([502, 200])
+    syncService.markDirty()
+    expect(await syncService.sync()).toEqual({ status: 'failed', reason: 'Sync request failed: HTTP 502' })
+
+    // Pre-fix: firstDirtyAt was null here and flushPending resolved true with 1 request.
+    expect(internals().firstDirtyAt).not.toBeNull()
+    expect(await syncService.flushPending(8000)).toBe(true)
+    expect(syncCalls).toBe(2)
+    expect(internals().firstDirtyAt).toBeNull()
+  })
+
+  it('a network error re-arms too, and flushPending reports false when the retry also fails', async () => {
+    install(['reject'])
+    syncService.markDirty()
+    expect((await syncService.sync()).status).toBe('failed')
+    expect(await syncService.flushPending(8000)).toBe(false)
+    expect(syncCalls).toBe(2)
+  })
+
+  it('retries on its own with no new write, backing off 30s then 60s', async () => {
+    const armed = captureRetry()
+    install([500, 500, 200])
+    expect((await syncService.sync()).status).toBe('failed')
+    expect(armed.map(a => a.ms)).toEqual([30_000])
+
+    armed[0].fn()
+    await vi.waitFor(() => expect(syncCalls).toBe(2))
+    await vi.waitFor(() => expect(armed.map(a => a.ms)).toEqual([30_000, 60_000]))
+
+    armed[1].fn()
+    await vi.waitFor(() => expect(syncCalls).toBe(3))
+    await vi.waitFor(() => expect(internals().firstDirtyAt).toBeNull())
+    // The push landed: no further retry, and the next failure starts back at 30s.
+    expect(armed).toHaveLength(2)
+    install([500])
+    expect((await syncService.sync()).status).toBe('failed')
+    expect(armed[2].ms).toBe(30_000)
+  })
+
+  it('keeps the earliest dirty time so the max-wait cap still counts from the first unpushed write', async () => {
+    install([500])
+    syncService.markDirty()
+    const dirtyAt = internals().firstDirtyAt
+    if (internals().debounceTimer) clearTimeout(internals().debounceTimer!)
+    internals().debounceTimer = null
+    await syncService.sync()
+    expect(internals().firstDirtyAt).toBe(dirtyAt)
+  })
+
+  it('does not re-arm when destroy() aborted the sync (Sign Out after the flush gave up)', async () => {
+    install(['hang'])
+    syncService.markDirty()
+    const run = syncService.sync()
+    await vi.waitFor(() => expect(syncCalls).toBe(1))
+    syncService.destroy()
+    expect(await run).toEqual({ status: 'failed', reason: 'sync was cancelled' })
+    expect(internals().firstDirtyAt).toBeNull()
+    expect(internals().debounceTimer).toBeNull()
   })
 })

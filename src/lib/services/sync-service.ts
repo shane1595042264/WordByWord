@@ -12,6 +12,13 @@ const SYNC_DEBOUNCE_MS = 30_000
  * (KAN-298). The cap bounds staleness without penalising idle users.
  */
 const SYNC_MAX_WAIT_MS = 120_000
+/**
+ * Retry delays after a failed sync: 30s, 60s, 120s, then every 5 min. A failed
+ * push leaves its rows dirty in IndexedDB, so something must re-attempt it
+ * without waiting for the next local write (KAN-402).
+ */
+const SYNC_RETRY_BASE_MS = SYNC_DEBOUNCE_MS
+const SYNC_RETRY_MAX_MS = 300_000
 const LAST_SYNCED_KEY = 'nibble_lastSyncedAt'
 // Push cursor, separate from the pull watermark above: client-clock ms taken just
 // before the last successful push read its dirty rows.
@@ -86,6 +93,8 @@ class SyncService {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
   /** Timestamp of the first dirty write since the last committed sync (KAN-298). */
   private firstDirtyAt: number | null = null
+  /** Syncs that have failed in a row since the last push landed (KAN-402). */
+  private consecutiveFailures = 0
   private isSyncing = false
   /** The running sync() call, set synchronously so it also covers the token fetch. */
   private inFlight: Promise<SyncResult> | null = null
@@ -140,6 +149,19 @@ class SyncService {
     document.addEventListener('visibilitychange', onVisibilityChange)
     this.cleanupFns.push(() => document.removeEventListener('visibilitychange', onVisibilityChange))
 
+    // Back online after a failed push: retry now instead of sitting out the backoff.
+    const onOnline = () => {
+      if (this.firstDirtyAt === null || this.inFlight) return
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer)
+        this.debounceTimer = null
+      }
+      this.log('sync:online', 'connection restored with pending changes — syncing')
+      void this.sync()
+    }
+    window.addEventListener('online', onOnline)
+    this.cleanupFns.push(() => window.removeEventListener('online', onOnline))
+
     // Full sync on init — always sync from epoch on first load to catch all changes
     this.hasInitSynced = false
     this.syncWithRetry()
@@ -171,6 +193,7 @@ class SyncService {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = null
     this.firstDirtyAt = null
+    this.consecutiveFailures = 0
     // Abort any in-flight sync fetch to prevent stale responses from overwriting newer data
     if (this.abortController) {
       this.abortController.abort()
@@ -788,6 +811,7 @@ class SyncService {
     // A sync is committed — open a fresh max-wait window. Writes that land while
     // this request is in flight may not be in its payload, so they deserve a new
     // budget rather than inheriting the elapsed one (KAN-298).
+    const dirtyAtStart = this.firstDirtyAt
     this.firstDirtyAt = null
     // Create an AbortController so destroy() can cancel this in-flight sync
     this.abortController = new AbortController()
@@ -1039,6 +1063,7 @@ class SyncService {
       // One ms early: the dirty read is strictly `above`, and a write in the same
       // millisecond as pushStartedAt may have missed this payload.
       localStorage.setItem(LAST_PUSHED_KEY, String(pushStartedAt - 1))
+      this.consecutiveFailures = 0
       this.log('sync:complete', `synced at ${result.syncedAt}`)
       let outcome: SyncResult = { status: 'complete' }
       if (failedDownloads.length > 0) {
@@ -1071,10 +1096,32 @@ class SyncService {
       }
       console.error('[sync] error:', err)
       this.emitStatus('error', ':sync failed')
+      if (!signal.aborted) this.scheduleRetry(dirtyAtStart)
       return { status: 'failed', reason: err instanceof Error ? err.message : String(err) }
     } finally {
       this.isSyncing = false
     }
+  }
+
+  /**
+   * A failed sync never advanced the push cursor, so its rows are still dirty —
+   * but firstDirtyAt was cleared when it started, which made flushPending (Sign
+   * Out) and the tab-hidden flush believe nothing was pending, and nothing
+   * retried until the next local write (KAN-402). Mark the service dirty again
+   * and arm a backoff retry.
+   */
+  private scheduleRetry(dirtyAtStart: number | null) {
+    const now = Date.now()
+    this.firstDirtyAt = Math.min(dirtyAtStart ?? now, this.firstDirtyAt ?? now)
+    this.consecutiveFailures++
+    // A write that landed mid-flight already armed the debounce; it retries sooner.
+    if (this.debounceTimer) return
+    const delay = Math.min(SYNC_RETRY_BASE_MS * 2 ** (this.consecutiveFailures - 1), SYNC_RETRY_MAX_MS)
+    this.log('sync:retry', `attempt ${this.consecutiveFailures} failed — retrying in ${Math.round(delay / 1000)}s`)
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null
+      void this.sync()
+    }, delay)
   }
 
   // ── Force upload: override cloud with local ──────────────────
