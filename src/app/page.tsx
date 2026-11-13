@@ -53,7 +53,9 @@ export default function HomePage() {
     setSyncing(true)
     try {
       const { syncService } = await import('@/lib/services/sync-service')
-      await syncService.sync()
+      // sync() resolves 'skipped' while another sync is in flight — wait it out
+      // so the click always runs a real sync (KAN-401).
+      await syncService.syncAfterInFlight()
       setLastSynced(syncService.getLastSyncedAt())
       refresh()
     } catch (err) {
@@ -248,7 +250,11 @@ export default function HomePage() {
             try {
               const { syncService } = await import('@/lib/services/sync-service')
               syncService.forceFullSyncNext()
-              await syncService.sync()
+              // An in-flight sync took its snapshot before the job finished and
+              // won't flip the card; a skipped sync() would strand it on
+              // 'Complete!' until reload (KAN-401). The force-full flag survives
+              // the in-flight run, so the follow-up is still a full pull.
+              await syncService.syncAfterInFlight()
               refresh()
             } catch (err) {
               console.error('Post-processing sync failed:', err)
