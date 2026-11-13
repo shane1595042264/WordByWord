@@ -15,6 +15,9 @@ interface SyncStatusEvent {
 }
 
 const SYNC_TOAST_ID = 'sync-status'
+// Failed syncs now retry on a backoff (KAN-402); one card that each failure
+// updates, instead of a new sticky card per retry.
+const SYNC_ERROR_TOAST_ID = 'sync-error'
 
 /**
  * A committed sync fires every 30-120s for an actively scrolling reader, so the
@@ -77,6 +80,7 @@ export function useSyncStatus({ showToasts = false } = {}) {
           // Sync failures are actionable ("will retry" / "try Download again")
           // and must not auto-dismiss before the user reads them.
           toast.error('Sync failed', {
+            id: SYNC_ERROR_TOAST_ID,
             description: message,
             duration: Infinity,
             closeButton: true,

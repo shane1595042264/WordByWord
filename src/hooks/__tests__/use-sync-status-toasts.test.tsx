@@ -75,6 +75,17 @@ describe('useSyncStatus toasts (KAN-336)', () => {
     expect(opts.closeButton).toBe(true)
   })
 
+  it('repeated failures reuse one error card instead of stacking (KAN-402 retries)', () => {
+    renderHook(() => useSyncStatus({ showToasts: true }))
+    emit('error', ':sync failed')
+    emit('error', ':sync failed')
+
+    const ids = error.mock.calls.map(c => (c[1] as Record<string, unknown>).id)
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).toBeTruthy()
+    expect(ids[1]).toBe(ids[0])
+  })
+
   it('stays silent entirely when showToasts is off', () => {
     renderHook(() => useSyncStatus())
     emit('complete', ':sync complete')
