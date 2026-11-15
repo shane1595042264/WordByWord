@@ -2571,3 +2571,139 @@ describe('a failed sync stays pending (KAN-402)', () => {
     expect(internals().debounceTimer).toBeNull()
   })
 })
+
+describe('a partial sync stays pending (KAN-403)', () => {
+  const realFetch = globalThis.fetch
+  type Internals = {
+    hasInitSynced: boolean
+    isSyncing: boolean
+    token: string | null
+    tokenExp: number
+    firstDirtyAt: number | null
+    consecutiveFailures: number
+  }
+  const internals = () => syncService as unknown as Internals
+  // Section ids each POST /sync carried, and the ids the n-th response rejects
+  // (the last entry repeats once they run out).
+  let pushedSections: string[][]
+  let rejects: string[][]
+
+  function install() {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as Request).url ?? String(input)
+      if (url === '/api/auth/token') {
+        return new Response(JSON.stringify({ token: 'fake.jwt.token' }), { status: 200 })
+      }
+      if (url.endsWith('/sync')) {
+        const req = JSON.parse(init!.body as string)
+        const n = pushedSections.length
+        pushedSections.push((req.changes.sections as Array<{ id: string }>).map(s => s.id))
+        return new Response(JSON.stringify({
+          syncedAt: new Date().toISOString(),
+          serverChanges: { books: [], chapters: [], sections: [], vocabulary: [], settings: null },
+          failedEntities: { books: [], chapters: [], sections: rejects[Math.min(n, rejects.length - 1)], vocabulary: [] },
+        }), { status: 200 })
+      }
+      throw new Error('Unexpected fetch in test: ' + url)
+    }) as typeof fetch
+  }
+
+  /** Pull the armed retry out of setTimeout so the test can see its delay and run it. */
+  function captureRetry() {
+    const realSetTimeout = globalThis.setTimeout
+    const armed: Array<{ fn: () => void; ms: number }> = []
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms !== undefined && ms >= 30_000) {
+        armed.push({ fn, ms })
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      }
+      return realSetTimeout(fn, ms)
+    }) as typeof setTimeout)
+    return armed
+  }
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    pushedSections = []
+    rejects = [[]]
+    const s = internals()
+    s.token = null
+    s.tokenExp = 0
+    s.hasInitSynced = true
+    s.isSyncing = false
+    const now = Date.now()
+    await db.books.add({
+      id: 'local-book-1', title: 'Book', author: '', totalPages: 10, format: 'epub', coverImage: null,
+      structureSource: 'native', processingStatus: 'complete', createdAt: now, updatedAt: now,
+      lastReadAt: null, lastAccessedSectionId: null, lastAccessedScrollProgress: null, lastAccessedWordIndex: null,
+      completedAt: null, remoteId: 'remote-book-1', catalogId: 'cat-1',
+    } as Parameters<typeof db.books.add>[0])
+    await db.sections.add({
+      id: 'sec-1', chapterId: 'ch-1', bookId: 'local-book-1', title: 'S', order: 0, startPage: 1, endPage: 1,
+      extractedText: 'text', isRead: true, readAt: now, lastPageViewed: null, scrollProgress: 0, updatedAt: now,
+    } as Parameters<typeof db.sections.add>[0])
+    localStorage.setItem('nibble_lastPushedAt', String(now - 1000))
+    install()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('Sign Out after a partial push pushes the rejected row again instead of resolving with nothing pending', async () => {
+    rejects = [['sec-1'], []]
+    syncService.markDirty()
+    expect(await syncService.sync()).toEqual({ status: 'partial', reason: '1 item will retry' })
+
+    // Pre-fix: firstDirtyAt was null here and flushPending resolved true with no request.
+    expect(internals().firstDirtyAt).not.toBeNull()
+    expect(await syncService.flushPending(8000)).toBe(true)
+    expect(pushedSections).toEqual([['sec-1'], ['sec-1']])
+    expect(internals().firstDirtyAt).toBeNull()
+  })
+
+  it('retries on its own with no new write, and the backoff keeps growing while the row is rejected', async () => {
+    const armed = captureRetry()
+    rejects = [['sec-1'], ['sec-1'], []]
+    expect((await syncService.sync()).status).toBe('partial')
+    expect(armed.map(a => a.ms)).toEqual([30_000])
+
+    armed[0].fn()
+    await vi.waitFor(() => expect(pushedSections).toHaveLength(2))
+    await vi.waitFor(() => expect(armed.map(a => a.ms)).toEqual([30_000, 60_000]))
+
+    armed[1].fn()
+    await vi.waitFor(() => expect(pushedSections).toHaveLength(3))
+    await vi.waitFor(() => expect(internals().firstDirtyAt).toBeNull())
+    expect(pushedSections[2]).toEqual(['sec-1'])
+    // The row landed: no further retry, and the backoff is reset.
+    expect(armed).toHaveLength(2)
+    expect(internals().consecutiveFailures).toBe(0)
+  })
+
+  it('a row the server always rejects backs off to the 5min ceiling, not a 30s loop', async () => {
+    const armed = captureRetry()
+    rejects = [['sec-1']]
+    expect((await syncService.sync()).status).toBe('partial')
+    for (let i = 0; i < 6; i++) {
+      armed[i].fn()
+      await vi.waitFor(() => expect(armed).toHaveLength(i + 2))
+    }
+    expect(armed.map(a => a.ms)).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 300_000])
+  })
+
+  it('a clean sync arms no retry and leaves nothing pending', async () => {
+    syncService.markDirty()
+    const armed = captureRetry()
+    expect(await syncService.sync()).toEqual({ status: 'complete' })
+    expect(internals().firstDirtyAt).toBeNull()
+    expect(armed).toHaveLength(0)
+    expect(await syncService.flushPending(8000)).toBe(true)
+    expect(pushedSections).toHaveLength(1)
+  })
+})

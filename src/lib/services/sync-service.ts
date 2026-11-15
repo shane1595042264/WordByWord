@@ -1063,7 +1063,11 @@ class SyncService {
       // One ms early: the dirty read is strictly `above`, and a write in the same
       // millisecond as pushStartedAt may have missed this payload.
       localStorage.setItem(LAST_PUSHED_KEY, String(pushStartedAt - 1))
-      this.consecutiveFailures = 0
+      // Re-bumped rows are still unpushed, so keep the service dirty and back off
+      // like a failed sync — otherwise nothing retries them and Sign Out wipes
+      // them (KAN-403). A row the server rejects every time settles at the 5min ceiling.
+      if (failedCount > 0) this.scheduleRetry(dirtyAtStart)
+      else this.consecutiveFailures = 0
       this.log('sync:complete', `synced at ${result.syncedAt}`)
       let outcome: SyncResult = { status: 'complete' }
       if (failedDownloads.length > 0) {
@@ -1105,6 +1109,7 @@ class SyncService {
 
   /**
    * A failed sync never advanced the push cursor, so its rows are still dirty —
+   * as are the rows a partial sync re-bumped (KAN-403) —
    * but firstDirtyAt was cleared when it started, which made flushPending (Sign
    * Out) and the tab-hidden flush believe nothing was pending, and nothing
    * retried until the next local write (KAN-402). Mark the service dirty again
