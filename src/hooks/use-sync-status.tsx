@@ -62,6 +62,11 @@ export function useSyncStatus({ showToasts = false } = {}) {
         setIsSyncing(false)
         setProgress(null)
         if (showToasts) {
+          // A clean sync supersedes any earlier failure card: the backoff retry
+          // (KAN-402) or the next routine sync has now pushed and pulled
+          // everything, so a sticky "Sync failed" would be stale (KAN-405).
+          // Only `complete` clears it; partial results arrive as `error`.
+          toast.dismiss(SYNC_ERROR_TOAST_ID)
           // Routine success — a pill, not a card. The only `complete` message the
           // sync service emits is ':sync complete', which the pill already says,
           // so it moves to the title attribute rather than a second line of text.

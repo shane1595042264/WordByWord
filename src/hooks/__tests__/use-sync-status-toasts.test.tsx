@@ -6,12 +6,14 @@ import type { ReactElement } from 'react'
 const custom = vi.fn()
 const success = vi.fn()
 const error = vi.fn()
+const dismiss = vi.fn()
 
 vi.mock('sonner', () => ({
   toast: {
     custom: (...args: unknown[]) => custom(...args),
     success: (...args: unknown[]) => success(...args),
     error: (...args: unknown[]) => error(...args),
+    dismiss: (...args: unknown[]) => dismiss(...args),
   },
 }))
 
@@ -30,6 +32,7 @@ describe('useSyncStatus toasts (KAN-336)', () => {
     custom.mockClear()
     success.mockClear()
     error.mockClear()
+    dismiss.mockClear()
   })
 
   it('renders a committed sync as a compact custom pill, not a full success card', () => {
@@ -86,6 +89,30 @@ describe('useSyncStatus toasts (KAN-336)', () => {
     expect(ids[1]).toBe(ids[0])
   })
 
+  it('clears the failure card once a retry syncs cleanly (KAN-405)', () => {
+    renderHook(() => useSyncStatus({ showToasts: true }))
+    emit('error', ':sync failed')
+    expect(dismiss).not.toHaveBeenCalled()
+
+    emit('complete', ':sync complete')
+    const errorId = (error.mock.calls[0][1] as Record<string, unknown>).id
+    expect(dismiss).toHaveBeenCalledTimes(1)
+    expect(dismiss).toHaveBeenCalledWith(errorId)
+    // Dismissed before the pill is shown, and only the error card — not the pill.
+    expect(dismiss.mock.invocationCallOrder[0]).toBeLessThan(custom.mock.invocationCallOrder[0])
+    expect(errorId).not.toBe((custom.mock.calls[0][1] as Record<string, unknown>).id)
+  })
+
+  it('keeps the failure card while retries keep failing or stay partial', () => {
+    renderHook(() => useSyncStatus({ showToasts: true }))
+    emit('error', ':sync failed')
+    emit('error', ':sync partial — 1 item will retry')
+    emit('syncing', ':sync')
+
+    expect(dismiss).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalledTimes(2)
+  })
+
   it('stays silent entirely when showToasts is off', () => {
     renderHook(() => useSyncStatus())
     emit('complete', ':sync complete')
@@ -94,6 +121,7 @@ describe('useSyncStatus toasts (KAN-336)', () => {
     expect(custom).not.toHaveBeenCalled()
     expect(success).not.toHaveBeenCalled()
     expect(error).not.toHaveBeenCalled()
+    expect(dismiss).not.toHaveBeenCalled()
   })
 
   it('still tracks syncing state and progress independently of the toasts', () => {
