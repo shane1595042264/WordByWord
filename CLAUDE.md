@@ -23,7 +23,7 @@ The user's vocab lives in https://shanejli.com's knowledge base, not just in Ind
 
 1. `VocabService.add()` (in `src/lib/services/vocab-service.ts`) writes the entry to IndexedDB (local-first read path).
 2. Then calls `syncService.syncNow()` (in `src/lib/services/sync-service.ts`) — a method that bypasses the normal 30s debounce because vocab adds are deliberate user actions.
-3. `syncNow()` fires `POST /api/sync` to nibble-api, which forwards new vocab entries to the personal-website knowledge base.
+3. `syncNow()` fires `POST /api/sync` to nibble-api, which saves new vocab entries and forwards them to the personal-website knowledge base from a background outbox (since 2026-11-17; a slow knowledge base no longer fails the sync or shows "Sync failed" here — see nibble-api `northstar.md` Section 0).
 
 **Don't restore a long debounce for vocab.** The 30s debounce still applies to scroll progress and other bursty events; vocab is the carve-out.
 

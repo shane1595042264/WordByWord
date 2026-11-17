@@ -21,6 +21,20 @@ The user asked for a full redesign of nibbook.com and left the direction open. W
 
 **Don't undo this without explicit user consent:** don't reintroduce a second accent colour, don't move the theme choice into synced settings, and don't point signed-out `/` back at the login page.
 
+### 2026-11-17 — A .nib is rebuilt at read time; it is never stored or uploaded
+
+Section 2.1 below says a NibDocument is "stored in IndexedDB, then rehydrated … Process once, read forever." That never shipped and is now **superseded on purpose**: the reader parses the open section into a NibDocument every time (`src/app/book/[id]/read/[sectionId]/page.tsx`, the "Parse section text through .nib pipeline" effect: richContent → NibMarkdownParser, else pdfBlob → NibParser, else extractedText → NibTextParser). The user asked whether to start uploading .nib files; the answer was no, for these measured reasons:
+
+- **Parsing is cheap.** NibParser on a 12-page section takes ~5 ms (Algorithms by Jeff Erickson: 5.6 ms; Spring Boot 3: 4.9 ms; Bun + pdf.js 5.5). A section open is dominated by pdf.js reopening the PDF and rendering each page at 2x (~13–18 ms per page), not by the parse.
+- **A stored .nib is as big as the book.** Whole-book JSON came to 23.9 MB and 36.1 MB (4.2 / 6.5 MB gzipped), about 130–160 bytes per word, before the base64 figure PNGs it would also carry.
+- **It would go stale constantly.** The output depends on the parser code, the section's start/end pages, its title and the next section's title (the trim logic). Every parser fix and every Reorganize/Divide edit would leave stored copies wrong.
+- **The expensive work is already stored.** OCR, Mathpix and AI-vision output lives in `sections.extracted_text` / `sections.rich_content` and syncs. That is the right thing to persist; the .nib is a cheap derivative of it.
+- **nibble-api's `nib_cache` is keyed by file hash**, so a client-uploaded copy would be shared by every user of that book; one bad parse or old client would break it for all of them.
+
+Consequences: `storage.uploadNib()` and the `nib_cache` table in nibble-api stay unused (see its northstar Section 0). **Cross-book search does not need a stored .nib either**: the server answers "this section, this snippet" from the stored text, and the reader's read-time .nib locates the exact word (and its `pdfRect`) when the hit is opened. If a server-side feature ever needs word-level structure across books, the *server* builds it from the PDF it already holds in R2, keyed by a parser version — clients still never upload it.
+
+**Don't undo this without explicit user consent:** don't add a client upload of NibDocument data, and don't cache NibDocuments in IndexedDB as a source of truth. A local, parser-versioned memo cache is acceptable only if a measurement shows section opens are slow because of the parse itself.
+
 ### 2026-10-06 — PDF view: selectable text layer, the vim cursor, and page-based Next/Prev
 
 PDF view used to be a stack of bare `<canvas>` pages: nothing on them could be selected, and the vim keys only scrolled (an ad-hoc handler in the reader page bound j/k/d/u/gg/G/Ctrl+E/Ctrl+Y to `scrollBy`). The user asked for text view's behaviour in PDF view — "highlight text and navigate the text like in text mode, with vim commands".
@@ -111,7 +125,7 @@ The crown jewel. Every PDF gets parsed into a **word-level document object model
 - **Dual parsing pipeline:**
   - **NibParser** — for PDFs with text layers. Uses font size, position, and style data from PDF.js to detect headers, footers, footnotes by their physical layout.
   - **NibTextParser** — for scanned/OCR'd PDFs where text arrives as flat strings from AI vision. Uses regex heuristics to detect numbered headings, bullets, blockquotes, figure captions, footnotes, page breaks.
-- **Serializable**: The entire NibDocument can be serialized to JSON (`toData()`) and stored in IndexedDB, then rehydrated (`NibDocument.fromData()`) without loss. Process once, read forever.
+- **Serializable**: The entire NibDocument can be serialized to JSON (`toData()`) and stored in IndexedDB, then rehydrated (`NibDocument.fromData()`) without loss. Process once, read forever. *(superseded 2026-11-17 — see Section 0: the .nib is rebuilt at read time and never stored or uploaded; `toData()` stays for tests and tooling.)*
 
 **Location:** `src/lib/nib/` — `models.ts`, `parser.ts`, `text-parser.ts`, `index.ts`
 **Orchestrator:** `src/lib/services/nib-service.ts`
@@ -313,7 +327,7 @@ Stored in `localStorage` as `bbb-settings`:
 - [ ] Viewport overlay in side-by-side mode (LoL minimap-style camera box on PDF)
 - [ ] Backend + user accounts + cloud sync
 - [ ] Bookmarks, highlights, annotations
-- [ ] Search across books
+- [ ] Search across books *(2026-11-17 sizing, not yet decided: prod had 15 books / ~2,970 pages / ~38M chars of stored text. Tier 1 keyword search = Postgres full-text search over `sections.extracted_text` / `rich_content` scoped to the user's books, ~$0 to run; needs a one-time server-side text backfill for the ~14% of sections with no stored text (TOC Only uploads). Tier 2 meaning-based search = embeddings + pgvector (0.8.6 is available on prod Postgres 17, not yet enabled), well under $1 to embed today's library, keyed per catalog book so users share them; the vector index's RAM is the first real cost at scale. Tier 3 "ask your books" = search + a Claude answer, ~$0.001 per question on Haiku 5.5, the only tier whose cost grows per use. Recommended order: 1, then 2 if keyword proves too literal, 3 behind the AI gate. None of it needs a stored .nib — see Section 0.)*
 - [ ] Export progress reports
 - [ ] Mobile-responsive optimization
 - [ ] Multiple AI provider support
