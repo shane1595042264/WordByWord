@@ -181,7 +181,7 @@ export function AiKeysSettings() {
 
   return (
     <div className="mt-4 space-y-10">
-      <section className="space-y-3">
+      <section className="space-y-6">
         <p className="max-w-[65ch] text-sm leading-relaxed text-muted-foreground">
           Nibbler runs every AI feature (translations, explanations, scanned-page text, AI Suggest) on your own
           provider key. Paste a key from Anthropic, OpenAI, Google Gemini or xAI and Nibbler works out which one it
@@ -437,15 +437,22 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function UsageTable({ caption, rows }: { caption: string; rows: Array<{ key: string; name: string; calls: number; cost: number }> }) {
   return (
-    <table className="w-full text-sm">
+    // table-fixed + colgroup: the name column takes what the numbers leave, and
+    // only a genuinely long model id is cut short (its full name is the title).
+    <table className="w-full table-fixed text-sm">
       <caption className="mb-1 text-left text-xs font-medium text-muted-foreground">{caption}</caption>
+      <colgroup>
+        <col />
+        <col className="w-12" />
+        <col className="w-20" />
+      </colgroup>
       <thead className="sr-only">
         <tr><th>Name</th><th>Calls</th><th>Cost</th></tr>
       </thead>
       <tbody className="divide-y divide-border">
         {rows.map((r) => (
           <tr key={r.key}>
-            <td className="max-w-0 truncate py-1.5 pr-3" title={r.name}>{r.name}</td>
+            <td className="truncate py-1.5 pr-3" title={r.name}>{r.name}</td>
             <td className="py-1.5 pr-3 text-right font-mono text-xs tabular-nums text-muted-foreground">{formatCount(r.calls)}</td>
             <td className="py-1.5 text-right font-mono text-xs tabular-nums">{formatUsd(r.cost)}</td>
           </tr>
