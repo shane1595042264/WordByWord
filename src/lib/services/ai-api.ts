@@ -184,3 +184,15 @@ export async function saveAiSettings(patch: Partial<AiSettings>): Promise<AiSett
 export function fetchAiUsage(days = 30): Promise<AiUsage> {
   return request('GET', `/ai/usage?days=${days}`, undefined, 'Could not load usage')
 }
+
+/**
+ * The ? dialog's fallback when no shortcut's words match the question: the
+ * reader's own model picks the ids that answer it. Only ids from `shortcuts`
+ * come back.
+ */
+export async function searchShortcutsWithAi(
+  query: string,
+  shortcuts: Array<{ id: string; label: string; description: string }>,
+): Promise<string[]> {
+  return (await request<{ ids: string[] }>('POST', '/ai/search-shortcuts', { query, shortcuts }, 'Shortcut search failed')).ids
+}

@@ -35,6 +35,7 @@ export const GLOBAL_SHORTCUTS: GlobalShortcutDef[] = [
   { id: 'reading-mode-flip', label: 'Flip Mode', defaultKeys: 'Ctrl+Shift+f', description: 'Read the PDF one page at a time' },
   { id: 'open-settings', label: 'Open Settings', defaultKeys: 'Ctrl+,', description: 'Open the settings page' },
   { id: 'open-keymap', label: 'Keyboard Shortcuts', defaultKeys: 'Ctrl+]', description: 'Open the keyboard customization settings' },
+  { id: 'shortcut-help', label: 'Search Shortcuts', defaultKeys: 'Shift+?', description: 'Search every keyboard shortcut, or ask AI how to do something' },
 ]
 
 // ─── Conflict detection ─────────────────────────────────────────────────────
@@ -55,7 +56,7 @@ function normalizeCombo(combo: string): string {
 }
 
 /** The effective combo a vim rule currently resolves to (override wins over default). */
-function effectiveVimCombo(rule: VimRule, overrides: KeymapOverrides): string {
+export function effectiveVimCombo(rule: VimRule, overrides: KeymapOverrides): string {
   const override = overrides[rule.id]
   if (override) return override
   const parts: string[] = []

@@ -30,6 +30,7 @@ const FEATURE_LABEL: Record<string, string> = {
   'explain-translation': 'Word explanations',
   'explain-content': 'Table and code explanations',
   'explain-image': 'Figure explanations',
+  'search-shortcuts': 'Shortcut search',
   ocr: 'Scanned-page text (import)',
   'processing-ocr': 'Scanned-page text (upload)',
   toc: 'AI Suggest for contents',
