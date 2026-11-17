@@ -439,7 +439,7 @@ function UsageTable({ caption, rows }: { caption: string; rows: Array<{ key: str
   return (
     // table-fixed + colgroup: the name column takes what the numbers leave, and
     // only a genuinely long model id is cut short (its full name is the title).
-    <table className="w-full table-fixed text-sm">
+    <table className="w-full table-fixed self-start text-sm">
       <caption className="mb-1 text-left text-xs font-medium text-muted-foreground">{caption}</caption>
       <colgroup>
         <col />
