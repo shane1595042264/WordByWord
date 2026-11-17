@@ -40,7 +40,7 @@ Since 2026-09-05 six settings also sync through `POST /api/sync` (KAN-288) — l
 | Framework | Next.js (App Router, Turbopack), Tailwind v4, shadcn/ui, React 19 |
 | Storage | Dexie (IndexedDB) + localStorage for settings |
 | PDF | pdfjs-dist (LAZY-IMPORTED inside NibService — never top-level import, breaks SSR) |
-| AI | Anthropic SDK (Claude vision) for client-side OCR |
+| AI | None in the browser: every AI call is a nibble-api `/ai/*` route that runs on the reader's own key, added in Settings > AI (BYOK, NorthStar Section 0, 2026-11-17) |
 | Testing | vitest + jsdom + fake-indexeddb |
 
 ## Critical gotcha

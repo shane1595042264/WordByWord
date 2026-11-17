@@ -30,10 +30,12 @@ export class StaleBookError extends Error {
  * pages. nibble-api's error handler always replies `{ error: { code, message, status } }`,
  * so prefer the server's own sentence and keep the status only as the fallback for a
  * body that isn't that envelope (a CDN/proxy error page, say). KAN-313.
+ *
+ * Since 2026-11-17 AI Suggest runs on the reader's own AI key (BYOK); a reader
+ * without one gets 409 AI_KEY_REQUIRED, whose message already says to add a
+ * key in Settings > AI. The admin-only 402 gate it replaced is gone.
  */
 async function describeSuggestFailure(res: Response): Promise<string> {
-  // The AI-access gate's 402 — own copy so it never depends on the server string (KAN-367).
-  if (res.status === 402) return "AI Suggest isn't enabled for this account."
   const body = await res.json().catch(() => null) as { error?: { message?: unknown } } | null
   const message = body?.error?.message
   return typeof message === 'string' && message.trim()

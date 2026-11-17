@@ -34,7 +34,6 @@ export const TARGET_LANGUAGES: { code: TargetLanguage; label: string; native: st
 ]
 
 export interface AppSettings {
-  anthropicApiKey: string | null
   /** @deprecated no longer drives behaviour; kept for sync back-compat */
   autoReadThresholdSeconds: number
   defaultViewMode: 'pdf' | 'text' | 'side-by-side'
@@ -48,9 +47,13 @@ export interface AppSettings {
 
 /**
  * The subset of AppSettings the backend has columns for (nibble-api
- * user_settings / syncSettingsSchema). anthropicApiKey and warnBeforeSync are
- * deliberately excluded: the key is a device-local secret and the warn flag is
- * a per-device UX choice — neither has a server column.
+ * user_settings / syncSettingsSchema). warnBeforeSync is deliberately
+ * excluded: it is a per-device UX choice with no server column.
+ *
+ * AI keys are not a setting any more: since 2026-11-17 they live encrypted in
+ * nibble-api against the account (Settings > AI). An Anthropic key saved here
+ * by the old General tab stays in the stored blob, untyped, until the reader
+ * moves it to their account or removes it (legacyAnthropicKey below).
  */
 export const SYNCED_SETTING_KEYS = [
   'autoReadThresholdSeconds',
@@ -68,7 +71,6 @@ const READING_MODES: AppSettings['readingMode'][] = ['scroll', 'flip']
 const TRACKING_MODES: AppSettings['trackingMode'][] = ['timer', 'endofpage']
 
 const DEFAULT_SETTINGS: AppSettings = {
-  anthropicApiKey: null,
   autoReadThresholdSeconds: 5,
   defaultViewMode: 'side-by-side',
   trackingMode: 'timer',
@@ -125,8 +127,23 @@ export class SettingsService {
     }
   }
 
-  getApiKey(): string | null {
-    return this.getSettings().anthropicApiKey
+  /**
+   * The Anthropic key the old General tab kept in this browser, if one is still
+   * here. Settings > AI offers to move it to the account, then forgets it.
+   */
+  legacyAnthropicKey(): string | null {
+    const key = (this.getSettings() as AppSettings & { anthropicApiKey?: unknown }).anthropicApiKey
+    return typeof key === 'string' && key.trim() ? key.trim() : null
+  }
+
+  /** Drop the browser-held key, leaving every other setting as it was. */
+  forgetLegacyAnthropicKey(): void {
+    if (typeof window === 'undefined') return
+    const rest: AppSettings & { anthropicApiKey?: unknown } = { ...this.getSettings() }
+    delete rest.anthropicApiKey
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(rest))
+    } catch { /* storage blocked: nothing more to do */ }
   }
 
   // ── Cloud sync (KAN-288) ──────────────────────────────────────
@@ -193,7 +210,7 @@ export class SettingsService {
 
   /**
    * Forget this browser's settings so a different user on it starts clean: the
-   * blob (including the device-local anthropicApiKey) and both markers.
+   * blob (including any legacy browser-held Anthropic key) and both markers.
    *
    * The blob is removed, not rewritten to defaults: any stored blob with no
    * synced marker is the backfill branch of hasPendingSettingsPush, so a

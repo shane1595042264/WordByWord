@@ -8,13 +8,13 @@ import { toast } from 'sonner'
 import { ArrowLeftIcon } from 'lucide-react'
 import { AppHeader } from '@/components/app-header'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { KeymapSettings } from '@/components/settings/keymap-settings'
 import { AdminSettings } from '@/components/settings/admin-settings'
 import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
 import { ProfileSettings } from '@/components/settings/profile-settings'
+import { AiKeysSettings } from '@/components/settings/ai-keys-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
 import { TARGET_LANGUAGES, SETTINGS_SYNCED_EVENT } from '@/lib/services/settings-service'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
@@ -24,7 +24,7 @@ function SettingsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const urlTab = tabParam && ['profile', 'general', 'keymap', 'cloud', 'admin'].includes(tabParam)
+  const urlTab = tabParam && ['profile', 'general', 'ai', 'keymap', 'cloud', 'admin'].includes(tabParam)
     ? tabParam
     : 'profile'
   const isAdmin = (session?.user as any)?.role === 'admin'
@@ -94,9 +94,9 @@ function SettingsContent() {
   }, [unsavedEdits])
 
   // General is a deferred-save form: nothing is persisted until Save. Without a
-  // guard a reload or tab close drops the edits silently — costliest for the
-  // Anthropic API key, the one field users paste rather than retype (KAN-331).
-  // Same pattern as upload-dialog.tsx.
+  // guard a reload or tab close drops the edits silently (KAN-331). Same
+  // pattern as upload-dialog.tsx. (AI keys are no longer part of this form:
+  // the AI tab saves each key to the account the moment it is added.)
   useEffect(() => {
     if (!unsavedEdits) return
     const handler = (e: BeforeUnloadEvent) => {
@@ -172,6 +172,7 @@ function SettingsContent() {
         <TabsList className="max-w-full overflow-x-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="ai">AI</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
           <TabsTrigger value="cloud">Cloud Sync</TabsTrigger>
           {isAdmin && <TabsTrigger value="admin">Admin</TabsTrigger>}
@@ -183,20 +184,6 @@ function SettingsContent() {
 
         <TabsContent value="general">
           <div className="space-y-6 mt-4">
-            <div className="space-y-2">
-              <Label htmlFor="api-key">Anthropic API Key</Label>
-              <Input
-                id="api-key"
-                type="password"
-                placeholder="sk-ant-..."
-                value={settings.anthropicApiKey ?? ''}
-                onChange={e => editSettings({ ...settings, anthropicApiKey: e.target.value || null })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Required for AI-powered section splitting. Your key stays in your browser.
-              </p>
-            </div>
-
             <div className="space-y-2">
               <Label id="default-view-mode-label">Default view mode</Label>
               <div className="flex gap-2" role="radiogroup" aria-labelledby="default-view-mode-label">
@@ -293,6 +280,10 @@ function SettingsContent() {
               {saved ? 'Saved!' : unsavedEdits ? 'Save Settings *' : 'Save Settings'}
             </Button>
           </div>
+        </TabsContent>
+
+        <TabsContent value="ai">
+          <AiKeysSettings />
         </TabsContent>
 
         <TabsContent value="cloud">

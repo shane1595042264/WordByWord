@@ -3,7 +3,10 @@ import { db } from '@/lib/db/database'
 import type { Book } from '@/lib/db/models'
 import { clearLocalUserData, ensureLocalDataOwner, signOutLocalData, LOCAL_OWNER_KEY, SIGN_OUT_FLUSH_TIMEOUT_MS } from '../clear-local-data'
 import { syncService } from '@/lib/services/sync-service'
-import { SettingsService } from '@/lib/services/settings-service'
+import { SettingsService, type AppSettings } from '@/lib/services/settings-service'
+
+/** A key the pre-BYOK General tab kept in the settings blob (AI keys left settings on 2026-11-17). */
+const legacyKey = (key: string) => ({ anthropicApiKey: key }) as unknown as Partial<AppSettings>
 
 function seedBook(id: string) {
   return db.books.add({
@@ -60,25 +63,25 @@ describe('ensureLocalDataOwner (KAN-351)', () => {
   it('an owner change drops the previous user\'s settings and API key instead of pushing them (KAN-364)', async () => {
     localStorage.setItem(LOCAL_OWNER_KEY, 'user-a')
     const svc = new SettingsService()
-    svc.updateSettings({ targetLanguage: 'ja', anthropicApiKey: 'sk-user-a' })
+    svc.updateSettings({ targetLanguage: 'ja', ...legacyKey('sk-user-a') })
     svc.markSettingsSynced(svc.getSettingsUpdatedAt())
 
     await ensureLocalDataOwner('user-b')
 
     expect(localStorage.getItem('bbb-settings')).toBeNull()
     expect(svc.hasPendingSettingsPush()).toBe(false)
-    expect(svc.getApiKey()).toBeNull()
+    expect(svc.legacyAnthropicKey()).toBeNull()
   })
 
   it('sign-out leaves no settings for the next user to push or inherit (KAN-364)', async () => {
     const svc = new SettingsService()
-    svc.updateSettings({ keymapOverrides: { 'normal:j': 'x' }, anthropicApiKey: 'sk-user-a' })
+    svc.updateSettings({ keymapOverrides: { 'normal:j': 'x' }, ...legacyKey('sk-user-a') })
     svc.markSettingsSynced(svc.getSettingsUpdatedAt())
 
     await clearLocalUserData()
 
     expect(svc.hasPendingSettingsPush()).toBe(false)
-    expect(svc.getApiKey()).toBeNull()
+    expect(svc.legacyAnthropicKey()).toBeNull()
     expect(svc.getSettings().keymapOverrides).toEqual({})
   })
 

@@ -1,5 +1,6 @@
 import type { TargetLanguage } from './settings-service'
 import { TARGET_LANGUAGES } from './settings-service'
+import { aiErrorFromResponse } from './ai-api'
 
 /** Result from the translation API */
 export interface TranslationResult {
@@ -29,50 +30,22 @@ function getLangLabel(code: TargetLanguage): string {
 }
 
 /**
- * Reader-facing text for the statuses a retry fixes, plus the AI-access 402, or
- * null for the rest. The 402 is mapped here because its server copy was billing
- * text ("Processing job not yet paid") that meant nothing in the reader (KAN-367).
- */
-function friendlyStatusMessage(status: number): string | null {
-  if (status === 402) return "AI features aren't enabled for this account."
-  if (status === 429) return 'Too many lookups — wait a moment and try again.'
-  if (status >= 500) return 'The AI service is busy — try again in a moment.'
-  return null
-}
-
-/**
- * The message the word/sentence panel renders for a failed nibble-api call.
+ * The error the word/sentence panel renders for a failed nibble-api call.
  * err.message is shown verbatim (word-info-panel), so the raw response body
- * must never be interpolated — it used to put
- * `{"error":{"code":"INTERNAL_ERROR",...}}` in front of the reader (KAN-366).
- * Other 4xx keep the server's own human-written envelope message.
+ * is never interpolated (KAN-366). A missing or refused AI key comes back as
+ * an AiApiError whose needsKeySetup is true, so the panel can link to
+ * Settings > AI.
  */
-async function apiErrorMessage(res: Response): Promise<string> {
-  const friendly = friendlyStatusMessage(res.status)
-  if (friendly) return friendly
-  try {
-    const body = await res.json()
-    const message = body?.error?.message
-    if (typeof message === 'string' && message) return message
-  } catch {
-    // Non-JSON body — fall through to the generic message.
-  }
-  return `Translation failed (${res.status}) — try again.`
+function apiError(res: Response): Promise<Error> {
+  return aiErrorFromResponse(res, { failed: 'Translation failed', rateLimited: 'Too many lookups — wait a moment and try again.' })
 }
 
 /**
- * Translation service. Calls nibble-api endpoints which proxy Anthropic
- * server-side using ANTHROPIC_API_KEY from the backend env — no
- * user-managed API key in localStorage anymore.
- *
- * The constructor's apiKey argument is kept for backward compat but is
- * only used by explainImage (the one vision codepath that still needs
- * direct browser → Anthropic because the server flow would require the
- * user to re-upload the image).
+ * Translation service. Every call goes to nibble-api's /ai routes, which run
+ * it on the reader's own provider key, stored encrypted against their account
+ * (bring your own key, 2026-11-17). The browser never holds a provider key.
  */
 export class TranslationService {
-  private apiKey: string
-
   /**
    * Default request deadline for every interactive translation/explanation
    * fetch. Without it, a stalled upstream (Anthropic slow, nibble-api
@@ -81,10 +54,6 @@ export class TranslationService {
    * than the backend's 10s KB budget, so we allow more headroom.
    */
   private static readonly DEFAULT_TIMEOUT_MS = 25_000
-
-  constructor(apiKey?: string | null) {
-    this.apiKey = apiKey ?? ''
-  }
 
   /**
    * Combine the caller-supplied signal (used to abort on unmount / word
@@ -111,7 +80,12 @@ export class TranslationService {
     return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
   }
 
-  private async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  private async postJson<T>(
+    path: string,
+    body: unknown,
+    signal?: AbortSignal,
+    opts: { timeoutMs?: number; timedOut?: string } = {},
+  ): Promise<T> {
     const token = await this.getToken()
     let res: Response
     try {
@@ -119,18 +93,18 @@ export class TranslationService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
-        signal: this.withDeadline(signal),
+        signal: this.withDeadline(signal, opts.timeoutMs),
       })
     } catch (err) {
       // The deadline fired (TimeoutError) rather than an unmount abort
       // (AbortError). Rethrow with a clearer message; callers surface it.
       if ((err as Error)?.name === 'TimeoutError') {
-        throw new Error('Translation timed out — try again.')
+        throw new Error(opts.timedOut ?? 'Translation timed out — try again.')
       }
       throw err
     }
     if (!res.ok) {
-      throw new Error(await apiErrorMessage(res))
+      throw await apiError(res)
     }
     return res.json() as Promise<T>
   }
@@ -200,56 +174,23 @@ export class TranslationService {
   }
 
   /**
-   * Vision-powered figure explanation. Still uses the user's own Anthropic
-   * key because the backend doesn't have a URL-based vision endpoint yet,
-   * and proxying image bytes through the backend would require fetching
-   * the R2-hosted image twice. Falls through with a clear error when the
-   * user hasn't supplied a key.
+   * Figure explanation. nibble-api fetches the figure (Mathpix-hosted images
+   * only) and runs it on an image-capable model on the reader's key; a reader
+   * whose keys can't read images gets AI_KEY_NO_VISION. The server may spend
+   * up to 15s fetching the figure before the model starts, hence the longer
+   * deadline.
    */
   async explainImage(
     imageUrl: string,
     surroundingContext: string,
     signal?: AbortSignal,
   ): Promise<string> {
-    if (!this.apiKey) {
-      throw new Error('Figure explanation requires an Anthropic API key in Settings (vision).')
-    }
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 500,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'url', url: imageUrl } },
-            {
-              type: 'text',
-              text: `Explain this figure/diagram clearly. What does it show? How does it relate to the surrounding text?\n\nSurrounding context: ${surroundingContext}`,
-            },
-          ],
-        }],
-      }),
-      signal: this.withDeadline(signal),
-    }).catch((err) => {
-      if ((err as Error)?.name === 'TimeoutError') {
-        throw new Error('Figure explanation timed out — try again.')
-      }
-      throw err
-    })
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        throw new Error('Your Anthropic API key in Settings was rejected.')
-      }
-      throw new Error(friendlyStatusMessage(res.status) ?? `Figure explanation failed (${res.status}) — try again.`)
-    }
-    const data = await res.json()
-    return data.content?.[0]?.text ?? ''
+    const parsed = await this.postJson<{ explanation: string }>(
+      '/ai/explain-image',
+      { imageUrl, surroundingContext },
+      signal,
+      { timeoutMs: 45_000, timedOut: 'Figure explanation timed out — try again.' },
+    )
+    return parsed.explanation
   }
 }

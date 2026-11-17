@@ -8,6 +8,16 @@
 
 Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
 
+### 2026-11-17 — AI runs on the reader's own key, kept with their account (bring your own key)
+
+Every AI feature used to run on one server Anthropic key behind an admin-only gate ("AI features aren't enabled for this account" for everyone else), while section splitting, the scanned-page OCR fallback and figure explanation ran in the browser on an "Anthropic API Key" typed into Settings > General and kept in localStorage on that one device. **Superseded.** The user's decision: readers bring their own key, as on the user's own site (shaneBackend), so AI no longer depends on one account's credit, and Nibbler shows each reader what they spend.
+
+- **Settings > AI** (`src/components/settings/ai-keys-settings.tsx`, deep link `/settings?tab=ai`). The reader pastes a key; the provider is detected from its format (Anthropic, OpenAI, Google Gemini, xAI) with an instant hint while typing (`detectKeyProvider` in `src/lib/services/ai-api.ts`; nibble-api's answer is the one that counts). nibble-api checks it with one tiny call and stores it encrypted against the account, so it works on every device after sign-in. The tab lists keys (provider, last four characters, working or not, model choice, whether it can read page images), lets the reader pick which provider to try first, and shows 30-day usage by feature and by model in estimated dollars.
+- **The browser never holds a provider key.** Every AI call is a nibble-api `/ai/*` route with the session JWT: translations and explanations, figure explanation (`/ai/explain-image`, was browser → Anthropic), section splitting (`/ai/split-sections`, was the browser Anthropic SDK; long chapters go in batches of 10 pages), scanned-page OCR (`/ai/ocr`; the browser fallback is gone) and Process TOC. `src/lib/services/ai-service.ts`, `src/lib/ai-models.ts` and `@anthropic-ai/sdk` are removed, and the General tab no longer has a key field.
+- **No key, no image-capable key, or a refused key** comes back as 409 `AI_KEY_REQUIRED` / `AI_KEY_NO_VISION` / `AI_KEY_REJECTED`. That copy is written for the reader and shown as-is; the word panel adds an "Open AI settings" link (`AiApiError.needsKeySetup`). An import with scanned pages and no key imports the pages without text and says why rather than failing.
+- **Old browser-held keys** stay in the settings blob, untyped, until Settings > AI moves them to the account ("Move to my account") or the reader removes them. Signing out still wipes them with the rest of the blob (KAN-364).
+- Mathpix and paid processing are unchanged. Backend details: nibble-api `northstar.md` Section 0, same date.
+
 ### 2026-11-17 — Visual redesign, a public front page, and dark mode
 
 The user asked for a full redesign of nibbook.com and left the direction open. What changed:
@@ -67,7 +77,7 @@ A section used to be auto-marked read on a clock: the default `trackingMode: 'ti
 `bbb-settings` was a purely device-local blob: every sync push hardcoded `settings: null` and the pull discarded `serverChanges.settings`, so prod's `user_settings` table held 0 rows for 22 users and every preference plus all keymap overrides reset on a new device (KAN-288). Six settings now round-trip through `POST /api/sync`: `autoReadThresholdSeconds`, `defaultViewMode`, `readingMode`, `trackingMode`, `targetLanguage`, `keymapOverrides`.
 
 - localStorage is still the read path and still local-first — settings are read once on mount, exactly as before. The cloud is a mirror, not the source of truth.
-- `anthropicApiKey` and `warnBeforeSync` deliberately stay device-local. The key is a secret and the warn flag is a per-device UX choice; neither has a server column. **Don't add them to `SYNCED_SETTING_KEYS`.**
+- `anthropicApiKey` and `warnBeforeSync` deliberately stay device-local. The key is a secret and the warn flag is a per-device UX choice; neither has a server column. **Don't add them to `SYNCED_SETTING_KEYS`.** *(2026-11-17: `anthropicApiKey` is no longer a setting; AI keys live encrypted with the account, Settings > AI. See Section 0.)*
 - Conflict rule lives in `SettingsService` (`src/lib/services/settings-service.ts`): two device-local markers, `bbb-settings-updatedAt` (bumped on a local edit) and `bbb-settings-syncedAt` (set when a push lands). Push only when dirty, apply a pulled row only when clean. No client/server clock is ever compared. **Don't "simplify" this into pushing settings on every sync tick** — that lets a stale device clobber newer settings on every poll.
 - `downloadFromCloud()` intentionally still sends `settings: null` and force-applies the pulled row instead: it wipes local books/chapters/sections/vocab in favour of the cloud, so pushing local settings up first would invert its own cloud-wins contract.
 - A pull dispatches `SETTINGS_SYNCED_EVENT`; the settings page adopts the new values only when the user has no unsaved edits in the form. Applying a pulled change must never force a reload — that would yank the UI mid-reading.
@@ -157,10 +167,10 @@ View mode and reading mode (scroll/flip) **persist across navigation** via `Sett
 ### 2.5 — AI-Powered Book Processing
 
 - **NIB Process (recommended):** Uses the rich NibParser for all PDFs — extracts text with font/position awareness, strips headers/footers/footnotes automatically. If the PDF has a TOC outline, it uses the TOC for structure; otherwise groups pages into 10-page chapters. Fast, no AI needed. Always available as an option during import.
-- **Page-by-Page (with AI OCR):** For scanned/image-only PDFs, uses client-side Claude Vision OCR via Anthropic SDK to extract text. Falls back to backend OCR if available. Each page becomes its own section.
+- **Page-by-Page (with AI OCR):** For scanned/image-only PDFs, uses client-side Claude Vision OCR via Anthropic SDK to extract text. Falls back to backend OCR if available. Each page becomes its own section. *(superseded 2026-11-17: OCR runs only on nibble-api, on the reader's own key. See Section 0.)*
 - PDFs with a text layer → structure extracted from native PDF.js outline.
 - Scanned PDFs (no text layer) → processed via Claude vision API (client-side or backend).
-  - Client-side OCR via Anthropic SDK — works without a backend server.
+  - Client-side OCR via Anthropic SDK — works without a backend server. *(removed 2026-11-17)*
   - Backend OCR available as an alternative when the server is running.
   - Extracts text + detects chapter/section boundaries.
   - Results cached in `Section.extractedText` — process once.
@@ -214,7 +224,7 @@ Storage (IndexedDB via Dexie.js — local-first, no backend needed)
 | Components | shadcn/ui | |
 | PDF | pdfjs-dist | 5.4.624 |
 | Local DB | Dexie.js (IndexedDB) | 4.3.0 |
-| AI | Anthropic SDK (Claude vision) | |
+| AI | nibble-api `/ai/*` on the reader's own key (since 2026-11-17; was the browser Anthropic SDK) | |
 | Testing | Vitest + jsdom + fake-indexeddb | 4.0.18 |
 
 ---
@@ -282,7 +292,7 @@ Each paragraph carries a `blockType`: `body | introduction | blockquote | list-i
 ## 7. Settings (Persisted)
 
 Stored in `localStorage` as `bbb-settings`:
-- `anthropicApiKey` — user-provided Claude API key
+- `anthropicApiKey` — user-provided Claude API key *(removed 2026-11-17: see Section 0, bring your own key)*
 - `autoReadThresholdSeconds` — seconds before auto-marking read (default 5) *(superseded 2026-10-06 — see Section 0: no longer used, kept only for sync back-compat)*
 - `defaultViewMode` — `'pdf' | 'text' | 'side-by-side'`
 - `readingMode` — `'scroll' | 'flip'`

@@ -3,54 +3,81 @@ import { db } from '@/lib/db/database'
 import { syncService } from './sync-service'
 import type { Book, Chapter, Section } from '@/lib/db/models'
 import { PDFService } from './pdf-service'
-import { AIService } from './ai-service'
 import { NibService } from './nib-service'
+import { aiErrorFromResponse, AiApiError } from './ai-api'
 
 const PAGES_PER_BATCH = 10
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'
+/** nibble-api's /ai/split-sections cap on one page's extracted text. */
+const MAX_PAGE_TEXT_CHARS = 20_000
+
+const stripDataUrl = (img: string) => img.replace(/^data:image\/\w+;base64,/, '')
+
+async function authToken(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/auth/token')
+    if (!res.ok) return null
+    return (await res.json())?.token ?? null
+  } catch {
+    return null
+  }
+}
 
 /**
- * OCR page images via backend Claude Vision.
- * Falls back gracefully if backend is unavailable.
+ * OCR page images through nibble-api, on the reader's own AI key (BYOK).
+ * Never throws: a failed batch comes back as empty texts, and `problem` says
+ * why when the reader can fix it (no key, no image-capable key, refused key),
+ * so the import can say so instead of quietly importing blank pages.
  */
-async function ocrViaBackend(base64Images: string[]): Promise<{ texts: string[]; paymentRequired: boolean }> {
-  const empty = { texts: base64Images.map(() => ''), paymentRequired: false }
-
-  // Get auth token
-  let token: string
+async function ocrViaBackend(base64Images: string[]): Promise<{ texts: string[]; problem: string | null }> {
+  const empty = (problem: string | null = null) => ({ texts: base64Images.map(() => ''), problem })
+  const token = await authToken()
+  if (!token) return empty('you are signed out')
   try {
-    const tokenRes = await fetch('/api/auth/token')
-    if (!tokenRes.ok) return empty
-    const tokenData = await tokenRes.json()
-    token = tokenData.token
-  } catch {
-    return empty
-  }
-
-  try {
-    const cleanImages = base64Images.map(img =>
-      img.replace(/^data:image\/\w+;base64,/, '')
-    )
-
     const res = await fetch(`${API_URL}/ai/ocr`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ images: cleanImages }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ images: base64Images.map(stripDataUrl) }),
     })
-
-    if (res.status === 402) {
-      return { texts: base64Images.map(() => ''), paymentRequired: true }
+    if (!res.ok) {
+      const err = await aiErrorFromResponse(res, { failed: 'OCR failed' })
+      return empty(err.needsKeySetup ? err.message : null)
     }
-    if (!res.ok) return empty
-
     const data = await res.json()
-    return { texts: data.texts ?? base64Images.map(() => ''), paymentRequired: false }
+    return { texts: data.texts ?? base64Images.map(() => ''), problem: null }
   } catch {
-    return empty
+    return empty()
   }
+}
+
+interface SplitSectionsResult {
+  sections: Array<{ title: string; startPage: number; endPage: number; summary: string }>
+}
+
+/** One batch of at most PAGES_PER_BATCH pages, split into study-sized sections on the reader's key. */
+async function splitSectionsViaBackend(input: {
+  pageImages: string[]
+  pageTexts: string[]
+  startPage: number
+  bookTitle: string
+  previousSectionTitle: string | null
+}): Promise<SplitSectionsResult> {
+  const token = await authToken()
+  if (!token) throw new AiApiError('You are signed out. Sign in again and retry.', 401, 'UNAUTHORIZED')
+  const res = await fetch(`${API_URL}/ai/split-sections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      pageImages: input.pageImages.map(stripDataUrl),
+      pageTexts: input.pageTexts.map(t => t.slice(0, MAX_PAGE_TEXT_CHARS)),
+      startPage: input.startPage,
+      bookTitle: input.bookTitle.slice(0, 500),
+      previousSectionTitle: input.previousSectionTitle?.slice(0, 500) ?? null,
+    }),
+  })
+  if (!res.ok) throw await aiErrorFromResponse(res, { failed: 'Section splitting failed' })
+  const data = await res.json()
+  return { sections: Array.isArray(data?.sections) ? data.sections : [] }
 }
 
 interface ImportOptions {
@@ -61,12 +88,10 @@ interface ImportOptions {
 
 export class BookProcessingService {
   private pdfService: PDFService
-  private aiService: AIService | null
   private nibService: NibService
 
-  constructor(apiKey?: string) {
+  constructor() {
     this.pdfService = new PDFService()
-    this.aiService = apiKey ? new AIService(apiKey) : null
     this.nibService = new NibService()
   }
 
@@ -157,8 +182,6 @@ export class BookProcessingService {
   }
 
   async processChapterWithAI(bookId: string, chapterId: string): Promise<void> {
-    if (!this.aiService) throw new Error('No API key configured')
-
     const book = await db.books.get(bookId)
     if (!book) throw new Error('Book not found')
     if (!book.pdfBlob) throw new Error('AI chapter processing requires a PDF source (not supported for EPUB books)')
@@ -185,13 +208,21 @@ export class BookProcessingService {
       ? existingSections[existingSections.length - 1]
       : null
 
-    const result = await this.aiService.splitPagesIntoSections({
-      pageImages,
-      pageTexts,
-      startPage: chapter.startPage,
-      bookTitle: book.title,
-      previousSectionTitle: lastSection?.title ?? null,
-    })
+    // nibble-api takes at most a dozen page images per call, so a long chapter
+    // goes in batches, each told where the previous one left off.
+    const result: SplitSectionsResult = { sections: [] }
+    let previousSectionTitle = lastSection?.title ?? null
+    for (let i = 0; i < pageImages.length; i += PAGES_PER_BATCH) {
+      const batch = await splitSectionsViaBackend({
+        pageImages: pageImages.slice(i, i + PAGES_PER_BATCH),
+        pageTexts: pageTexts.slice(i, i + PAGES_PER_BATCH),
+        startPage: chapter.startPage + i,
+        bookTitle: book.title,
+        previousSectionTitle,
+      })
+      result.sections.push(...batch.sections)
+      previousSectionTitle = batch.sections.at(-1)?.title ?? previousSectionTitle
+    }
 
     const baseOrder = existingSections.length
     const sections: Section[] = result.sections.map((s, i) => {
@@ -655,30 +686,16 @@ export class BookProcessingService {
         if (validImages.length > 0) {
           let ocrTexts: string[] = []
 
-          // Try backend OCR first
+          // OCR runs on the reader's own AI key, server-side (BYOK).
           onProgress?.(`OCR: extracting text with AI (${validImages.length} pages)...`, percent + 5)
           const ocrResult = await ocrViaBackend(validImages)
 
-          if (ocrResult.paymentRequired) {
-            onProgress?.('OCR requires payment — trying client-side OCR...', percent + 5)
-          }
-
-          // Check if backend returned any useful text
-          const backendHasText = ocrResult.texts.some(t => t && t.trim().length > 0)
-
-          if (backendHasText && !ocrResult.paymentRequired) {
+          if (ocrResult.problem) {
+            onProgress?.(`OCR skipped (${ocrResult.problem}) — scanned pages imported without text. Use PDF view.`, percent + 5)
+          } else if (ocrResult.texts.some(t => t && t.trim().length > 0)) {
             ocrTexts = ocrResult.texts
-          } else if (this.aiService) {
-            // Fallback: client-side OCR using Anthropic SDK directly
-            onProgress?.(`OCR: using client-side AI for ${validImages.length} pages...`, percent + 5)
-            try {
-              ocrTexts = await this.aiService.ocrPages(validImages)
-            } catch (err) {
-              console.error('Client-side OCR failed:', err)
-              onProgress?.('OCR failed — scanned pages imported without text. Use PDF view.', percent + 5)
-            }
           } else {
-            onProgress?.('No API key configured — scanned pages imported without text. Use PDF view.', percent + 5)
+            onProgress?.('OCR failed — scanned pages imported without text. Use PDF view.', percent + 5)
           }
 
           // Map OCR results back to the right pages

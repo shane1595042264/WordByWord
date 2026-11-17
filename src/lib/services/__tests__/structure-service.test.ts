@@ -95,11 +95,12 @@ describe('StructureService.suggestFromTOC() failure copy', () => {
     }) as typeof fetch
   }
 
-  // KAN-367: the AI-access gate's 402 carried billing copy the editor printed verbatim.
-  it('maps the AI-access 402 to its own copy instead of the server string', async () => {
-    installSuggestFetch(402, { error: { code: 'PAYMENT_REQUIRED', message: 'Processing job not yet paid', status: 402 } })
+  // BYOK (2026-11-17): AI Suggest runs on the reader's own key; without one the
+  // server's 409 already says where to add it, so its copy is shown as-is.
+  it('a reader without an AI key is told to add one in Settings > AI', async () => {
+    installSuggestFetch(409, { error: { code: 'AI_KEY_REQUIRED', message: 'Add your own AI key in Settings > AI to use this.', status: 409 } })
     const { StructureService } = await import('../structure-service')
-    await expect(new StructureService().suggestFromTOC('remote-1', [1])).rejects.toThrow("AI Suggest isn't enabled for this account.")
+    await expect(new StructureService().suggestFromTOC('remote-1', [1])).rejects.toThrow('Add your own AI key in Settings > AI to use this.')
   })
 
   it("keeps the server's own message for other failures (KAN-313)", async () => {

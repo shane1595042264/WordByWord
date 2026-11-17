@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { SettingsService, SYNCED_SETTING_KEYS, SETTINGS_SYNCED_EVENT } from '../settings-service'
+import { SettingsService, SYNCED_SETTING_KEYS, SETTINGS_SYNCED_EVENT, type AppSettings } from '../settings-service'
+
+/** A key the pre-BYOK General tab kept in the settings blob (AI keys left settings on 2026-11-17). */
+const legacyKey = (key: string) => ({ anthropicApiKey: key }) as unknown as Partial<AppSettings>
 
 // Coverage for KAN-288: settings never reached the cloud in either direction.
 // These tests pin the conflict rule — push only when dirty, pull only when
@@ -54,7 +57,7 @@ describe('SettingsService cloud sync (KAN-288)', () => {
 
     it('changing a device-local key does not dirty the cloud state', async () => {
       svc.markSettingsSynced(svc.getSettingsUpdatedAt())
-      svc.updateSettings({ anthropicApiKey: 'sk-local', warnBeforeSync: true })
+      svc.updateSettings({ ...legacyKey('sk-local'), warnBeforeSync: true })
       expect(svc.hasPendingSettingsPush()).toBe(false)
       await Promise.resolve()
       expect(markDirty).not.toHaveBeenCalled()
@@ -82,7 +85,7 @@ describe('SettingsService cloud sync (KAN-288)', () => {
     })
 
     it('clearLocalSettings leaves nothing for the next user to push or inherit (KAN-364)', () => {
-      svc.updateSettings({ readingMode: 'flip', keymapOverrides: { 'normal:j': 'x' }, anthropicApiKey: 'sk-user-a' })
+      svc.updateSettings({ readingMode: 'flip', keymapOverrides: { 'normal:j': 'x' }, ...legacyKey('sk-user-a') })
       svc.markSettingsSynced(svc.getSettingsUpdatedAt())
       const seen = vi.fn()
       window.addEventListener(SETTINGS_SYNCED_EVENT, seen)
@@ -93,7 +96,7 @@ describe('SettingsService cloud sync (KAN-288)', () => {
       expect(localStorage.getItem(UPDATED_AT_KEY)).toBeNull()
       expect(localStorage.getItem(SYNCED_AT_KEY)).toBeNull()
       expect(svc.hasPendingSettingsPush()).toBe(false)
-      expect(svc.getApiKey()).toBeNull()
+      expect(svc.legacyAnthropicKey()).toBeNull()
       expect(svc.getSettings().keymapOverrides).toEqual({})
       expect(seen).toHaveBeenCalledTimes(1)
     })
@@ -101,11 +104,32 @@ describe('SettingsService cloud sync (KAN-288)', () => {
 
   describe('getSyncPayload', () => {
     it('sends exactly the six server-backed keys', () => {
-      svc.updateSettings({ anthropicApiKey: 'sk-secret', warnBeforeSync: true })
+      svc.updateSettings({ ...legacyKey('sk-secret'), warnBeforeSync: true })
       const payload = svc.getSyncPayload()
       expect(Object.keys(payload).sort()).toEqual([...SYNCED_SETTING_KEYS].sort())
       expect(payload).not.toHaveProperty('anthropicApiKey')
       expect(payload).not.toHaveProperty('warnBeforeSync')
+    })
+  })
+
+  // AI keys moved to the account (BYOK, 2026-11-17). A key the old General tab
+  // saved must survive ordinary saves until Settings > AI moves or drops it.
+  describe('legacy browser-held Anthropic key', () => {
+    it('survives later saves of other settings, then forgetting it keeps everything else', () => {
+      svc.updateSettings({ ...legacyKey('  sk-ant-old  '), readingMode: 'flip' })
+      svc.updateSettings({ targetLanguage: 'ja' })
+      expect(svc.legacyAnthropicKey()).toBe('sk-ant-old')
+
+      svc.forgetLegacyAnthropicKey()
+
+      expect(svc.legacyAnthropicKey()).toBeNull()
+      expect(localStorage.getItem('bbb-settings')).not.toContain('anthropicApiKey')
+      expect(svc.getSettings()).toMatchObject({ readingMode: 'flip', targetLanguage: 'ja' })
+    })
+
+    it('treats a blank stored key as none', () => {
+      svc.updateSettings(legacyKey('   '))
+      expect(svc.legacyAnthropicKey()).toBeNull()
     })
   })
 
@@ -127,9 +151,9 @@ describe('SettingsService cloud sync (KAN-288)', () => {
     })
 
     it('leaves device-local keys untouched', () => {
-      svc.updateSettings({ anthropicApiKey: 'sk-local', warnBeforeSync: true })
+      svc.updateSettings({ ...legacyKey('sk-local'), warnBeforeSync: true })
       svc.applyServerSettings(serverRow())
-      expect(svc.getSettings().anthropicApiKey).toBe('sk-local')
+      expect(svc.legacyAnthropicKey()).toBe('sk-local')
       expect(svc.getSettings().warnBeforeSync).toBe(true)
     })
 

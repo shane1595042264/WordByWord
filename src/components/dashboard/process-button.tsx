@@ -19,25 +19,19 @@ export function ProcessButton({ bookId, totalChapters, onComplete }: ProcessButt
   // setProcessing(true) below, AFTER the awaited dynamic imports — so a second
   // click during that import window would otherwise re-enter and start a second
   // concurrent processAllChaptersWithAI run, duplicating every section row and
-  // doubling Anthropic spend. Mirrors addingVocabRef in word-info-panel.tsx.
+  // doubling the reader's AI spend. Mirrors addingVocabRef in word-info-panel.tsx.
   const inFlightRef = useRef(false)
 
   const handleProcess = async () => {
     if (inFlightRef.current) return
     inFlightRef.current = true
     try {
-      const { SettingsService } = await import('@/lib/services/settings-service')
-      const settings = new SettingsService()
-      const apiKey = settings.getApiKey()
-      if (!apiKey) {
-        setError('Please set your Anthropic API key in Settings first.')
-        return
-      }
-
       setProcessing(true)
       setError(null)
+      // Runs on the reader's own AI key, server-side; a missing key comes
+      // back as an error naming Settings > AI.
       const { BookProcessingService } = await import('@/lib/services/book-processing-service')
-      const service = new BookProcessingService(apiKey)
+      const service = new BookProcessingService()
       await service.processAllChaptersWithAI(bookId, (processed, total) => {
         setProgress(Math.round((processed / total) * 100))
       })

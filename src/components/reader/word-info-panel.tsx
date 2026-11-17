@@ -10,6 +10,20 @@ import { SettingsService, type TargetLanguage } from '@/lib/services/settings-se
 import { toast } from 'sonner'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
 import { translationContext, vocabContextSentence, MAX_SENTENCE_CHARS } from '@/lib/services/translation-context'
+import Link from 'next/link'
+import { AI_KEY_SETUP_HREF, needsAiKeySetup } from '@/lib/services/ai-api'
+
+/** Shown after an error whose fix is adding (or replacing) the reader's AI key. */
+function AiKeySetupLink() {
+  return (
+    <Link
+      href={AI_KEY_SETUP_HREF}
+      className="ml-1 font-medium text-primary underline underline-offset-2 hover:no-underline"
+    >
+      Open AI settings
+    </Link>
+  )
+}
 
 interface WordInfoPanelProps {
   word: NibWord
@@ -145,7 +159,9 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
   // via an async effect avoids a stale-default render window that used to fire
   // a redundant, wrong-language translation on every panel open.
   const [targetLang] = useState<TargetLanguage>(() => new SettingsService().getSettings().targetLanguage)
-  const [apiKey] = useState<string | null>(() => new SettingsService().getSettings().anthropicApiKey)
+  // Set when a call failed because the reader has no working AI key (or none
+  // that reads images); the error then links to Settings > AI.
+  const [aiKeyNeeded, setAiKeyNeeded] = useState(false)
 
   // ESC key closes panel (works in both vim and non-vim modes)
   useEffect(() => {
@@ -218,15 +234,13 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
   const isBlockContent = !!(word.latexSource && (word.text.startsWith('[') || word.imageUrl))
   const isImageContent = !!word.imageUrl
 
-  // Auto-translate when word changes. Translation now goes through the
-  // backend proxy — no client-side API key required. Image explanation
-  // (Claude Vision) still needs the user's key though, because the backend
-  // doesn't have a URL-based vision endpoint yet.
+  // Auto-translate when word changes. Every AI call goes through nibble-api,
+  // which runs it on the reader's own provider key (BYOK, 2026-11-17).
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
     // Abort any in-flight lazy explanation from the previous word so it
-    // can't land on the new word's panel and burn an Anthropic call.
+    // can't land on the new word's panel and spend another AI call.
     explanationControllerRef.current?.abort()
     explanationControllerRef.current = null
     setTranslation(null)
@@ -235,6 +249,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     setExplanationError(null)
     setExplaining(false)
     setShowExplanation(false)
+    setAiKeyNeeded(false)
 
     // Sentence mode never renders the word translation or explanation, and the
     // e/a buttons that need them only mount in word mode — don't buy an unseen
@@ -251,14 +266,14 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
       setExplaining(true)
 
       import('@/lib/services/translation-service').then(async ({ TranslationService }) => {
-        const svc = new TranslationService(apiKey)
+        const svc = new TranslationService()
         try {
           let result: string
           if (isImageContent && word.imageUrl) {
-            // Vision — still client-side; requires user's Anthropic key
+            // Figure: needs an image-capable model on the reader's key
             result = await svc.explainImage(word.imageUrl, word.sentence.text, controller.signal)
           } else {
-            // Backend-proxied content explanation (table/code)
+            // Table/code/formula: text only
             result = await svc.explainContent(word.latexSource!, word.sentence.text, controller.signal)
           }
           if (!cancelled) {
@@ -269,6 +284,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
           if (err?.name === 'AbortError') return
           if (!cancelled) {
             setExplanationError(`Explanation failed: ${err.message}`)
+            setAiKeyNeeded(needsAiKeySetup(err))
             setExplaining(false)
           }
         }
@@ -321,6 +337,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
               if (err?.name === 'AbortError') return
               if (!cancelled) {
                 setTranslationError(err.message || 'Translation failed')
+                setAiKeyNeeded(needsAiKeySetup(err))
                 setTranslating(false)
               }
             })
@@ -339,7 +356,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
       cancelled = true
       controller.abort()
     }
-  }, [word, apiKey, targetLang, isBlockContent, isImageContent, panelMode])
+  }, [word, targetLang, isBlockContent, isImageContent, panelMode])
 
   // Auto-translate sentence when in sentence mode (backend-proxied)
   useEffect(() => {
@@ -370,9 +387,13 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
         .catch((err) => {
           if (err?.name === 'AbortError') return
           if (!cancelled) {
-            setSentenceTranslation('Translation failed.')
+            // A key problem is the reader's to fix, so say what it is in place
+            // of the generic copy and link to the fix below.
+            const keyProblem = needsAiKeySetup(err)
+            setAiKeyNeeded(keyProblem)
+            setSentenceTranslation(keyProblem ? err.message : 'Translation failed.')
             setSentenceTranslating(false)
-            toast.error('Sentence translation failed', { duration: 5000 })
+            if (!keyProblem) toast.error('Sentence translation failed', { duration: 5000 })
             console.error('Sentence translation error:', err)
           }
         })
@@ -447,7 +468,11 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
       // bogus note cannot be edited or deleted. Leaving `explanation` null
       // also re-enables the retry path (the guard above and the button's
       // disabled prop both key off it).
-      if (!controller.signal.aborted) setExplanationError('Failed to load explanation.')
+      if (!controller.signal.aborted) {
+        const keyProblem = needsAiKeySetup(err)
+        setAiKeyNeeded(keyProblem)
+        setExplanationError(keyProblem ? err.message : 'Failed to load explanation.')
+      }
     } finally {
       if (!controller.signal.aborted) setExplaining(false)
     }
@@ -617,6 +642,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
               ) : sentenceTranslation ? (
                 <p className="text-base text-foreground/90 leading-relaxed">
                   {sentenceTranslation}
+                  {aiKeyNeeded && <AiKeySetupLink />}
                 </p>
               ) : null}
             </>
@@ -653,6 +679,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
               ) : translationError ? (
                 <div className="mt-2 mb-2 text-xs text-red-400">
                   {translationError}
+                  {aiKeyNeeded && <AiKeySetupLink />}
                 </div>
               ) : translation ? (
                 <div className="mt-2 mb-2">
@@ -731,6 +758,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
                   ) : explanationError ? (
                     <div role="alert" className="text-xs text-red-400 leading-relaxed">
                       {explanationError}
+                      {aiKeyNeeded && <AiKeySetupLink />}
                     </div>
                   ) : explanation ? (
                     <div className="text-xs text-muted-foreground leading-relaxed prose prose-xs prose-neutral dark:prose-invert max-w-none [&_h1]:text-sm [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-xs [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-1 [&_p]:my-1 [&_ul]:my-1 [&_ul]:pl-4 [&_li]:my-0.5 [&_strong]:text-foreground">

@@ -37,7 +37,6 @@ vi.mock('next/link', () => ({
 }))
 
 const STORED: AppSettings = {
-  anthropicApiKey: null,
   autoReadThresholdSeconds: 30,
   defaultViewMode: 'pdf',
   trackingMode: 'timer',
