@@ -4,14 +4,15 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
-import { useBooks } from '@/hooks/use-books'
+import { useBooks, type BookWithProgress } from '@/hooks/use-books'
 import { LibraryGrid } from '@/components/library/library-grid'
 import { UploadDialog } from '@/components/library/upload-dialog'
 import { Button } from '@/components/ui/button'
-import { UserMenu } from '@/components/auth/user-menu'
+import { AppHeader } from '@/components/app-header'
 import { DeleteConfirmDialog } from '@/components/library/delete-confirm-dialog'
 import { BookCardSkeleton } from '@/components/library/book-card-skeleton'
-import { RefreshCwIcon, LoaderIcon, BookOpenIcon } from 'lucide-react'
+import { TypographicCover } from '@/components/library/typographic-cover'
+import { RefreshCwIcon, LoaderIcon, ArrowRightIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useSyncStatus } from '@/hooks/use-sync-status'
 import { toast } from 'sonner'
@@ -138,106 +139,119 @@ export default function HomePage() {
     }
   }, [selectedIds, isDeleting, refresh])
 
+  // Real totals for the page subtitle. Books still processing have no
+  // sections yet, so they add nothing to either count.
+  const sectionsRead = books.reduce((sum, b) => sum + b.progress.read, 0)
+  const sectionsTotal = books.reduce((sum, b) => sum + b.progress.total, 0)
+
+  // The book you were last reading, unfinished: offered as a way straight back in.
+  const resumeBook = editMode
+    ? undefined
+    : books
+        .filter(b => b.lastReadAt && !b.completedAt && b.processingStatus === 'complete')
+        .sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0]
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-3xl font-bold">Nibbler</h1>
-            {status === 'authenticated' && backgroundSyncing && (
-              <LoaderIcon className="h-4 w-4 animate-spin text-muted-foreground" />
+    <div className="min-h-[100dvh] bg-background">
+      <AppHeader current="library" />
+
+      <main className="mx-auto max-w-7xl px-4 pb-24 sm:px-6">
+        <div className="flex flex-col gap-6 pt-10 pb-8 md:flex-row md:items-end md:justify-between md:pt-14">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <h1 className="font-display text-4xl font-semibold tracking-tight md:text-5xl">Library</h1>
+              {status === 'authenticated' && backgroundSyncing && (
+                <LoaderIcon aria-label="Syncing" className="h-5 w-5 animate-spin text-muted-foreground" />
+              )}
+            </div>
+            <p className="mt-2 text-muted-foreground">
+              {books.length > 0 && sectionsTotal > 0
+                ? `${books.length} ${books.length === 1 ? 'book' : 'books'}, ${sectionsRead.toLocaleString()} of ${sectionsTotal.toLocaleString()} sections read`
+                : 'Your reading progress, section by section'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {editMode ? (
+              <>
+                <Button
+                  variant="destructive"
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setShowDeleteDialog(true)}
+                >
+                  Delete ({selectedIds.size})
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  // Select all
+                  setSelectedIds(new Set(books.map(b => b.id)))
+                }}>
+                  Select All
+                </Button>
+                <Button variant="outline" onClick={exitEditMode}>
+                  Done
+                </Button>
+              </>
+            ) : (
+              <>
+                {status === 'authenticated' && (
+                  <div className="flex items-center gap-3 rounded-md">
+                    <div className="hidden text-right text-xs leading-tight text-muted-foreground lg:block">
+                      {syncing && syncProgress && syncProgress.total > 0 ? (
+                        <div className="w-28">
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                              style={{ width: `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : lastSynced ? (
+                        <>
+                          <span className="block">Last sync</span>
+                          <span className="block tabular-nums">{new Date(lastSynced).toLocaleString()}</span>
+                        </>
+                      ) : (
+                        <span>Not synced yet</span>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      disabled={syncing}
+                      onClick={handleSyncNow}
+                      className="gap-1.5"
+                    >
+                      <RefreshCwIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                      {syncing
+                        ? syncProgress
+                          ? `${syncProgress.current}/${syncProgress.total} books`
+                          : 'Syncing...'
+                        : 'Sync Now'}
+                    </Button>
+                  </div>
+                )}
+                {books.length > 0 && (
+                  <Button variant="outline" onClick={() => setEditMode(true)}>
+                    Manage
+                  </Button>
+                )}
+                <UploadDialog onBookImported={refresh} />
+              </>
             )}
           </div>
-          <p className="text-muted-foreground">Your reading progress, section by section</p>
         </div>
-        <div className="flex gap-2 items-center">
-          {editMode ? (
-            <>
-              <Button
-                variant="destructive"
-                disabled={selectedIds.size === 0}
-                onClick={() => setShowDeleteDialog(true)}
-              >
-                Delete ({selectedIds.size})
-              </Button>
-              <Button variant="outline" onClick={() => {
-                // Select all
-                setSelectedIds(new Set(books.map(b => b.id)))
-              }}>
-                Select All
-              </Button>
-              <Button variant="outline" onClick={exitEditMode}>
-                Done
-              </Button>
-            </>
-          ) : (
-            <>
-              {status === 'authenticated' && (
-                <div className="flex flex-col items-center min-w-[120px]">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={syncing}
-                    onClick={handleSyncNow}
-                    className="gap-1.5 w-full"
-                  >
-                    <RefreshCwIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-                    {syncing
-                      ? syncProgress
-                        ? `${syncProgress.current}/${syncProgress.total} books`
-                        : 'Syncing...'
-                      : 'Sync Now'}
-                  </Button>
-                  {syncing && syncProgress && syncProgress.total > 0 ? (
-                    <div className="w-full mt-1.5">
-                      <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
-                          style={{ width: `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted-foreground mt-1">
-                      {lastSynced
-                        ? `Last sync: ${new Date(lastSynced).toLocaleString()}`
-                        : 'Not synced yet'}
-                    </span>
-                  )}
-                </div>
-              )}
-              <a
-                href="https://shanejli.com/knowledge"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <BookOpenIcon className="h-4 w-4" />
-                  Vocabulary
-                  <span aria-hidden="true" className="text-xs opacity-60">↗</span>
-                </Button>
-              </a>
-              <UploadDialog onBookImported={refresh} />
-              {books.length > 0 && (
-                <Button variant="outline" onClick={() => setEditMode(true)}>
-                  Manage
-                </Button>
-              )}
-              <UserMenu />
-            </>
-          )}
-        </div>
-      </div>
+
+        {!loading && !error && resumeBook && <ResumeStrip book={resumeBook} />}
+
       {loading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <BookCardSkeleton key={i} />
           ))}
         </div>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <p className="text-destructive text-lg font-medium mb-2">Something went wrong</p>
-          <p className="text-muted-foreground mb-4">{error}</p>
+        <div role="alert" className="flex flex-col items-center justify-center rounded-xl border border-dashed py-16 text-center">
+          <p className="mb-2 text-lg font-medium text-destructive">Something went wrong</p>
+          <p className="mb-4 max-w-md text-muted-foreground">{error}</p>
           <Button variant="outline" onClick={() => refresh()}>Try Again</Button>
         </div>
       ) : (
@@ -275,6 +289,40 @@ export default function HomePage() {
         isDeleting={isDeleting}
         progress={deleteProgress ?? undefined}
       />
+      </main>
     </div>
+  )
+}
+
+/** "Pick up where you left off": the most recently read unfinished book. */
+function ResumeStrip({ book }: { book: BookWithProgress }) {
+  return (
+    <Link
+      href={`/book/${book.id}`}
+      className="group mb-10 flex items-center gap-5 rounded-xl border bg-card p-4 pr-5 transition-colors hover:border-primary/40 hover:bg-accent/40 sm:p-5"
+    >
+      <div className="relative aspect-[3/4] w-14 shrink-0 overflow-hidden rounded-sm bg-muted shadow-[0_6px_16px_-6px_oklch(0.22_0.04_170/0.45)] sm:w-16">
+        {book.coverImage ? (
+          // eslint-disable-next-line @next/next/no-img-element -- data URLs and remote covers
+          <img src={book.coverImage} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <TypographicCover title={book.title} size="sm" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-muted-foreground">Pick up where you left off</p>
+        <p className="truncate font-display text-lg font-semibold tracking-tight sm:text-xl">{book.title}</p>
+        <div className="mt-2 flex items-center gap-3">
+          <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${book.progress.percentage}%` }} />
+          </div>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{book.progress.percentage}%</span>
+        </div>
+      </div>
+      <span className="hidden items-center gap-1.5 text-sm font-medium text-primary sm:flex">
+        Continue
+        <ArrowRightIcon aria-hidden="true" className="size-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+      </span>
+    </Link>
   )
 }

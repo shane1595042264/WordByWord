@@ -4,6 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { ArrowLeftIcon } from 'lucide-react'
+import { AppHeader } from '@/components/app-header'
+import { TypographicCover } from '@/components/library/typographic-cover'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -154,7 +157,7 @@ export default function MarketplacePage() {
   // status is 'loading' on every first paint. Show that as its own state instead of
   // falling through to the access-denied copy below.
   if (status === 'loading') {
-    return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+    return <div className="flex justify-center py-20 text-muted-foreground" aria-busy="true">Loading...</div>
   }
 
   if (!isAdmin) {
@@ -162,16 +165,22 @@ export default function MarketplacePage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
-      <Link href="/" className="text-sm text-muted-foreground hover:underline mb-4 inline-block">
-        &larr; Back to Library
+    <div className="min-h-[100dvh]">
+    <AppHeader />
+    <main className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6">
+      <Link
+        href="/"
+        className="mb-8 inline-flex items-center gap-1.5 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <ArrowLeftIcon aria-hidden="true" className="size-4" />
+        Back to Library
       </Link>
-      <h1 className="text-2xl font-bold mb-2">Marketplace</h1>
-      <p className="text-muted-foreground mb-6">
+      <h1 className="mb-2 font-display text-4xl font-semibold tracking-tight md:text-5xl">Marketplace</h1>
+      <p className="mb-8 text-muted-foreground">
         Archive of all books ever uploaded. Add any book to your shelf.
       </p>
 
-      <div className="flex gap-2 mb-6">
+      <div className="mb-8 flex gap-2">
         <Input
           placeholder="Search by title..."
           value={search}
@@ -231,6 +240,7 @@ export default function MarketplacePage() {
           )}
         </>
       )}
+    </main>
     </div>
   )
 }
@@ -251,7 +261,7 @@ function CatalogCard({ entry, adding, onAdd }: CatalogCardProps) {
   return (
     <Card>
       <CardContent className="p-4 flex flex-col gap-3">
-        <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden">
+        <div className="relative aspect-[3/4] bg-muted rounded-sm flex items-center justify-center overflow-hidden ring-1 ring-black/5 dark:ring-white/10">
           {entry.coverUrl && !coverError ? (
             <img
               src={entry.coverUrl}
@@ -260,7 +270,7 @@ function CatalogCard({ entry, adding, onAdd }: CatalogCardProps) {
               onError={() => setCoverError(true)}
             />
           ) : (
-            <span className="text-4xl text-muted-foreground">📖</span>
+            <TypographicCover title={entry.title} author={entry.author} />
           )}
         </div>
         <div className="space-y-1">

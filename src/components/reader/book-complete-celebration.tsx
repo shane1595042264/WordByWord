@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { CheckIcon, PartyPopperIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface Particle {
@@ -14,7 +15,8 @@ interface Particle {
   delay: number
 }
 
-const COLORS = ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
+// The brand's greens and the "in progress" amber, plus paper white.
+const COLORS = ['#2f7a5b', '#4fa37f', '#8fd1b0', '#e8b84a', '#f2d48a', '#f4f7f5', '#1f5a43', '#c9e9d8']
 
 const TITLE_ID = 'book-complete-celebration-title'
 
@@ -132,7 +134,7 @@ export function BookCompleteCelebration({ bookTitle, onDismiss }: BookCompleteCe
       onClick={dismiss}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-[oklch(0.16_0.02_170/0.55)] backdrop-blur-sm" />
 
       {/* Confetti particles - decorative only */}
       <div aria-hidden="true" className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -160,22 +162,20 @@ export function BookCompleteCelebration({ bookTitle, onDismiss }: BookCompleteCe
         role="dialog"
         aria-modal="true"
         aria-labelledby={TITLE_ID}
-        className="relative z-10 bg-background border rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl animate-celebration-pop"
+        className="relative z-10 bg-popover text-popover-foreground border rounded-xl p-8 max-w-md mx-4 text-center shadow-[0_30px_80px_-20px_oklch(0.16_0.04_170/0.5)] animate-celebration-pop"
         onClick={e => e.stopPropagation()}
       >
-        <div className="text-6xl mb-4" aria-hidden="true">
-          <span className="inline-block animate-bounce">&#127881;</span>
+        <div className="mx-auto mb-5 grid size-16 place-items-center rounded-full bg-accent text-primary" aria-hidden="true">
+          <PartyPopperIcon className="size-8 animate-bounce" strokeWidth={1.75} />
         </div>
-        <h2 id={TITLE_ID} className="text-2xl font-bold mb-2">Congratulations!</h2>
+        <h2 id={TITLE_ID} className="font-display text-3xl font-semibold tracking-tight mb-2">Congratulations!</h2>
         <p className="text-muted-foreground mb-1">You finished reading</p>
-        <p className="text-lg font-semibold mb-6 line-clamp-2">{bookTitle}</p>
-        <div className="flex items-center justify-center gap-2 mb-4">
-          <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M5 12l5 5L20 7" />
-            </svg>
+        <p className="font-reading text-lg font-medium italic mb-6 line-clamp-2">{bookTitle}</p>
+        <div className="flex items-center justify-center gap-2 mb-5">
+          <div className="size-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground">
+            <CheckIcon aria-hidden="true" className="size-4" strokeWidth={3} />
           </div>
-          <span className="text-sm font-medium text-green-600 dark:text-green-400">100% Complete</span>
+          <span className="text-sm font-medium text-primary">100% Complete</span>
         </div>
         <Button ref={continueRef} onClick={dismiss} variant="outline" size="sm">
           Continue Reading

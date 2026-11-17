@@ -34,14 +34,16 @@ describe('HeatmapGrid reading states', () => {
   it('labels started-but-unread sections as in progress with the rounded percent', () => {
     render(<HeatmapGrid sections={sections} />)
     const half = screen.getByRole('button', { name: 'half — In progress (40%), pages 1-5' })
-    expect(half.className).toContain('bg-yellow-500')
+    expect(half.dataset.state).toBe('in-progress')
+    expect(half.className).toContain('bg-highlight')
   })
 
   it('keeps Read for read sections regardless of scroll progress', () => {
     render(<HeatmapGrid sections={sections} />)
     for (const id of ['done', 'done-with-progress']) {
       const btn = screen.getByRole('button', { name: `${id} — Read, pages 1-5` })
-      expect(btn.className).toContain('bg-green-500')
+      expect(btn.dataset.state).toBe('read')
+      expect(btn.className).toContain('bg-primary')
     }
   })
 
@@ -49,8 +51,8 @@ describe('HeatmapGrid reading states', () => {
     render(<HeatmapGrid sections={sections} />)
     for (const id of ['zero', 'fresh']) {
       const btn = screen.getByRole('button', { name: `${id} — Unread, pages 1-5` })
-      expect(btn.className).toContain('bg-muted')
-      expect(btn.className).not.toContain('bg-yellow-500')
+      expect(btn.dataset.state).toBe('unread')
+      expect(btn.className).not.toContain('bg-highlight')
     }
   })
 })

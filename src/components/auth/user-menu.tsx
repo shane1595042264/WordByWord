@@ -225,12 +225,12 @@ export function UserMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls="user-menu-panel"
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
+        className="flex h-9 items-center gap-2 rounded-md border bg-card pl-1.5 pr-2 transition-colors hover:bg-accent aria-expanded:bg-accent outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         {displayIsLoading ? (
           <div className="w-6 h-6 rounded-full bg-muted animate-pulse" />
         ) : displayIsEmoji ? (
-          <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-sm">
+          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-sm">
             {displayImage}
           </div>
         ) : (
@@ -241,7 +241,7 @@ export function UserMenu() {
             onError={() => setImgError(true)}
           />
         )}
-        <span className="text-sm font-medium max-w-[120px] truncate">
+        <span className="hidden text-sm font-medium max-w-[120px] truncate sm:inline">
           {session.user.name ?? session.user.email}
         </span>
         <ChevronDown
@@ -254,7 +254,7 @@ export function UserMenu() {
           ref={panelRef}
           id="user-menu-panel"
           role="menu"
-          className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-popover shadow-lg z-50"
+          className="absolute right-0 top-full mt-2 w-60 rounded-xl border bg-popover text-popover-foreground shadow-[0_18px_48px_-12px_oklch(0.22_0.04_170/0.3)] z-50 animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150 motion-reduce:animate-none"
         >
           <div className="p-3 border-b">
             <div className="flex items-center gap-2 mb-1">
@@ -269,7 +269,7 @@ export function UserMenu() {
             </div>
             <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
             {(session.user as Record<string, unknown>).role === 'admin' && (
-              <span className="inline-block mt-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">
+              <span className="inline-block mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-accent text-accent-foreground">
                 Admin
               </span>
             )}
@@ -281,7 +281,7 @@ export function UserMenu() {
               rel="noopener noreferrer"
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
             >
               Vocabulary ↗
             </a>
@@ -290,7 +290,7 @@ export function UserMenu() {
                 href="/marketplace"
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
               >
                 Marketplace
               </Link>
@@ -299,7 +299,7 @@ export function UserMenu() {
               href="/settings"
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+              className="block w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent focus-visible:bg-accent outline-none transition-colors"
             >
               Settings
             </Link>
@@ -308,7 +308,7 @@ export function UserMenu() {
               role="menuitem"
               onClick={handleSignOut}
               disabled={signingOut}
-              className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors text-destructive disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent focus-visible:bg-accent outline-none transition-colors text-destructive disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {signingOut ? 'Signing out…' : 'Sign out'}
             </button>

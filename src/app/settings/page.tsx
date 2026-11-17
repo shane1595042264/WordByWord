@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
+import { ArrowLeftIcon } from 'lucide-react'
+import { AppHeader } from '@/components/app-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -136,32 +138,38 @@ function SettingsContent() {
     }
   }
 
+  // Links stay Links for prefetch and middle-click, but a soft navigation
+  // unmounts this form without firing beforeunload, so the dirty check has to
+  // be done on every in-app link out of here too (KAN-331): Back to Library
+  // and the header's brand and Library links.
+  const guardLeave = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (!unsavedEdits) return
+    // A modified click opens a new tab/window — this form is not going
+    // anywhere, so there is nothing to guard.
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
+    e.preventDefault()
+    if (window.confirm('You have unsaved settings changes. Leave without saving?')) {
+      setUnsavedEdits(false)
+      router.push(href)
+    }
+  }
+
   return (
-    <div className="container mx-auto px-4 py-8 max-w-2xl">
-      {/* Kept as a Link for prefetch and middle-click, but a soft navigation
-          unmounts this form without firing beforeunload, so the dirty check
-          has to be done here too (KAN-331). */}
+    <div className="min-h-[100dvh]">
+    <AppHeader onInternalLinkClick={guardLeave} />
+    <main className="mx-auto max-w-3xl px-4 pb-24 pt-6 sm:px-6">
       <Link
         href="/"
-        onClick={(e) => {
-          if (!unsavedEdits) return
-          // A modified click opens a new tab/window — this form is not going
-          // anywhere, so there is nothing to guard.
-          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
-          e.preventDefault()
-          if (window.confirm('You have unsaved settings changes. Leave without saving?')) {
-            setUnsavedEdits(false)
-            router.push('/')
-          }
-        }}
-        className="text-sm text-muted-foreground hover:underline mb-4 inline-block"
+        onClick={(e) => guardLeave(e, '/')}
+        className="mb-8 inline-flex items-center gap-1.5 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
-        &larr; Back to Library
+        <ArrowLeftIcon aria-hidden="true" className="size-4" />
+        Back to Library
       </Link>
-      <h1 className="text-2xl font-bold mb-6">Settings</h1>
+      <h1 className="mb-8 font-display text-4xl font-semibold tracking-tight md:text-5xl">Settings</h1>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList>
+        <TabsList className="max-w-full overflow-x-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="keymap">Keymap</TabsTrigger>
@@ -212,7 +220,7 @@ function SettingsContent() {
               <Label htmlFor="target-language">Translation language</Label>
               <select
                 id="target-language"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
                 value={settings.targetLanguage}
                 onChange={e => editSettings({ ...settings, targetLanguage: e.target.value as any })}
               >
@@ -327,13 +335,14 @@ function SettingsContent() {
           </TabsContent>
         )}
       </Tabs>
+    </main>
     </div>
   )
 }
 
 export default function SettingsPage() {
   return (
-    <Suspense fallback={<div className="flex justify-center py-20 text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<div className="flex justify-center py-20 text-muted-foreground" aria-busy="true">Loading...</div>}>
       <SettingsContent />
     </Suspense>
   )

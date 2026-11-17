@@ -2,8 +2,8 @@
 
 import { useState, useMemo, useCallback, useRef, useDeferredValue } from 'react'
 import { useRouter } from 'next/navigation'
+import { CheckIcon, SearchIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { HeatmapGrid } from './heatmap-grid'
 import { ChapterAccordion } from './chapter-accordion'
 import type { BookDetail } from '@/hooks/use-book-detail'
@@ -51,39 +51,40 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
   }, [deferredQuery, book.chapters])
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="font-medium">Overall Progress</span>
-          <span className="text-muted-foreground">
-            {book.progress.read}/{book.progress.total} sections ({book.progress.percentage}%)
+    <div className="space-y-12">
+      {book.completedAt && (
+        <div role="status" className="flex items-center gap-3 rounded-xl bg-accent px-4 py-3 text-accent-foreground">
+          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+            <CheckIcon aria-hidden="true" className="size-3.5" strokeWidth={3} />
+          </span>
+          <span className="text-sm font-medium">
+            Completed on {new Date(book.completedAt).toLocaleDateString()}
           </span>
         </div>
-        <Progress value={book.progress.percentage} className={`h-3 ${book.completedAt ? '[&_[data-slot=progress-indicator]]:bg-green-500' : ''}`} />
-        {book.completedAt && (
-          <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-            <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-white">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12l5 5L20 7" />
-              </svg>
-            </div>
-            <span className="text-sm font-medium">
-              Completed on {new Date(book.completedAt).toLocaleDateString()}
-            </span>
-          </div>
-        )}
-      </div>
+      )}
 
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">Reading Heatmap</h3>
-        <HeatmapGrid sections={book.allSections} onSectionClick={handleSectionClick} />
-      </div>
+      <section aria-labelledby="reading-map-heading" className="space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+          <h2 id="reading-map-heading" className="font-display text-xl font-semibold tracking-tight">Reading map</h2>
+          <ul className="flex items-center gap-4 text-xs text-muted-foreground" aria-label="Legend">
+            <li className="flex items-center gap-1.5"><span aria-hidden="true" className="size-2.5 rounded-[3px] bg-primary" />Read</li>
+            <li className="flex items-center gap-1.5"><span aria-hidden="true" className="size-2.5 rounded-[3px] bg-highlight" />In progress</li>
+            <li className="flex items-center gap-1.5"><span aria-hidden="true" className="size-2.5 rounded-[3px] bg-foreground/10" />Unread</li>
+          </ul>
+        </div>
+        <div className="rounded-xl border bg-card p-4 sm:p-5">
+          <HeatmapGrid sections={book.allSections} onSectionClick={handleSectionClick} />
+        </div>
+        <p className="sr-only">
+          {book.progress.read} of {book.progress.total} sections read ({book.progress.percentage}%)
+        </p>
+      </section>
 
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Chapters</h3>
+      <section aria-labelledby="chapters-heading" className="space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <h2 id="chapters-heading" className="font-display text-xl font-semibold tracking-tight">Chapters</h2>
           {onReorganize && (
-            <Button size="xs" variant="outline" onClick={onReorganize}>
+            <Button size="sm" variant="outline" onClick={onReorganize}>
               Reorganize Chapters
             </Button>
           )}
@@ -91,21 +92,7 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
 
         {/* Search bar */}
         <div className="relative">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          >
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
+          <SearchIcon aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             ref={inputRef}
             type="text"
@@ -113,16 +100,16 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
             placeholder="Search chapters and sections..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-8 py-2 text-sm border rounded-md bg-background outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 placeholder:text-muted-foreground"
+            className="h-10 w-full rounded-md border border-input bg-card pl-9 pr-9 text-sm outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
           {searchQuery && (
             <button
               onClick={handleClear}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label="Clear search"
               title="Clear search"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <XIcon aria-hidden="true" className="size-3.5" />
             </button>
           )}
         </div>
@@ -144,7 +131,7 @@ export function ProgressDrilldown({ book, onReorganize }: ProgressDrilldownProps
           totalBookPages={book.totalPages}
           searchQuery={deferredQuery}
         />
-      </div>
+      </section>
     </div>
   )
 }

@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
+import { ChevronRightIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
@@ -374,7 +375,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
               className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
             >
               <div className="flex items-center gap-3">
-                <span className={`text-xs transition-transform ${isGroupExpanded ? 'rotate-90' : ''}`} aria-hidden="true">&#9654;</span>
+                <ChevronRightIcon className={`size-4 shrink-0 text-muted-foreground transition-transform ${isGroupExpanded ? 'rotate-90' : ''}`} aria-hidden="true" />
                 <span className="text-sm font-semibold">
                   {isSearching ? <HighlightText text={group.title} query={query} /> : group.title}
                 </span>
@@ -419,7 +420,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.substring(0, idx)}
-      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm px-0.5">{text.substring(idx, idx + query.length)}</mark>
+      <mark className="bg-highlight/45 text-foreground rounded-sm px-0.5">{text.substring(idx, idx + query.length)}</mark>
       {text.substring(idx + query.length)}
     </>
   )
@@ -453,7 +454,7 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
           className="flex-1 flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <span className={`text-xs transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden="true">&#9654;</span>
+            <ChevronRightIcon className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden="true" />
             <span className={`text-sm ${nested ? '' : 'font-medium'}`}>
               {isSearching ? <HighlightText text={chapter.title} query={searchQuery} /> : chapter.title}
             </span>
@@ -490,7 +491,7 @@ function FlatChapter({ bookId, chapter, expanded, onToggle, nested, canDivide, o
                 className="flex items-center justify-between py-2 px-3 rounded hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-green-500' : (section.scrollProgress && section.scrollProgress > 0) ? 'bg-yellow-500' : 'bg-muted-foreground/30'}`} aria-hidden="true" />
+                  <div className={`w-2 h-2 rounded-full ${section.isRead ? 'bg-primary' : (section.scrollProgress && section.scrollProgress > 0) ? 'bg-highlight' : 'bg-muted-foreground/30'}`} aria-hidden="true" />
                   <span className="sr-only">{section.isRead ? 'Read: ' : (section.scrollProgress && section.scrollProgress > 0) ? 'In progress: ' : 'Unread: '}</span>
                   <span className="text-sm">
                     {isSearching ? <HighlightText text={section.title} query={searchQuery} /> : section.title}

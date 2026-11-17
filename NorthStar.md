@@ -8,6 +8,19 @@
 
 Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
 
+### 2026-11-17 — Visual redesign, a public front page, and dark mode
+
+The user asked for a full redesign of nibbook.com and left the direction open. What changed:
+
+- **Visual system** (tokens and the rules are written at the top of `src/app/globals.css`): one accent, a deep forest green, which is also the "read" colour everywhere (heatmap, progress bars, completed books); amber (`--highlight`, `bg-highlight`) only means "in progress". Neutrals carry a faint green tint. Type: Geist for interface, Bricolage Grotesque for display headings (`font-display`), Literata for book text in the reader (`font-reading`). Shape: controls `rounded-md`, surfaces `rounded-xl`, badges/progress full pills, book covers `rounded-sm`. The stock shadcn grey theme is gone. Use the tokens, not raw `green-500` / `yellow-500`.
+- **Dark mode is live.** It follows the OS by default; the header's ThemeToggle cycles system / light / dark and saves to `localStorage['nibble_theme']` (local display preference, deliberately not in SettingsService or sync). A blocking script in `layout.tsx` (`THEME_INIT_SCRIPT`, `src/lib/theme.ts`) sets `.dark` on `<html>` before first paint. Before this, `.dark` was never applied, so every `dark:` class in the app was dead.
+- **Public landing page at `/welcome`.** `proxy.ts` sends a signed-out visitor at the bare `/` there; every deeper signed-out link still goes to sign-in with its `callbackUrl`. The hero demo runs the real `NibTextParser` + `getAIContext()` on a public-domain Walden passage; the reading-map section renders the real `HeatmapGrid` on an example book.
+- **Shared app shell:** `AppHeader` (`src/components/app-header.tsx`) on library, book, settings and marketplace; the reader keeps its own toolbar. Settings passes its unsaved-edits guard into the header's links (KAN-331 still holds). Books without a cover get a `TypographicCover` instead of an emoji. Sign-in and register share `AuthShell`.
+
+**Why:** the app read as an unstyled shadcn template, had no page that explained it to a new visitor, and shipped dark-mode classes that never ran.
+
+**Don't undo this without explicit user consent:** don't reintroduce a second accent colour, don't move the theme choice into synced settings, and don't point signed-out `/` back at the login page.
+
 ### 2026-10-06 — PDF view: selectable text layer, the vim cursor, and page-based Next/Prev
 
 PDF view used to be a stack of bare `<canvas>` pages: nothing on them could be selected, and the vim keys only scrolled (an ad-hoc handler in the reader page bound j/k/d/u/gg/G/Ctrl+E/Ctrl+Y to `scrollBy`). The user asked for text view's behaviour in PDF view — "highlight text and navigate the text like in text mode, with vim commands".

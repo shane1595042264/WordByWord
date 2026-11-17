@@ -15,7 +15,7 @@ interface HeatmapGridProps {
 export const HeatmapGrid = memo(function HeatmapGrid({ sections, onSectionClick }: HeatmapGridProps) {
   return (
     <TooltipProvider>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-[5px]">
         {sections.map(section => {
           // Same three states as the chapter list below (chapter-accordion.tsx): isRead wins,
           // otherwise any scroll progress means the section was started.
@@ -29,14 +29,15 @@ export const HeatmapGrid = memo(function HeatmapGrid({ sections, onSectionClick 
             <Tooltip key={section.id}>
               <TooltipTrigger asChild>
                 <button
+                  data-state={section.isRead ? 'read' : inProgress ? 'in-progress' : 'unread'}
                   onClick={() => onSectionClick?.(section.id)}
                   aria-label={`${section.title} — ${status}, pages ${section.startPage}-${section.endPage}`}
-                  className={`w-4 h-4 rounded-sm transition-colors cursor-pointer ${
+                  className={`size-4 rounded-[4px] transition-[background-color,transform] duration-150 cursor-pointer outline-none hover:scale-125 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card motion-reduce:hover:scale-100 ${
                     section.isRead
-                      ? 'bg-green-500 hover:bg-green-400'
+                      ? 'bg-primary hover:bg-primary/80'
                       : inProgress
-                        ? 'bg-yellow-500 hover:bg-yellow-400'
-                        : 'bg-muted hover:bg-muted-foreground/20'
+                        ? 'bg-highlight hover:bg-highlight/80'
+                        : 'bg-foreground/10 hover:bg-foreground/20'
                   }`}
                 />
               </TooltipTrigger>

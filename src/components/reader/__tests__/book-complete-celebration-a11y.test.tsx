@@ -75,12 +75,13 @@ describe('BookCompleteCelebration accessibility', () => {
     expect(dialog().contains(document.activeElement)).toBe(true)
   })
 
-  it('hides the confetti layer and the emoji from assistive tech', () => {
+  it('hides the confetti layer and the decorative icon from assistive tech', () => {
     render(<BookCompleteCelebration bookTitle="A Book" onDismiss={vi.fn()} />)
 
     const confetti = document.querySelector('.animate-confetti-fall')!.parentElement!
     expect(confetti.getAttribute('aria-hidden')).toBe('true')
-    expect(screen.getByText('\u{1F389}').parentElement?.getAttribute('aria-hidden')).toBe('true')
+    const icon = document.querySelector('.lucide-party-popper')!
+    expect(icon.closest('[aria-hidden="true"]')).not.toBeNull()
   })
 })
 

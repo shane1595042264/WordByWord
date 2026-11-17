@@ -25,6 +25,10 @@ vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { name: 'Test', role: 'user' } } }),
 }))
 
+// The app header's user menu registers a global shortcut, which needs the
+// ShortcutProvider this page test does not mount. The menu is not under test.
+vi.mock('@/components/auth/user-menu', () => ({ UserMenu: () => null }))
+
 // Real next/link swallows onClick in jsdom; forward it so the exit guard runs.
 vi.mock('next/link', () => ({
   default: ({ href, children, onClick }: { href: string; children: React.ReactNode; onClick?: (e: React.MouseEvent) => void }) => (
@@ -155,6 +159,17 @@ describe('Settings unsaved-edit handling (KAN-331)', () => {
     confirm.mockReturnValue(true)
     fireEvent.click(back)
     expect(push).toHaveBeenCalledWith('/')
+  })
+
+  it('guards the app header links too, not just Back to Library', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderSettings()
+
+    editGeneral()
+    fireEvent.click(screen.getByRole('link', { name: 'Library' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Nibbler' }))
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(push).not.toHaveBeenCalled()
   })
 
   it('registers a beforeunload guard only while edits are pending', async () => {

@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { FileTextIcon } from 'lucide-react'
+import { AlertTriangleIcon, CheckIcon, FileTextIcon } from 'lucide-react'
 import type { BookWithProgress } from '@/hooks/use-books'
 import { useProcessingStatus } from '@/hooks/use-processing-status'
 import { ProcessingLogDialog } from './processing-log-dialog'
+import { TypographicCover } from './typographic-cover'
 import { db } from '@/lib/db/database'
 import { toast } from 'sonner'
 
@@ -98,24 +98,36 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
   const stageLabel = processing?.stage ? (STAGE_LABELS[processing.stage] || 'Processing...') : 'Processing...'
 
+  const dimCover = isProcessing || isFailed
   const coverContent = (
-    <div className="aspect-[3/4] bg-muted rounded-md flex items-center justify-center overflow-hidden relative">
+    <div
+      className={`relative aspect-[3/4] overflow-hidden rounded-sm bg-muted shadow-[0_1px_2px_oklch(0.22_0.04_170/0.12),0_10px_24px_-12px_oklch(0.22_0.04_170/0.5)] ring-1 ring-black/5 transition-[transform,box-shadow] duration-300 ease-out motion-reduce:transition-none dark:ring-white/10 ${
+        editMode
+          ? selected
+            ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+            : ''
+          : !isProcessing
+            ? 'group-hover:-translate-y-1 group-hover:shadow-[0_2px_4px_oklch(0.22_0.04_170/0.12),0_18px_32px_-14px_oklch(0.22_0.04_170/0.55)]'
+            : ''
+      }`}
+    >
       {book.coverImage && !coverError ? (
         <img
           src={book.coverImage}
           alt={book.title}
-          className={`object-cover w-full h-full transition-all ${isProcessing || isFailed ? 'brightness-[0.3]' : ''}`}
+          className={`object-cover w-full h-full transition-[filter] ${dimCover ? 'brightness-[0.3]' : ''}`}
           onError={() => setCoverError(true)}
         />
       ) : (
-        <span className={`text-4xl text-muted-foreground ${isProcessing || isFailed ? 'opacity-30' : ''}`}>📖</span>
+        // No cover yet: a typographic one, so the shelf still reads as books.
+        <TypographicCover title={book.title} author={book.author} className={dimCover ? 'brightness-[0.35]' : undefined} />
       )}
 
       {isProcessing && processing && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
-          <span className="text-2xl font-bold tabular-nums">{processing.progress}%</span>
+          <span className="font-display text-2xl font-semibold tabular-nums">{processing.progress}%</span>
           <span className="text-xs text-center mt-1 opacity-80">{stageLabel}</span>
-          <Progress value={processing.progress} className="h-1 mt-2 w-3/4" />
+          <Progress value={processing.progress} className="h-1 mt-2 w-3/4 bg-white/20" />
         </div>
       )}
 
@@ -127,7 +139,7 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
       {isProcessing && pollError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2 gap-1">
-          <span className="text-2xl">&#x26A0;</span>
+          <AlertTriangleIcon aria-hidden="true" className="size-6" />
           <span className="text-xs text-center opacity-80">Sync paused</span>
           <Button
             variant="secondary"
@@ -142,9 +154,9 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
       {isFailed && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
-          <span className="text-2xl">&#x26A0;</span>
-          <span className="text-xs mt-1 text-center">Processing failed</span>
-          {!editMode && <span className="text-[10px] mt-0.5 text-center opacity-70">Tap to review</span>}
+          <AlertTriangleIcon aria-hidden="true" className="size-6" />
+          <span className="text-xs mt-1.5 text-center font-medium">Processing failed</span>
+          {!editMode && <span className="text-[11px] mt-0.5 text-center opacity-75">Tap to review</span>}
         </div>
       )}
 
@@ -175,24 +187,15 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
   )
 
   const cardBody = (
-    <Card
-      className={`group transition-all h-full overflow-hidden ${
-        editMode
-          ? selected
-            ? 'ring-2 ring-primary shadow-lg scale-[0.97] cursor-pointer'
-            : 'hover:ring-1 hover:ring-muted-foreground/30 cursor-pointer'
-          : isProcessing
-            ? 'opacity-90'
-            : isFailed
-              ? 'opacity-90 hover:shadow-lg cursor-pointer'
-              : 'hover:shadow-lg cursor-pointer'
-      }`}
+    <div
+      data-slot="book-card"
+      className={`group h-full ${isProcessing && !editMode ? '' : 'cursor-pointer'}`}
       onClick={editMode ? (e: React.MouseEvent) => {
         e.preventDefault()
         onToggleSelect?.(book.id, e)
       } : undefined}
     >
-      <CardContent className="p-4 flex flex-col gap-3 relative min-w-0">
+      <div className="flex flex-col gap-3 relative min-w-0">
         {editMode && (
           /*
             The only keyboard-reachable way to select a single book (KAN-310).
@@ -238,19 +241,18 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
 
         {coverContent}
 
-        <div className="space-y-1">
-          <h3 className="font-semibold text-sm line-clamp-2">{book.title}</h3>
-          <p className="text-xs text-muted-foreground">{book.author}</p>
+        <div className="space-y-0.5 px-0.5">
+          <h3 className="text-sm font-medium leading-snug line-clamp-2">{book.title}</h3>
+          {book.author && <p className="text-xs text-muted-foreground line-clamp-1">{book.author}</p>}
         </div>
 
         {!isProcessing && !isFailed && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
+          <div className="space-y-1.5 px-0.5">
+            <Progress value={book.progress.percentage} className="h-1 bg-muted" />
+            <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground">
               {book.completedAt ? (
-                <span className="flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 6L5 9L10 3" />
-                  </svg>
+                <span className="flex items-center gap-1 font-medium text-primary">
+                  <CheckIcon aria-hidden="true" className="size-3" strokeWidth={2.5} />
                   Complete
                 </span>
               ) : (
@@ -258,7 +260,6 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
               )}
               <span>{book.progress.read}/{book.progress.total} sections</span>
             </div>
-            <Progress value={book.progress.percentage} className={`h-2 ${book.completedAt ? '[&_[data-slot=progress-indicator]]:bg-green-500' : ''}`} />
           </div>
         )}
 
@@ -366,14 +367,19 @@ export function BookCard({ book, editMode, selected, onToggleSelect, onProcessin
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 
   return (
     <>
       {editMode || isProcessing ? cardBody : (
-        <Link href={`/book/${book.id}`}>{cardBody}</Link>
+        <Link
+          href={`/book/${book.id}`}
+          className="block rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+        >
+          {cardBody}
+        </Link>
       )}
       {showLog && book.jobId && (
         <ProcessingLogDialog

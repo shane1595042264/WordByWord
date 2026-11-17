@@ -74,12 +74,17 @@ describe('ChapterAccordion accessibility', () => {
     expect(solo.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('keeps the triangle glyph out of toggle names', () => {
+  it('keeps the expand chevron out of toggle names', () => {
     render(<ChapterAccordion bookId="book-1" chapters={chapters} />)
     const buttons = screen.getAllByRole('button')
     expect(buttons.length).toBeGreaterThan(0)
-    for (const button of buttons) expect(button.textContent).toContain('▶')
-    expect(screen.getAllByRole('button', { name: name => !name.includes('▶') })).toEqual(buttons)
+    for (const button of buttons) {
+      const chevron = button.querySelector('svg.lucide-chevron-right')
+      expect(chevron).not.toBeNull()
+      expect(chevron!.getAttribute('aria-hidden')).toBe('true')
+    }
+    // Names are the chapter titles alone: no glyph, no icon text.
+    expect(screen.getAllByRole('button', { name: name => !/[▶►]/.test(name) && name.trim() === name })).toEqual(buttons)
   })
 
   it('names each section link with its read state', () => {

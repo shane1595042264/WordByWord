@@ -18,6 +18,10 @@ vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { name: 'Test', role: 'user' } } }),
 }))
 
+// The app header's user menu registers a global shortcut, which needs the
+// ShortcutProvider this page test does not mount. The menu is not under test.
+vi.mock('@/components/auth/user-menu', () => ({ UserMenu: () => null }))
+
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
     <a href={href}>{children}</a>

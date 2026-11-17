@@ -61,9 +61,27 @@ describe('proxy', () => {
   })
 
   it('lets public paths through without a session', () => {
-    for (const path of ['/auth/login', '/auth/register', '/api/auth/session', '/api/admin/register']) {
+    for (const path of ['/welcome', '/auth/login', '/auth/register', '/api/auth/session', '/api/admin/register']) {
       expect(proxy(anonymousRequest(path)).headers.get('location')).toBeNull()
     }
+  })
+
+  it('sends a signed-out visitor at the bare domain to the welcome page', () => {
+    const location = new URL(proxy(anonymousRequest('/')).headers.get('location') as string)
+
+    expect(location.origin).toBe(ORIGIN)
+    expect(location.pathname).toBe('/welcome')
+  })
+
+  it('still sends a signed-out deep link to sign-in, not the welcome page', () => {
+    const response = proxy(anonymousRequest('/?tab=x'))
+
+    expect(new URL(response.headers.get('location') as string).pathname).toBe('/auth/login')
+    expect(callbackUrlOf(response)).toBe('/?tab=x')
+  })
+
+  it('leaves the library at / alone for a signed-in visitor', () => {
+    expect(proxy(signedInRequest('/')).headers.get('location')).toBeNull()
   })
 
   // The proxy emits the callbackUrl; sanitizeCallbackUrl is what consumes it on

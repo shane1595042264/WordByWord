@@ -1063,11 +1063,13 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
   }, [nibDocument])
 
   return (
-    <div className="p-6 space-y-2">
+    // Literata, a face drawn for long reading on screens, in a measure that
+    // keeps lines near 70 characters. The section title stays in the UI face.
+    <div className="mx-auto max-w-[72ch] space-y-2 p-6 font-reading text-[17px] leading-[1.7] sm:px-8">
         {/* Section title */}
-        <div className="mb-4">
+        <div className="mb-6">
           {showIndicators && <NibElementBadge type="section" />}
-          <h2 className="text-xl font-semibold">{sectionTitle}</h2>
+          <h2 className="font-display text-2xl font-semibold leading-tight tracking-tight">{sectionTitle}</h2>
         </div>
 
         {nibDocument.pages.map((page) => (

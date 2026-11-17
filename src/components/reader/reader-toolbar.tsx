@@ -305,16 +305,16 @@ export function ReaderToolbar({
         </div>
       </div>
       {/* Section progress bar */}
-      <div className="relative h-1.5 w-full bg-zinc-800 overflow-hidden">
+      <div className="relative h-1.5 w-full bg-muted overflow-hidden">
         <div
-          className="h-full bg-teal-500 transition-all duration-150"
+          className="h-full bg-primary transition-[width] duration-150"
           style={{ width: `${sectionProgress}%` }}
         />
         {/* Segment dividers every 10% */}
         {[10,20,30,40,50,60,70,80,90].map(p => (
           <div
             key={p}
-            className="absolute top-0 bottom-0 w-px bg-zinc-950/50"
+            className="absolute top-0 bottom-0 w-px bg-background/70"
             style={{ left: `${p}%` }}
           />
         ))}

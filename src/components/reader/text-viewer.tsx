@@ -25,8 +25,8 @@ export function TextViewer({ text, sectionTitle }: TextViewerProps) {
   }
 
   return (
-    <div className="prose prose-sm max-w-none p-6">
-      <h2>{sectionTitle}</h2>
+    <div className="mx-auto max-w-[72ch] p-6 font-reading text-[17px] leading-[1.7] sm:px-8">
+      <h2 className="mb-6 font-display text-2xl font-semibold leading-tight tracking-tight">{sectionTitle}</h2>
       <div className="whitespace-pre-wrap">
         {containsLatex(text) ? <LatexText text={text} /> : text}
       </div>

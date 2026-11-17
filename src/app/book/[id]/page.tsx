@@ -3,8 +3,11 @@
 import { use, useState, useEffect, useCallback, useTransition } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
+import { ArrowLeftIcon, ArrowRightIcon, PencilIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { AppHeader } from '@/components/app-header'
+import { TypographicCover } from '@/components/library/typographic-cover'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useBookDetail } from '@/hooks/use-book-detail'
 import { ProgressDrilldown } from '@/components/dashboard/progress-drilldown'
@@ -63,17 +66,35 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
   }, [book, editTitle, editAuthor, refresh])
 
   if (loading) {
-    return <div className="flex justify-center py-20 text-muted-foreground">Loading...</div>
+    return (
+      <div className="min-h-[100dvh]">
+        <AppHeader current="library" />
+        <main className="mx-auto max-w-5xl px-4 pt-10 sm:px-6" aria-busy="true">
+          <span className="sr-only">Loading...</span>
+          <div className="flex flex-col gap-8 sm:flex-row">
+            <Skeleton className="aspect-[3/4] w-32 rounded-sm sm:w-44" />
+            <div className="flex-1 space-y-3 pt-2">
+              <Skeleton className="h-9 w-2/3" />
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="mt-6 h-12 w-full max-w-xs" />
+            </div>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-4">
-        <h2 className="text-xl font-semibold">Failed to load book</h2>
-        <p className="text-muted-foreground text-center max-w-md">{error}</p>
-        <div className="flex gap-2">
-          <Button onClick={() => { refresh() }}>Try Again</Button>
-          <Link href="/"><Button variant="outline">Back to Library</Button></Link>
+      <div className="min-h-[100dvh]">
+        <AppHeader current="library" />
+        <div role="alert" className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-4">
+          <h2 className="font-display text-2xl font-semibold tracking-tight">Failed to load book</h2>
+          <p className="text-muted-foreground text-center max-w-md">{error}</p>
+          <div className="flex gap-2">
+            <Button onClick={() => { refresh() }}>Try Again</Button>
+            <Button variant="outline" asChild><Link href="/">Back to Library</Link></Button>
+          </div>
         </div>
       </div>
     )
@@ -81,12 +102,20 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
 
   if (!book) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <p>Book not found.</p>
-        <Link href="/"><Button variant="outline" className="mt-4">Back to Library</Button></Link>
+      <div className="min-h-[100dvh]">
+        <AppHeader current="library" />
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 px-4 text-center">
+          <h2 className="font-display text-2xl font-semibold tracking-tight">Book not found</h2>
+          <p className="max-w-md text-muted-foreground">It may have been deleted, or it has not synced to this device yet.</p>
+          <Button variant="outline" asChild><Link href="/">Back to Library</Link></Button>
+        </div>
       </div>
     )
   }
+
+  const sectionsRead = book.allSections.filter(s => s.isRead).length
+  const sectionsTotal = book.allSections.length
+  const percentRead = sectionsTotal > 0 ? Math.round((sectionsRead / sectionsTotal) * 100) : 0
 
   // Continue Reading: prefer the last-accessed section (tracks actual reading position)
   // Falls back to the old heuristic (last read → first unread) for books without saved position
@@ -120,29 +149,36 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
     : null
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
-      <Link href="/" className="text-sm text-muted-foreground hover:underline mb-4 inline-block">
-        ← Back to Library
+    <div className="min-h-[100dvh]">
+    <AppHeader current="library" />
+    <main className="mx-auto max-w-5xl px-4 pb-24 pt-6 sm:px-6">
+      <Link
+        href="/"
+        className="mb-8 inline-flex items-center gap-1.5 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <ArrowLeftIcon aria-hidden="true" className="size-4" />
+        Back to Library
       </Link>
 
-      <div className="flex flex-col sm:flex-row gap-6 mb-8 items-center sm:items-start">
-        <div className="w-24 h-32 sm:w-32 sm:h-44 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+      <div className="mb-12 flex flex-col items-center gap-8 sm:flex-row sm:items-start">
+        <div className="relative flex aspect-[3/4] w-36 flex-shrink-0 items-center justify-center overflow-hidden rounded-sm bg-muted shadow-[0_2px_4px_oklch(0.22_0.04_170/0.12),0_22px_40px_-18px_oklch(0.22_0.04_170/0.6)] ring-1 ring-black/5 dark:ring-white/10 sm:w-44">
           {book.coverImage && !coverError ? (
             <img
               src={book.coverImage}
               alt={book.title}
-              className="object-cover w-full h-full rounded-lg"
+              className="object-cover w-full h-full"
               onError={() => setCoverError(true)}
             />
           ) : book.coverImage && coverError ? (
-            <span className="text-5xl">📖</span>
+            <TypographicCover title={book.title} author={book.author} size="lg" />
           ) : (
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-5xl">📖</span>
+            <div className="absolute inset-0">
+              <TypographicCover title={book.title} author={book.author} size="lg" />
+              <div className="absolute inset-x-0 bottom-0 flex justify-center p-2">
               <Button
                 size="xs"
                 variant="outline"
-                className="text-[10px] px-2 py-1"
+                className="text-[11px] px-2 py-1 shadow-sm"
                 disabled={generatingCover}
                 onClick={async () => {
                   if (!book) return
@@ -197,10 +233,11 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
               >
                 {generatingCover ? 'Generating...' : 'Generate Cover'}
               </Button>
+              </div>
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2 flex-1 items-center sm:items-start text-center sm:text-left w-full">
+        <div className="flex flex-col gap-2 flex-1 min-w-0 items-center sm:items-start text-center sm:text-left w-full sm:pt-1">
           {editing ? (
             <>
               <input
@@ -208,7 +245,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 value={editTitle}
                 onChange={e => setEditTitle(e.target.value)}
                 placeholder="Book title"
-                className="text-2xl font-bold bg-transparent border-b border-primary outline-none pb-1"
+                aria-label="Book title"
+                className="font-display text-3xl font-semibold tracking-tight bg-transparent border-b-2 border-primary outline-none pb-1 w-full"
                 autoFocus
                 onKeyDown={e => { if (e.key === 'Enter') saveEdits(); if (e.key === 'Escape') cancelEditing() }}
               />
@@ -217,7 +255,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
                 value={editAuthor}
                 onChange={e => setEditAuthor(e.target.value)}
                 placeholder="Author"
-                className="text-muted-foreground bg-transparent border-b border-muted-foreground/30 outline-none pb-1"
+                aria-label="Author"
+                className="text-muted-foreground bg-transparent border-b border-muted-foreground/30 focus:border-primary outline-none pb-1 w-full"
                 onKeyDown={e => { if (e.key === 'Enter') saveEdits(); if (e.key === 'Escape') cancelEditing() }}
               />
               <div className="flex gap-2 mt-1">
@@ -231,25 +270,38 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
             </>
           ) : (
             <>
-              <div className="flex items-center gap-2 group">
-                <h1 className="text-2xl font-bold">{book.title}</h1>
+              <div className="flex items-start gap-2 group">
+                <h1 className="font-display text-3xl font-semibold leading-[1.1] tracking-tight md:text-4xl">{book.title}</h1>
                 <button
                   onClick={startEditing}
-                  className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  className="mt-2 shrink-0 rounded-md p-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity text-muted-foreground hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   aria-label="Edit book details"
                   title="Edit book details"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                  <PencilIcon aria-hidden="true" className="size-4" />
                 </button>
               </div>
-              <p className="text-muted-foreground">{book.author || 'Unknown'}</p>
+              <p className="text-lg text-muted-foreground">{book.author || 'Unknown'}</p>
             </>
           )}
-          <div className="flex gap-2 mt-1">
-            <Badge variant="outline">{book.totalPages} pages</Badge>
-            <Badge variant="outline">{book.chapters.length} chapters</Badge>
-            <Badge variant="outline">{book.allSections.length} sections</Badge>
-          </div>
+          <dl className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-1 text-sm text-muted-foreground sm:justify-start">
+            <div className="flex gap-1.5"><dt className="sr-only">Pages</dt><dd><span className="font-medium tabular-nums text-foreground">{book.totalPages}</span> pages</dd></div>
+            <div className="flex gap-1.5"><dt className="sr-only">Chapters</dt><dd><span className="font-medium tabular-nums text-foreground">{book.chapters.length}</span> chapters</dd></div>
+            <div className="flex gap-1.5"><dt className="sr-only">Sections</dt><dd><span className="font-medium tabular-nums text-foreground">{book.allSections.length}</span> sections</dd></div>
+          </dl>
+          {sectionsTotal > 0 && (
+            <div className="mt-3 w-full max-w-sm">
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {book.completedAt ? 'Finished' : `${sectionsRead} of ${sectionsTotal} sections read`}
+                </span>
+                <span className="font-display text-lg font-semibold tabular-nums">{percentRead}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${percentRead}%` }} />
+              </div>
+            </div>
+          )}
           {continueSection && continueSectionUrl && (() => {
             // Use last-accessed scroll progress if this is the last-accessed section,
             // otherwise fall back to section's own scrollProgress
@@ -257,18 +309,21 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
               ? (book.lastAccessedScrollProgress ?? continueSection.scrollProgress ?? 0)
               : (continueSection.isRead ? 100 : (continueSection.scrollProgress ?? 0))
             return (
-              <Link href={continueSectionUrl} className="mt-3 block w-full sm:max-w-xs">
-                <Button className="w-full flex flex-col items-start gap-1 h-auto py-2.5 px-4">
-                  <span className="text-sm font-medium">Continue Reading</span>
-                  <span className="text-xs opacity-80 truncate w-full text-left">{continueSection.title}</span>
-                  <div className="w-full bg-primary-foreground/30 rounded-full h-1.5 mt-0.5">
-                    <div
-                      className="bg-primary-foreground rounded-full h-1.5 transition-all"
-                      style={{ width: `${Math.min(100, Math.max(0, sectionProgress))}%` }}
-                    />
-                  </div>
-                </Button>
-              </Link>
+              <Button asChild className="group/continue mt-5 w-full sm:max-w-sm flex items-center gap-3 h-auto py-3 pl-4 pr-3 text-left">
+                <Link href={continueSectionUrl}>
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
+                    <span className="text-sm font-semibold">Continue Reading</span>
+                    <span className="text-xs opacity-80 truncate w-full text-left font-normal">{continueSection.title}</span>
+                    <span className="mt-1 block h-1 w-full rounded-full bg-primary-foreground/25">
+                      <span
+                        className="block h-1 rounded-full bg-primary-foreground transition-[width]"
+                        style={{ width: `${Math.min(100, Math.max(0, sectionProgress))}%` }}
+                      />
+                    </span>
+                  </span>
+                  <ArrowRightIcon aria-hidden="true" className="size-5 shrink-0 transition-transform group-hover/continue:translate-x-0.5 motion-reduce:transition-none" />
+                </Link>
+              </Button>
             )
           })()}
           {book.processingStatus !== 'complete' && (
@@ -333,6 +388,8 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
           })()}
         </DialogContent>
       </Dialog>
+    </main>
     </div>
   )
 }
+
