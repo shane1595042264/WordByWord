@@ -9,13 +9,60 @@
  * written for the reader, and the UI adds a link to the AI tab.
  */
 
-export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'xai'
+/** Mirrors nibble-api src/ai/registry.ts. GET /ai/keys returns the same list with key formats and links. */
+export type AiProvider =
+  | 'gemini'
+  | 'openai'
+  | 'anthropic'
+  | 'xai'
+  | 'deepseek'
+  | 'openrouter'
+  | 'groq'
+  | 'mistral'
+  | 'qwen'
+  | 'moonshot'
+  | 'zhipu'
+  | 'siliconflow'
+  | 'together'
+  | 'fireworks'
+  | 'deepinfra'
+  | 'cerebras'
+  | 'perplexity'
 
 export const AI_PROVIDER_LABEL: Record<AiProvider, string> = {
   gemini: 'Google Gemini',
   openai: 'OpenAI',
   anthropic: 'Anthropic Claude',
   xai: 'xAI Grok',
+  deepseek: 'DeepSeek',
+  openrouter: 'OpenRouter',
+  groq: 'Groq',
+  mistral: 'Mistral',
+  qwen: 'Qwen (Alibaba Model Studio)',
+  moonshot: 'Moonshot Kimi',
+  zhipu: 'Zhipu GLM (Z.ai)',
+  siliconflow: 'SiliconFlow',
+  together: 'Together AI',
+  fireworks: 'Fireworks AI',
+  deepinfra: 'DeepInfra',
+  cerebras: 'Cerebras',
+  perplexity: 'Perplexity',
+}
+
+export const AI_PROVIDERS = Object.keys(AI_PROVIDER_LABEL) as AiProvider[]
+
+/** A provider row as GET /ai/keys describes it. */
+export interface AiProviderInfo {
+  id: AiProvider
+  label: string
+  keyFormat: string
+  keysUrl: string
+}
+
+/** "OpenAI, DeepSeek or Qwen". */
+export function providerList(providers: AiProvider[]): string {
+  const labels = providers.map((p) => AI_PROVIDER_LABEL[p] ?? p)
+  return labels.length <= 1 ? labels.join('') : `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]}`
 }
 
 /** Where every "add a key" link points. */
@@ -68,27 +115,44 @@ export async function aiErrorFromResponse(
 
 // ─── Instant provider hint ─────────────────────────────────────────
 
-export type KeyDetection = { provider: AiProvider } | { provider: null; reason: string | null }
+export interface KeyDetection {
+  /** Providers whose key format this matches, most likely first. Empty when unknown. */
+  candidates: AiProvider[]
+  /** Set when the key can't be used whatever provider is picked (spaces, an admin key). */
+  fatal?: string
+}
 
 /**
- * Which provider a pasted key looks like, for the hint under the field while
- * the reader pastes. Mirrors nibble-api src/ai/detect.ts; the server's answer
- * is the one that counts. `reason` is null while the field is empty.
+ * Which provider(s) a pasted key could be from, for the hint under the field
+ * while the reader pastes. Mirrors nibble-api src/ai/detect.ts, whose answer is
+ * the one that counts. A format it can't place is not refused: the reader
+ * picks the provider. Only a key that can't be one at all is.
  */
 export function detectKeyProvider(raw: string): KeyDetection {
   const key = raw.trim()
-  if (!key) return { provider: null, reason: null }
-  if (/\s/.test(key)) return { provider: null, reason: 'A key has no spaces in it. Paste only the key.' }
-  if (key.startsWith('sk-ant-admin')) return { provider: null, reason: 'That is an Anthropic Admin key, which cannot run models.' }
-  if (key.startsWith('sk-ant-')) return { provider: 'anthropic' }
-  if (key.startsWith('sk-or-')) return { provider: null, reason: 'OpenRouter keys are not supported yet.' }
-  if (key.startsWith('sk-admin-')) return { provider: null, reason: 'That is an OpenAI Admin key, which cannot run models.' }
-  if (key.startsWith('xai-')) return { provider: 'xai' }
-  if (key.startsWith('gsk_')) return { provider: null, reason: 'That looks like a Groq key. Groq is not supported.' }
-  if (key.startsWith('AIza')) return { provider: 'gemini' }
-  if (key.startsWith('sk-')) return { provider: 'openai' }
-  if (key.length < 20) return { provider: null, reason: null }
-  return { provider: null, reason: 'Could not tell which provider this key is for.' }
+  if (!key) return { candidates: [] }
+  if (/\s/.test(key)) return { candidates: [], fatal: 'A key has no spaces in it. Paste only the key.' }
+  if (key.startsWith('sk-ant-admin')) return { candidates: [], fatal: 'That is an Anthropic Admin key, which cannot run models.' }
+  if (key.startsWith('sk-admin-')) return { candidates: [], fatal: 'That is an OpenAI Admin key, which cannot run models.' }
+  if (key.startsWith('sk-ant-')) return { candidates: ['anthropic'] }
+  if (key.startsWith('sk-or-')) return { candidates: ['openrouter'] }
+  if (/^sk-(proj|svcacct|None)-/.test(key) || key.includes('T3BlbkFJ')) return { candidates: ['openai'] }
+  if (key.startsWith('xai-')) return { candidates: ['xai'] }
+  if (key.startsWith('gsk_')) return { candidates: ['groq'] }
+  if (key.startsWith('csk-')) return { candidates: ['cerebras'] }
+  if (key.startsWith('fw_')) return { candidates: ['fireworks'] }
+  if (key.startsWith('pplx-')) return { candidates: ['perplexity'] }
+  if (key.startsWith('tgp_v1_') || /^[0-9a-f]{64}$/.test(key)) return { candidates: ['together'] }
+  if (key.startsWith('AQ.') || key.startsWith('AIza')) return { candidates: ['gemini'] }
+  if (key.startsWith('sk-')) {
+    const body = key.slice(3)
+    if (/^[0-9a-f]{32}$/.test(body)) return { candidates: ['deepseek', 'qwen'] }
+    if (/^[a-z]{40,60}$/.test(body)) return { candidates: ['siliconflow', 'moonshot', 'openai'] }
+    return { candidates: ['openai', 'deepseek', 'moonshot', 'qwen', 'siliconflow'] }
+  }
+  if (/^[0-9a-f]{32}\.[A-Za-z0-9]{8,}$/.test(key)) return { candidates: ['zhipu'] }
+  if (/^[A-Za-z0-9]{32}$/.test(key)) return { candidates: ['mistral', 'deepinfra'] }
+  return { candidates: [] }
 }
 
 // ─── Keys, settings, usage ─────────────────────────────────────────
@@ -96,6 +160,8 @@ export function detectKeyProvider(raw: string): KeyDetection {
 export interface AiKey {
   id: string
   provider: AiProvider
+  /** "China" when the key lives on a provider's China server; null on its default one. */
+  region: string | null
   keyHint: string
   models: string[]
   /** Models on this key that can read page images (OCR, tables of contents, figures). */
@@ -155,13 +221,18 @@ async function request<T>(method: string, path: string, body?: unknown, failed =
   return (res.status === 204 ? undefined : await res.json()) as T
 }
 
-export function fetchAiKeys(): Promise<{ keys: AiKey[]; settings: AiSettings }> {
+export function fetchAiKeys(): Promise<{ keys: AiKey[]; settings: AiSettings; providers?: AiProviderInfo[] }> {
   return request('GET', '/ai/keys', undefined, 'Could not load your AI keys')
 }
 
-/** Detects the provider, proves the key with one tiny call, then stores it encrypted. */
-export async function addAiKey(key: string): Promise<AiKey> {
-  return (await request<{ key: AiKey }>('POST', '/ai/keys', { key }, 'Could not add that key')).key
+/**
+ * Proves the key with one tiny call, then stores it encrypted. Without
+ * `provider` nibble-api works out whose key it is from its format, asking the
+ * likely owners in turn when several share it; with one, only that provider
+ * sees the key.
+ */
+export async function addAiKey(key: string, provider?: AiProvider): Promise<AiKey> {
+  return (await request<{ key: AiKey }>('POST', '/ai/keys', provider ? { key, provider } : { key }, 'Could not add that key')).key
 }
 
 /** null goes back to the cheapest model that answered when the key was checked. */

@@ -8,6 +8,13 @@
 
 Newer than anything below. When this section conflicts with the rest of the document, this section wins. Add a dated bullet here whenever the user's intent changes — do NOT silently delete the older guidance further down; just note that this section overrides it.
 
+### 2026-11-17 (later) — Settings > AI takes a key from any of 17 providers, with a provider picker
+
+The bullet below lists four providers, and the first cut refused everything else. That refused the user's own Gemini key, because Google now issues `AQ.…` keys. The user asked that no key be refused for its format. **Superseded:** Settings > AI now takes keys from Gemini (both formats), OpenAI, Anthropic, xAI, DeepSeek, OpenRouter, Groq, Mistral, Qwen, Moonshot Kimi, Zhipu GLM, SiliconFlow, Together, Fireworks, DeepInfra, Cerebras and Perplexity.
+- A **Provider** picker sits beside the key field. It defaults to "Detect automatically". If several providers share a key's format (`sk-…`), the hint names them and the order they will be asked in, and picking one sends the key only there. A format nobody recognises waits for a pick instead of being refused. Only spaces, too-short input and admin keys are refused outright.
+- "Supported providers" lists each provider's key format and a "Get a key" link, from `GET /ai/keys` `providers`. A key that lives on a provider's China server says so on its row.
+- `detectKeyProvider` in `src/lib/services/ai-api.ts` mirrors nibble-api `src/ai/detect.ts` and returns candidates, not a verdict. The server decides. Details: nibble-api `northstar.md` Section 0.
+
 ### 2026-11-17 — AI runs on the reader's own key, kept with their account (bring your own key)
 
 Every AI feature used to run on one server Anthropic key behind an admin-only gate ("AI features aren't enabled for this account" for everyone else), while section splitting, the scanned-page OCR fallback and figure explanation ran in the browser on an "Anthropic API Key" typed into Settings > General and kept in localStorage on that one device. **Superseded.** The user's decision: readers bring their own key, as on the user's own site (shaneBackend), so AI no longer depends on one account's credit, and Nibbler shows each reader what they spend.
