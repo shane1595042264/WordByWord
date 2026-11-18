@@ -23,6 +23,8 @@ describe('useVimMode W / S', () => {
     const onSelectWord = vi.fn()
     renderHook(() => useHarness({ onSelectBigWord, onSelectWord }))
     press('3')
+    // a real Shift+W sends a bare Shift keydown first; it must not eat the count
+    press('Shift', true)
     press('W', true)
     expect(onSelectBigWord.mock.calls).toEqual([[1], [1], [1]])
     expect(onSelectWord).not.toHaveBeenCalled()
@@ -35,6 +37,7 @@ describe('useVimMode W / S', () => {
     press('s')
     expect(onSelectSentence.mock.calls).toEqual([[0]])
     press('2')
+    press('Shift', true)
     press('S', true)
     expect(onSelectParagraph.mock.calls).toEqual([[1], [1]])
     expect(onSelectSentence.mock.calls).toEqual([[0]])

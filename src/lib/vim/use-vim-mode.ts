@@ -136,6 +136,10 @@ export function useVimMode({
 
     const key = e.key
 
+    // A bare Shift keydown precedes every shifted motion (3W, 2S). It matches
+    // no rule, so letting it through would clear the count before W/S arrives.
+    if (key === 'Shift') return
+
     // Numeric prefix accumulation
     if (/^[0-9]$/.test(key) && !(countBuffer === '' && key === '0')) {
       e.preventDefault()
