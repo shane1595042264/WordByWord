@@ -446,6 +446,36 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     setVimCursorIndex(idx)
   }, [])
 
+  // Visual-mode anchor (flat index); null outside visual mode. Mirrors
+  // PdfTextCursor.setMode: entering visual anchors at the cursor, leaving drops it.
+  const visualAnchorRef = useRef<number | null>(null)
+  const vimModeRef = useRef(vimMode)
+  useEffect(() => {
+    const prev = vimModeRef.current
+    vimModeRef.current = vimMode
+    if (vimMode !== 'visual') {
+      visualAnchorRef.current = null
+    } else if (prev !== 'visual' && visualAnchorRef.current === null) {
+      visualAnchorRef.current = vimCursorRef.current
+    }
+  }, [vimMode])
+
+  /**
+   * After a word motion: in visual mode the highlight becomes the inclusive
+   * anchor..cursor range; otherwise it is cleared (a plain motion in normal
+   * mode deselects a sentence).
+   */
+  const highlightFromAnchor = useCallback((cursor: number) => {
+    const anchor = visualAnchorRef.current
+    if (vimModeRef.current !== 'visual' || anchor === null) {
+      setHighlightedIndices(new Set())
+      return
+    }
+    const indices = new Set<number>()
+    for (let i = Math.min(anchor, cursor); i <= Math.max(anchor, cursor); i++) indices.add(i)
+    setHighlightedIndices(indices)
+  }, [])
+
   // Cursor line tracking for normal mode j/k
   const cursorLineRef = useRef(0)
 
@@ -571,7 +601,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (word) {
         // Just highlight the word — do NOT show info panel
         setSelectedWord(word)
-        setHighlightedIndices(new Set()) // clear sentence highlight
+        highlightFromAnchor(vimCursorRef.current)
         const span = wordSpanRefs.current.get(vimCursorRef.current)
         if (span) {
           span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
@@ -658,6 +688,10 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       // Set selectedWord to first word on the line and move vim cursor there
       const firstIdx = lineWordIndices[0]
       setVimCursor(firstIdx)
+      // `V` enters visual mode and selects the line in the same keypress, so
+      // vimMode has not re-rendered yet. Anchor at the line start so the next
+      // l/j extends from there (PdfTextCursor.selectCurrentLine does the same).
+      visualAnchorRef.current = firstIdx
       const word = allWords[firstIdx]
       if (word) setSelectedWord(word)
 
@@ -719,6 +753,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       setWordAnchorEl(null)
       setSelectedWord(null)
       setHighlightedIndices(new Set())
+      visualAnchorRef.current = null
       onDeselect?.()
     },
     confirmSelection() {
@@ -772,6 +807,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
 
         if (bestIndex >= 0) {
           setVimCursor(bestIndex)
+          if (vimModeRef.current === 'visual') highlightFromAnchor(bestIndex)
           const word = allWords[bestIndex]
           if (word) {
             setSelectedWord(word)
@@ -798,6 +834,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       if (line && line.wordIndices.length > 0) {
         const idx = line.wordIndices[0]
         setVimCursor(idx)
+        if (vimModeRef.current === 'visual') highlightFromAnchor(idx)
         const word = allWords[idx]
         if (word) {
           setSelectedWord(word)
@@ -987,7 +1024,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
       return firstVisible
     },
-  }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord])
+  }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord, highlightFromAnchor])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {

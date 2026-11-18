@@ -263,8 +263,9 @@ export function useVimMode({
           if (target === 'sentence') {
             onSelectSentence?.(0)
           }
-          // On entering visual mode, keep current word as anchor
-          // (don't move, just change mode)
+          // Entering visual mode doesn't move the cursor; the view anchors the
+          // selection at it when it sees the new mode (NibTextViewer's vimMode
+          // effect, PdfTextCursor.setMode).
         }
         break
 
