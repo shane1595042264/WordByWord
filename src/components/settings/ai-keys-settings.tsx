@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { KeyRoundIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { ChevronDownIcon, KeyRoundIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -377,7 +377,7 @@ function ProviderDirectory({ providers }: { providers: AiProviderInfo[] }) {
     <details className="group rounded-lg border border-border">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-4 py-3 text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 [&::-webkit-details-marker]:hidden">
         <span>Supported providers ({providers.length})</span>
-        <span aria-hidden="true" className="text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+        <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
       <ul className="grid gap-x-6 border-t border-border px-4 py-3 sm:grid-cols-2">
         {providers.map((p) => (
