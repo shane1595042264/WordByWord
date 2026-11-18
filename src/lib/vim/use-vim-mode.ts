@@ -39,6 +39,10 @@ interface UseVimModeOptions {
   scrollRef: React.RefObject<HTMLElement | null>
   onSelectWord?: (delta: number) => void
   onSelectSentence?: (delta: number) => void
+  /** W: one word in `direction`, a run of LaTeX tokens counting as one hop */
+  onSelectBigWord?: (direction: number) => void
+  /** S: first sentence of the next paragraph (display equations are paragraphs) */
+  onSelectParagraph?: (direction: number) => void
   onSelectLine?: () => void
   onSelectToEnd?: () => void
   onSelectToStart?: () => void
@@ -61,6 +65,8 @@ export function useVimMode({
   scrollRef,
   onSelectWord,
   onSelectSentence,
+  onSelectBigWord,
+  onSelectParagraph,
   onSelectLine,
   onSelectToEnd,
   onSelectToStart,
@@ -215,21 +221,16 @@ export function useVimMode({
         break
 
       case 'select-word-big':
-        if (onSelectWord) {
-          // Move forward skipping latex words until we land on a non-latex word
-          // For now, just move word by word — the latex-aware skipping will be
-          // implemented when we have access to the word list's isLatex flags
+        if (onSelectBigWord) {
           const dir = rule.action.direction ?? 1
-          for (let i = 0; i < count; i++) onSelectWord(dir)
+          for (let i = 0; i < count; i++) onSelectBigWord(dir)
         }
         break
 
       case 'select-paragraph':
-        // Jump to first sentence of next paragraph
-        // For now, move by multiple sentences as approximation
-        if (onSelectSentence) {
+        if (onSelectParagraph) {
           const dir = rule.action.direction ?? 1
-          for (let i = 0; i < count * 3; i++) onSelectSentence(dir)
+          for (let i = 0; i < count; i++) onSelectParagraph(dir)
         }
         break
 
@@ -279,7 +280,7 @@ export function useVimMode({
     }
 
     setCountBuffer('')
-  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectLine, onSelectToEnd, onSelectToStart, onYank, onClearSelection, onConfirmSelection, rulebook])
+  }, [enabled, mode, countBuffer, getCount, dispatchScroll, dispatchScrollTo, onSelectWord, onSelectWordVertical, onSelectSentence, onSelectSentenceVertical, onSelectBigWord, onSelectParagraph, onSelectLine, onSelectToEnd, onSelectToStart, onYank, onClearSelection, onConfirmSelection, rulebook])
 
   useEffect(() => {
     if (!enabled) return

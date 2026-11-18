@@ -160,6 +160,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string; s
     onSelectSentence: useCallback((delta: number) => {
       vimTarget()?.selectSentenceByDelta(delta)
     }, [vimTarget]),
+    // W / S need the NIB model (isLatex flags, paragraphs). The PDF text layer
+    // has neither, so in PDF view W is plain w and S keeps its old 3-sentence hop.
+    onSelectBigWord: useCallback((direction: number) => {
+      if (isPdfPaneRef.current) pdfCursorRef.current?.selectWordByDelta(direction)
+      else nibTextViewerRef.current?.selectBigWordByDelta(direction)
+    }, []),
+    onSelectParagraph: useCallback((direction: number) => {
+      if (isPdfPaneRef.current) {
+        for (let i = 0; i < 3; i++) pdfCursorRef.current?.selectSentenceByDelta(direction)
+      } else {
+        nibTextViewerRef.current?.selectParagraphByDelta(direction)
+      }
+    }, []),
     onSelectLine: useCallback(() => {
       vimTarget()?.selectCurrentLine()
     }, [vimTarget]),

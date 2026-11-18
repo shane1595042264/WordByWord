@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { isTableBlock, TableRenderer } from '@/components/reader/table-renderer'
 import { WordInfoPanel } from '@/components/reader/word-info-panel'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { NibDocument, NibWord, NibBlockType } from '@/lib/nib'
+import type { NibDocument, NibWord, NibParagraph, NibBlockType } from '@/lib/nib'
 
 /** Handle exposed by NibTextViewer for vim-driven selection */
 export interface NibTextViewerHandle {
@@ -16,6 +16,10 @@ export interface NibTextViewerHandle {
   selectWordByDelta: (delta: number) => void
   /** Select a sentence by delta from current sentence */
   selectSentenceByDelta: (delta: number) => void
+  /** W: move the word cursor one word in `direction`, treating a run of LaTeX tokens as a single hop */
+  selectBigWordByDelta: (direction: number) => void
+  /** S: select the first sentence of the next (direction 1) or current/previous (-1) paragraph */
+  selectParagraphByDelta: (direction: number) => void
   /** Select all words on the current visual line */
   selectCurrentLine: () => void
   /** Select all words from current cursor to the very last word */
@@ -421,14 +425,14 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     return map
   }, [allWords])
 
-  // Build flat sentence list
+  // Build flat sentence list; `paragraph` is the owning paragraph (S compares identity)
   const allSentences = useMemo(() => {
-    if (!nibDocument) return [] as { text: string; words: NibWord[] }[]
-    const sentences: { text: string; words: NibWord[] }[] = []
+    if (!nibDocument) return [] as { text: string; words: NibWord[]; paragraph: NibParagraph }[]
+    const sentences: { text: string; words: NibWord[]; paragraph: NibParagraph }[] = []
     for (const page of nibDocument.pages) {
       for (const para of page.paragraphs) {
         for (const sent of para.sentences) {
-          sentences.push({ text: sent.text, words: sent.words })
+          sentences.push({ text: sent.text, words: sent.words, paragraph: para })
         }
       }
     }
@@ -587,30 +591,76 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
     return 0
   }, [allWords, scrollContainerRef])
 
+  /** Move the word cursor to a flat index (already clamped) and select that word. */
+  const moveWordCursorTo = useCallback((idx: number) => {
+    setVimCursor(idx)
+    const word = allWords[idx]
+    if (word) {
+      // Just highlight the word — do NOT show info panel
+      setSelectedWord(word)
+      highlightFromAnchor(idx)
+      const span = wordSpanRefs.current.get(idx)
+      if (span) {
+        span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
+      }
+      // Sync cursor line with selected word
+      reportCursorLineForWord(idx)
+      // Notify parent (for side-by-side PDF sync)
+      onWordSelect?.(word)
+    }
+  }, [allWords, setVimCursor, highlightFromAnchor, reportCursorLineForWord, onWordSelect])
+
+  /** Move the sentence cursor to a sentence index (already clamped) and highlight the whole sentence. */
+  const selectSentenceAt = useCallback((sentIdx: number) => {
+    vimSentenceCursorRef.current = sentIdx
+    const sent = allSentences[sentIdx]
+    if (sent && sent.words.length > 0) {
+      const firstWord = sent.words[0]
+      setSelectedWord(firstWord)
+
+      // Highlight ALL words in the sentence
+      const indices = new Set<number>()
+      for (const w of sent.words) {
+        const idx = wordIndexMap.get(w)
+        if (idx !== undefined) indices.add(idx)
+      }
+      setHighlightedIndices(indices)
+
+      // Move vim cursor to first word of sentence
+      const flatIdx = wordIndexMap.get(firstWord) ?? 0
+      setVimCursor(flatIdx)
+      const span = wordSpanRefs.current.get(flatIdx)
+      if (span) {
+        span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
+      }
+      // Sync cursor line with first word of sentence
+      reportCursorLineForWord(flatIdx)
+      // Notify parent (for side-by-side PDF sync)
+      onWordSelect?.(firstWord)
+    }
+  }, [allSentences, wordIndexMap, setVimCursor, reportCursorLineForWord, onWordSelect])
+
   // Expose imperative handle for vim engine
   useImperativeHandle(ref, () => ({
     selectWordByDelta(delta: number) {
       if (allWords.length === 0) return
       if (delta === 0) {
         // Select first visible word
-        setVimCursor(findFirstVisibleWordIndex())
+        moveWordCursorTo(findFirstVisibleWordIndex())
       } else {
-        setVimCursor(Math.max(0, Math.min(allWords.length - 1, vimCursorRef.current + delta)))
+        moveWordCursorTo(Math.max(0, Math.min(allWords.length - 1, vimCursorRef.current + delta)))
       }
-      const word = allWords[vimCursorRef.current]
-      if (word) {
-        // Just highlight the word — do NOT show info panel
-        setSelectedWord(word)
-        highlightFromAnchor(vimCursorRef.current)
-        const span = wordSpanRefs.current.get(vimCursorRef.current)
-        if (span) {
-          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
-        }
-        // Sync cursor line with selected word
-        reportCursorLineForWord(vimCursorRef.current)
-        // Notify parent (for side-by-side PDF sync)
-        onWordSelect?.(word)
-      }
+    },
+    selectBigWordByDelta(direction: number) {
+      if (allWords.length === 0 || direction === 0) return
+      // Step past the cursor, then past any run of LaTeX tokens, so a whole
+      // inline formula ($\frac{a}{b}$ is several tokens) is one hop. No
+      // non-LaTeX word in that direction: stay put rather than land mid-formula.
+      const step = direction > 0 ? 1 : -1
+      let i = vimCursorRef.current + step
+      while (i >= 0 && i < allWords.length && allWords[i].isLatex) i += step
+      if (i < 0 || i >= allWords.length) return
+      moveWordCursorTo(i)
     },
     selectSentenceByDelta(delta: number) {
       if (allSentences.length === 0) return
@@ -620,38 +670,36 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
         for (let i = 0; i < allSentences.length; i++) {
           cumWords += allSentences[i].words.length
           if (cumWords > visIdx) {
-            vimSentenceCursorRef.current = i
-            break
+            selectSentenceAt(i)
+            return
           }
         }
+        selectSentenceAt(vimSentenceCursorRef.current)
       } else {
-        vimSentenceCursorRef.current = Math.max(0, Math.min(allSentences.length - 1, vimSentenceCursorRef.current + delta))
+        selectSentenceAt(Math.max(0, Math.min(allSentences.length - 1, vimSentenceCursorRef.current + delta)))
       }
-      const sent = allSentences[vimSentenceCursorRef.current]
-      if (sent && sent.words.length > 0) {
-        const firstWord = sent.words[0]
-        setSelectedWord(firstWord)
-
-        // Highlight ALL words in the sentence
-        const indices = new Set<number>()
-        for (const w of sent.words) {
-          const idx = wordIndexMap.get(w)
-          if (idx !== undefined) indices.add(idx)
+    },
+    selectParagraphByDelta(direction: number) {
+      if (allSentences.length === 0 || direction === 0) return
+      // First sentence of the next/previous paragraph. A display equation is
+      // its own paragraph, so it is a stop too. Backward from mid-paragraph
+      // goes to the start of the current paragraph, like vim's {.
+      const cur = Math.max(0, Math.min(allSentences.length - 1, vimSentenceCursorRef.current))
+      const paraOf = (i: number) => allSentences[i].paragraph
+      let i = cur
+      if (direction > 0) {
+        while (i < allSentences.length && paraOf(i) === paraOf(cur)) i++
+        if (i >= allSentences.length) return
+      } else {
+        if (i > 0 && paraOf(i - 1) === paraOf(cur)) {
+          while (i > 0 && paraOf(i - 1) === paraOf(cur)) i--
+        } else {
+          if (i === 0) return
+          i--
+          while (i > 0 && paraOf(i - 1) === paraOf(i)) i--
         }
-        setHighlightedIndices(indices)
-
-        // Move vim cursor to first word of sentence
-        const flatIdx = wordIndexMap.get(firstWord) ?? 0
-        setVimCursor(flatIdx)
-        const span = wordSpanRefs.current.get(flatIdx)
-        if (span) {
-          span.scrollIntoView({ behavior: 'instant', block: 'nearest' })
-        }
-        // Sync cursor line with first word of sentence
-        reportCursorLineForWord(flatIdx)
-        // Notify parent (for side-by-side PDF sync)
-        onWordSelect?.(firstWord)
       }
+      selectSentenceAt(i)
     },
     selectCurrentLine() {
       // Find all words on the same visual line as the cursor and highlight them
@@ -1024,7 +1072,7 @@ export const NibTextViewer = forwardRef<NibTextViewerHandle, NibTextViewerProps>
       }
       return firstVisible
     },
-  }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord, highlightFromAnchor])
+  }), [allWords, wordIndexMap, allSentences, findFirstVisibleWordIndex, onWordSelect, onDeselect, computeVisualLines, onCursorLineChange, scrollContainerRef, reportCursorLineForWord, highlightedIndices, setVimCursor, buildLineInfo, selectedWord, highlightFromAnchor, moveWordCursorTo, selectSentenceAt])
 
   // Recompute lines and report to parent
   const reportLines = useCallback(() => {
