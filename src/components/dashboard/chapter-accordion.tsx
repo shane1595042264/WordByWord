@@ -267,7 +267,7 @@ export function ChapterAccordion({ bookId, chapters, pdfBlob, bookRemoteId, tota
 
     return (
       <Dialog open={!!dividingChapter} onOpenChange={(open) => { if (!open) setDividingChapter(null) }}>
-        <DialogContent className="max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
+        <DialogContent className="max-w-[95vw] sm:max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Divide Sections: {dividingChapter.title}</DialogTitle>
           </DialogHeader>

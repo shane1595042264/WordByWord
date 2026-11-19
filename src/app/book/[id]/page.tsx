@@ -336,7 +336,7 @@ export default function BookDashboardPage({ params }: { params: Promise<{ id: st
 
       {/* Chapter reorganize dialog */}
       <Dialog open={showChapterEditor} onOpenChange={setShowChapterEditor}>
-        <DialogContent className="max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
+        <DialogContent className="max-w-[95vw] sm:max-w-[95vw] max-h-[80vh] overflow-hidden" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Reorganize Chapters</DialogTitle>
           </DialogHeader>
