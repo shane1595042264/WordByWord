@@ -29,6 +29,18 @@ interface TocEntry {
   sections?: TocEntry[]
 }
 
+interface TocSuggestionData {
+  suggestions?: { chapters?: TocEntry[] }
+  chapters?: TocEntry[]
+  pageOffset?: number
+}
+
+/** The server's guess at printed-page-1's distance from PDF page 1 (KAN-410). */
+export function tocPageOffset(data: TocSuggestionData | null | undefined): number {
+  const offset = data?.pageOffset
+  return typeof offset === 'number' && Number.isInteger(offset) ? offset : 0
+}
+
 // Turn a /suggest-structure response into dividers for the strip's page range.
 // The AI reads the whole book's TOC, so entries routinely start outside the range
 // (every later chapter, when dividing one chapter into sections) or repeat a page.
@@ -37,11 +49,15 @@ interface TocEntry {
 // Keep integer starts in (startPage, endPage], first title per page, ascending.
 // Divide Sections also looks at each chapter's nested sections, since those are
 // the starts that fall inside a chapter.
+// The TOC's page numbers are the book's printed ones, so each start is shifted by
+// pageOffset (front-matter pages before printed page 1) into a PDF page BEFORE the
+// range filter; filtering first drops the very starts the shift would bring in (KAN-410).
 export function dividersFromTocSuggestion(
-  data: { suggestions?: { chapters?: TocEntry[] }; chapters?: TocEntry[] } | null | undefined,
+  data: TocSuggestionData | null | undefined,
   startPage: number,
   endPage: number,
-  level: 'chapter' | 'section'
+  level: 'chapter' | 'section',
+  pageOffset = 0
 ): Divider[] {
   const chapters = data?.suggestions?.chapters || data?.chapters || []
   const entries: TocEntry[] = []
@@ -52,8 +68,8 @@ export function dividersFromTocSuggestion(
 
   const byPage = new Map<number, string>()
   for (const entry of entries) {
-    const page = entry.startPage
-    if (typeof page !== 'number' || !Number.isInteger(page)) continue
+    if (typeof entry.startPage !== 'number' || !Number.isInteger(entry.startPage)) continue
+    const page = entry.startPage + pageOffset
     if (page <= startPage || page > endPage || byPage.has(page)) continue
     byPage.set(page, entry.title || '')
   }
@@ -83,6 +99,10 @@ export function PageStripEditor({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [tocError, setTocError] = useState<string | null>(null)
+  // Last Process TOC result, kept so the printed-page-1 field can re-place the
+  // dividers without another AI call.
+  const [tocResult, setTocResult] = useState<TocSuggestionData | null>(null)
+  const [pageOneInput, setPageOneInput] = useState('1')
   const [hoverGap, setHoverGap] = useState<number | null>(null)
   const [focusGap, setFocusGap] = useState<number | null>(null)
   // Page of a divider that was just added from the keyboard and should receive
@@ -91,6 +111,7 @@ export function PageStripEditor({
   const [renderer, setRenderer] = useState<PdfPageRenderer | null>(null)
   const stripRef = useRef<HTMLDivElement>(null)
   const expectedCountId = useId()
+  const pageOneId = useId()
 
   // One parsed pdf.js document shared by every thumbnail in the strip. Without
   // this each tile parses the whole PDF itself, which a long book cannot
@@ -183,7 +204,10 @@ export function PageStripEditor({
       const { StructureService } = await import('@/lib/services/structure-service')
       const svc = new StructureService()
       const data = await svc.suggestFromTOC(bookRemoteId, [...selectedTocPages].sort((a, b) => a - b))
-      const newDividers = dividersFromTocSuggestion(data, startPage, endPage, level)
+      const offset = tocPageOffset(data)
+      setTocResult(data)
+      setPageOneInput(String(offset + 1))
+      const newDividers = dividersFromTocSuggestion(data, startPage, endPage, level, offset)
       if (newDividers.length === 0) {
         setTocError(`No ${level === 'chapter' ? 'chapters' : 'sections'} detected in the selected TOC pages. Try selecting different pages.`)
         return
@@ -198,6 +222,13 @@ export function PageStripEditor({
       setProcessing(false)
     }
   }, [selectedTocPages, bookRemoteId, startPage, endPage, level])
+
+  const handlePageOneChange = useCallback((value: string) => {
+    setPageOneInput(value)
+    const pdfPage = parseInt(value)
+    if (!tocResult || !Number.isInteger(pdfPage) || pdfPage < 1) return
+    setDividers(dividersFromTocSuggestion(tocResult, startPage, endPage, level, pdfPage - 1))
+  }, [tocResult, startPage, endPage, level])
 
   const handleSave = useCallback(async () => {
     setSaving(true)
@@ -268,6 +299,23 @@ export function PageStripEditor({
         >
           {processing ? 'Processing...' : 'Process TOC'}
         </Button>
+
+        {tocResult && (
+          <div className="flex items-center gap-2">
+            <label htmlFor={pageOneId} className="text-sm text-muted-foreground">
+              Printed page 1 = PDF page
+            </label>
+            <Input
+              id={pageOneId}
+              type="number"
+              value={pageOneInput}
+              onChange={e => handlePageOneChange(e.target.value)}
+              className="w-20 h-8"
+              min={1}
+              max={totalBookPages}
+            />
+          </div>
+        )}
 
         <div className="border-l h-6 mx-1" />
 
