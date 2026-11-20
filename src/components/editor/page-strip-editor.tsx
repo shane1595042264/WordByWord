@@ -80,6 +80,26 @@ export function dividersFromTocSuggestion(
     .map((page, i) => ({ page, title: byPage.get(page) || `${labelForLevel} ${i + 2}` }))
 }
 
+// Split [startPage, endPage] into `count` parts of near-equal size (they differ by
+// at most one page). Stepping by the exact fraction rather than a rounded-up step
+// keeps every divider inside the range, so count N always yields N parts (KAN-412).
+// A count above the range's page count is capped at one part per page.
+export function dividersForExpectedCount(
+  count: number,
+  startPage: number,
+  endPage: number,
+  level: 'chapter' | 'section'
+): Divider[] {
+  const range = endPage - startPage + 1
+  const parts = Math.min(count, range)
+  const labelForLevel = level === 'chapter' ? 'Chapter' : 'Section'
+  const dividers: Divider[] = []
+  for (let i = 1; i < parts; i++) {
+    dividers.push({ page: startPage + Math.round((i * range) / parts), title: `${labelForLevel} ${i + 1}` })
+  }
+  return dividers
+}
+
 export function PageStripEditor({
   pdfBlob,
   startPage,
@@ -183,18 +203,12 @@ export function PageStripEditor({
 
   const handleExpectedCount = useCallback(() => {
     const count = parseInt(expectedCount)
-    if (count > 0 && count < totalBookPages) {
-      const pagesPerChapter = Math.ceil((endPage - startPage + 1) / count)
-      const newDividers: Divider[] = []
-      for (let i = 1; i < count; i++) {
-        const page = startPage + i * pagesPerChapter
-        if (page <= endPage) {
-          newDividers.push({ page, title: `${labelForLevel} ${i + 1}` })
-        }
-      }
-      setDividers(newDividers)
-    }
-  }, [expectedCount, totalBookPages, endPage, startPage, labelForLevel])
+    if (!(count > 0)) return
+    // Show the cap instead of quietly producing fewer parts than typed.
+    const range = endPage - startPage + 1
+    if (count > range) setExpectedCount(String(range))
+    setDividers(dividersForExpectedCount(count, startPage, endPage, level))
+  }, [expectedCount, endPage, startPage, level])
 
   const handleProcessTOC = useCallback(async () => {
     if (selectedTocPages.size === 0) return
@@ -277,6 +291,7 @@ export function PageStripEditor({
             onKeyDown={e => { if (e.key === 'Enter') handleExpectedCount() }}
             className="w-20 h-8"
             min={1}
+            max={endPage - startPage + 1}
           />
         </div>
 
