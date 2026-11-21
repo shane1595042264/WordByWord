@@ -85,3 +85,45 @@ export function capVocabContext(text: string, word: string): string {
   const index = at < 0 ? 0 : text.slice(0, at).split(' ').length - 1
   return windowAround(tokens, index, MAX_VOCAB_CONTEXT_CHARS)
 }
+
+/**
+ * nibble-api's caps on /ai/explain-translation `word` and /ai/explain-content
+ * `content`. Every token of a math run carries the whole equation as
+ * latexSource, and a [Table]/[Code] word carries the whole block, so sending
+ * those uncut 400'd on every long equation or block (KAN-415).
+ */
+export const MAX_EXPLAIN_WORD_CHARS = 200
+export const MAX_EXPLAIN_CONTENT_CHARS = 10000
+
+/**
+ * The `word` to send to /ai/explain-translation. A math token sends its whole
+ * equation while it fits; a longer one sends the tokens of that equation
+ * around the clicked one. Plain words send their text, unchanged.
+ */
+export function explainTranslationWord(word: NibWord): string {
+  const latex = word.latexSource
+  if (!latex) return word.text
+  if (latex.length <= MAX_EXPLAIN_WORD_CHARS) return latex
+  const words = word.sentence.words
+  const at = words.indexOf(word)
+  if (at < 0) return word.text.slice(0, MAX_EXPLAIN_WORD_CHARS)
+  let lo = at
+  let hi = at
+  while (lo > 0 && words[lo - 1].latexSource === latex) lo--
+  while (hi + 1 < words.length && words[hi + 1].latexSource === latex) hi++
+  return windowAround(words.slice(lo, hi + 1).map(w => w.text), at - lo, MAX_EXPLAIN_WORD_CHARS)
+}
+
+const TRUNCATED_MARK = '\n… (truncated)'
+
+/**
+ * Cap a table/code block's raw markdown for /ai/explain-content. Keeps the
+ * start (a table's header rows), cut at a line break so no row is split, and
+ * marks the cut. Content within the cap is unchanged.
+ */
+export function capExplainContent(content: string): string {
+  if (content.length <= MAX_EXPLAIN_CONTENT_CHARS) return content
+  const head = content.slice(0, MAX_EXPLAIN_CONTENT_CHARS - TRUNCATED_MARK.length)
+  const lineEnd = head.lastIndexOf('\n')
+  return (lineEnd > 0 ? head.slice(0, lineEnd) : head) + TRUNCATED_MARK
+}

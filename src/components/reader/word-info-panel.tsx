@@ -9,7 +9,13 @@ import type { TranslationResult } from '@/lib/services/translation-service'
 import { SettingsService, type TargetLanguage } from '@/lib/services/settings-service'
 import { toast } from 'sonner'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
-import { translationContext, vocabContextSentence, MAX_SENTENCE_CHARS } from '@/lib/services/translation-context'
+import {
+  translationContext,
+  vocabContextSentence,
+  explainTranslationWord,
+  capExplainContent,
+  MAX_SENTENCE_CHARS,
+} from '@/lib/services/translation-context'
 import Link from 'next/link'
 import { AI_KEY_SETUP_HREF, needsAiKeySetup } from '@/lib/services/ai-api'
 
@@ -274,7 +280,7 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
             result = await svc.explainImage(word.imageUrl, word.sentence.text, controller.signal)
           } else {
             // Table/code/formula: text only
-            result = await svc.explainContent(word.latexSource!, word.sentence.text, controller.signal)
+            result = await svc.explainContent(capExplainContent(word.latexSource!), word.sentence.text, controller.signal)
           }
           if (!cancelled) {
             setExplanation(result)
@@ -433,10 +439,12 @@ export function WordInfoPanel({ word, anchorEl, showIndicators, onClose, bookId,
     try {
       const { TranslationService } = await import('@/lib/services/translation-service')
       const svc = new TranslationService()
-      const contentText = word.latexSource || word.text
+      const contentText = explainTranslationWord(word)
       const sentenceText = translationContext(word).sentence
+      // The whole equation rides in the context, which has room for it even
+      // when the word field only holds a window of it (KAN-415).
       const contextText = word.latexSource
-        ? `${contentText}\n\nContext: ${sentenceText}`.slice(0, MAX_SENTENCE_CHARS)
+        ? `${word.latexSource}\n\nContext: ${sentenceText}`.slice(0, MAX_SENTENCE_CHARS)
         : sentenceText
       const result = await svc.explainTranslation(
         contentText,
