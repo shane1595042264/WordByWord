@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
@@ -16,7 +16,7 @@ import { CloudSyncSettings } from '@/components/settings/cloud-sync-settings'
 import { ProfileSettings } from '@/components/settings/profile-settings'
 import { AiKeysSettings } from '@/components/settings/ai-keys-settings'
 import type { AppSettings } from '@/lib/services/settings-service'
-import { TARGET_LANGUAGES, SETTINGS_SYNCED_EVENT } from '@/lib/services/settings-service'
+import { TARGET_LANGUAGES, SETTINGS_KEY, SETTINGS_SYNCED_EVENT } from '@/lib/services/settings-service'
 import { reportLazyImportError } from '@/lib/lazy-import-error'
 
 function SettingsContent() {
@@ -39,11 +39,18 @@ function SettingsContent() {
   const [saved, setSaved] = useState(false)
   // Tracks edits made in this form that Save hasn't persisted yet.
   const [unsavedEdits, setUnsavedEdits] = useState(false)
+  // Exactly the fields the user changed here since the last load or Save. Save
+  // persists only these: `settings` is a snapshot, and writing it whole would
+  // revert anything changed meanwhile in another tab or pulled from another
+  // device, e.g. a keymap remap (KAN-417). A ref so an async re-read always
+  // overlays the latest edits.
+  const pendingEdits = useRef<Partial<AppSettings>>({})
 
-  /** Every form control writes through here so a pull can tell whether it is safe to adopt. */
-  const editSettings = (next: AppSettings) => {
+  /** Every form control writes through here so Save and a re-read know what this form owns. */
+  const editSettings = (patch: Partial<AppSettings>) => {
+    pendingEdits.current = { ...pendingEdits.current, ...patch }
     setUnsavedEdits(true)
-    setSettings(next)
+    setSettings(prev => prev && { ...prev, ...patch })
   }
 
   /**
@@ -77,21 +84,28 @@ function SettingsContent() {
     return () => { cancelled = true }
   }, [])
 
-  // A sync pulled newer settings from another device. This form's state is a
-  // snapshot from mount, so adopt the pulled values — but only when the user has
-  // no unsaved edits here, otherwise their in-progress change would vanish
-  // mid-edit. An unsaved edit wins and gets pushed on Save, matching the same
-  // dirty-wins rule the sync layer uses (KAN-288).
+  // Stored settings changed under this form: a sync pulled them from another
+  // device, or another tab saved them. This form's state is a snapshot from
+  // mount, so adopt the stored values — except for fields with an unsaved edit
+  // here, which win and get pushed on Save, matching the same dirty-wins rule
+  // the sync layer uses (KAN-288).
   useEffect(() => {
-    if (unsavedEdits) return
-    const onSynced = () => {
+    const adopt = () => {
       import('@/lib/services/settings-service').then(({ SettingsService }) => {
-        setSettings(new SettingsService().getSettings())
+        setSettings({ ...new SettingsService().getSettings(), ...pendingEdits.current })
       }, (err) => reportLazyImportError('settings page sync refresh', err))
     }
-    window.addEventListener(SETTINGS_SYNCED_EVENT, onSynced)
-    return () => window.removeEventListener(SETTINGS_SYNCED_EVENT, onSynced)
-  }, [unsavedEdits])
+    // key is null when another tab cleared localStorage entirely.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SETTINGS_KEY || e.key === null) adopt()
+    }
+    window.addEventListener(SETTINGS_SYNCED_EVENT, adopt)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener(SETTINGS_SYNCED_EVENT, adopt)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [])
 
   // General is a deferred-save form: nothing is persisted until Save. Without a
   // guard a reload or tab close drops the edits silently (KAN-331). Same
@@ -126,7 +140,9 @@ function SettingsContent() {
     const { SettingsService } = await import('@/lib/services/settings-service')
     const svc = new SettingsService()
     try {
-      svc.updateSettings(settings)
+      svc.updateSettings(pendingEdits.current)
+      pendingEdits.current = {}
+      setSettings(svc.getSettings())
       setUnsavedEdits(false)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -149,6 +165,7 @@ function SettingsContent() {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
     e.preventDefault()
     if (window.confirm('You have unsaved settings changes. Leave without saving?')) {
+      pendingEdits.current = {}
       setUnsavedEdits(false)
       router.push(href)
     }
@@ -194,7 +211,7 @@ function SettingsContent() {
                     size="sm"
                     role="radio"
                     aria-checked={settings.defaultViewMode === mode}
-                    onClick={() => editSettings({ ...settings, defaultViewMode: mode })}
+                    onClick={() => editSettings({ defaultViewMode: mode })}
                     className="capitalize"
                   >
                     {mode}
@@ -209,7 +226,7 @@ function SettingsContent() {
                 id="target-language"
                 className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
                 value={settings.targetLanguage}
-                onChange={e => editSettings({ ...settings, targetLanguage: e.target.value as any })}
+                onChange={e => editSettings({ targetLanguage: e.target.value as any })}
               >
                 {TARGET_LANGUAGES.map(lang => (
                   <option key={lang.code} value={lang.code}>
@@ -230,7 +247,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.readingMode === 'scroll'}
-                  onClick={() => editSettings({ ...settings, readingMode: 'scroll' })}
+                  onClick={() => editSettings({ readingMode: 'scroll' })}
                 >
                   Scroll
                 </Button>
@@ -239,7 +256,7 @@ function SettingsContent() {
                   size="sm"
                   role="radio"
                   aria-checked={settings.readingMode === 'flip'}
-                  onClick={() => editSettings({ ...settings, readingMode: 'flip' })}
+                  onClick={() => editSettings({ readingMode: 'flip' })}
                 >
                   Flip
                 </Button>
@@ -257,7 +274,7 @@ function SettingsContent() {
                   role="switch"
                   aria-checked={settings.warnBeforeSync}
                   aria-labelledby="warn-before-sync-label"
-                  onClick={() => editSettings({ ...settings, warnBeforeSync: !settings.warnBeforeSync })}
+                  onClick={() => editSettings({ warnBeforeSync: !settings.warnBeforeSync })}
                   className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
                     settings.warnBeforeSync ? 'bg-primary' : 'bg-muted'
                   }`}
@@ -297,7 +314,7 @@ function SettingsContent() {
             <KeymapSettings
               overrides={settings.keymapOverrides ?? {}}
               onChange={(overrides) => {
-                setSettings({ ...settings, keymapOverrides: overrides })
+                setSettings(prev => prev && { ...prev, keymapOverrides: overrides })
                 // Auto-save keymap changes. Persist ONLY the key this tab owns:
                 // `settings` may still carry unconfirmed General edits, and
                 // updateSettings merges the partial over the stored copy, so

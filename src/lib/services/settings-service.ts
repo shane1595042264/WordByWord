@@ -1,4 +1,4 @@
-const SETTINGS_KEY = 'bbb-settings'
+export const SETTINGS_KEY = 'bbb-settings'
 /** Monotonic local timestamp of the last edit to a server-backed setting. */
 const SETTINGS_UPDATED_AT_KEY = 'bbb-settings-updatedAt'
 /** Value of SETTINGS_UPDATED_AT_KEY at the last successful push/pull. */

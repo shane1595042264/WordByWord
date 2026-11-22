@@ -41,6 +41,7 @@ const SETTINGS: AppSettings = {
 // The page statically imports TARGET_LANGUAGES/SETTINGS_SYNCED_EVENT and
 // dynamically imports SettingsService; one mock covers both.
 vi.mock('@/lib/services/settings-service', () => ({
+  SETTINGS_KEY: 'bbb-settings',
   SETTINGS_SYNCED_EVENT: 'bbb-settings-synced',
   TARGET_LANGUAGES: [{ code: 'zh', label: 'Chinese', native: '中文' }],
   SettingsService: class {
