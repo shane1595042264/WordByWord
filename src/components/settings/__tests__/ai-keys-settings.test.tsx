@@ -196,4 +196,31 @@ describe('AiKeysSettings', () => {
     expect(formatUsd(0)).toBe('$0.00')
     expect(formatUsd(1_234_567)).toBe('$1.23')
   })
+
+  it('a failed usage request says so with a Retry, instead of loading forever', async () => {
+    api.fetchAiKeys.mockResolvedValue({ keys: [gemini], settings: { preferredProvider: null } })
+    api.fetchAiUsage.mockRejectedValueOnce(new Error('The AI service is busy — try again in a moment.'))
+    const { container } = render(<AiKeysSettings />)
+    expect(await screen.findByText(/Could not load usage\. The AI service is busy/)).toBeTruthy()
+    const usageSection = screen.getByRole('heading', { name: 'Usage, last 30 days' }).closest('section')!
+    expect(usageSection.querySelector('[aria-busy="true"]')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('No AI calls yet.')).toBeTruthy()
+    expect(screen.queryByText(/Could not load usage/)).toBeNull()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('a failed refresh keeps the figures already shown', async () => {
+    api.fetchAiKeys.mockResolvedValue({ keys: [gemini], settings: { preferredProvider: null } })
+    api.fetchAiUsage.mockResolvedValueOnce({ ...emptyUsage, totals: { calls: 3, inputTokens: 10, outputTokens: 5, costMicroUsd: 4200 } })
+    api.recheckAiKey.mockResolvedValue(gemini)
+    render(<AiKeysSettings />)
+    expect(await screen.findByText('$0.0042')).toBeTruthy()
+
+    api.fetchAiUsage.mockRejectedValueOnce(new Error('Failed to fetch'))
+    fireEvent.click(screen.getByRole('button', { name: /Check again/ }))
+    expect(await screen.findByText(/Could not refresh usage\. Failed to fetch/)).toBeTruthy()
+    expect(screen.getByText('$0.0042')).toBeTruthy()
+  })
 })

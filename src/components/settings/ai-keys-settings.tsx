@@ -63,6 +63,8 @@ export function AiKeysSettings() {
   const [keys, setKeys] = useState<AiKey[] | null>(null)
   const [settings, setSettings] = useState<AiSettings>({ preferredProvider: null })
   const [usage, setUsage] = useState<AiUsage | null>(null)
+  /** A failed GET /ai/usage. Figures already shown stay; null usage is "still loading". */
+  const [usageError, setUsageError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [providers, setProviders] = useState<AiProviderInfo[]>(FALLBACK_PROVIDERS)
 
@@ -75,7 +77,8 @@ export function AiKeysSettings() {
   const [legacyKey, setLegacyKey] = useState<string | null>(null)
 
   const loadUsage = useCallback(() => {
-    fetchAiUsage(30).then(setUsage, () => setUsage(null))
+    setUsageError(null)
+    fetchAiUsage(30).then(setUsage, (err) => setUsageError(errorText(err)))
   }, [])
 
   const load = useCallback(async () => {
@@ -366,7 +369,7 @@ export function AiKeysSettings() {
         )}
       </section>
 
-      <UsageSection usage={usage} />
+      <UsageSection usage={usage} error={usageError} onRetry={loadUsage} />
     </div>
   )
 }
@@ -469,15 +472,27 @@ function KeyRow({
   )
 }
 
-function UsageSection({ usage }: { usage: AiUsage | null }) {
+function UsageSection({ usage, error, onRetry }: { usage: AiUsage | null; error: string | null; onRetry: () => void }) {
   return (
     <section className="space-y-4" aria-labelledby="ai-usage-heading">
       <div className="flex items-baseline justify-between gap-4">
         <h2 id="ai-usage-heading" className="text-sm font-semibold">Usage, last 30 days</h2>
         <span className="text-xs text-muted-foreground">Estimated from list prices</span>
       </div>
+      {error && (
+        // Figures that loaded earlier stay below; a failed refresh only adds this line.
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2" role="alert">
+          <p className={usage === null ? 'text-sm text-destructive' : 'text-xs text-muted-foreground'}>
+            {usage === null ? 'Could not load usage.' : 'Could not refresh usage.'} {error}
+          </p>
+          <Button variant="outline" size="xs" onClick={onRetry}>
+            <RefreshCwIcon aria-hidden="true" />
+            Retry
+          </Button>
+        </div>
+      )}
       {usage === null ? (
-        <div className="h-20 animate-pulse rounded-lg bg-muted/50" aria-busy="true" />
+        !error && <div className="h-20 animate-pulse rounded-lg bg-muted/50" aria-busy="true" />
       ) : usage.totals.calls === 0 ? (
         <p className="text-sm text-muted-foreground">No AI calls yet.</p>
       ) : (
