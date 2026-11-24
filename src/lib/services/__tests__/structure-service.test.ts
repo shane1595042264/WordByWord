@@ -109,3 +109,31 @@ describe('StructureService.suggestFromTOC() failure copy', () => {
     await expect(new StructureService().suggestFromTOC('remote-1', [1])).rejects.toThrow('AI response was truncated')
   })
 })
+
+// KAN-419: a rejected save used to toast a bare `Save failed: 400`, never naming the
+// chapters whose ranges overlap.
+describe('StructureService.saveStructure() failure copy', () => {
+  const realFetch = globalThis.fetch
+  afterEach(() => { globalThis.fetch = realFetch })
+
+  function installPutFetch(status: number, body: string) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : String(input)
+      if (url === '/api/auth/token') return new Response(JSON.stringify({ token: 't' }), { status: 200 })
+      return new Response(body, { status })
+    }) as typeof fetch
+  }
+
+  it("shows the server's own message", async () => {
+    const message = 'Chapter "A" (pages 1-6) overlaps chapter "C" (pages 6-10)'
+    installPutFetch(400, JSON.stringify({ error: { code: 'VALIDATION_ERROR', message, status: 400 } }))
+    const { StructureService } = await import('../structure-service')
+    await expect(new StructureService().saveStructure('remote-1', [{ title: 'A', startPage: 1, endPage: 6 }])).rejects.toThrow(message)
+  })
+
+  it('falls back to the status for a body without the error envelope', async () => {
+    installPutFetch(502, '<html>Bad Gateway</html>')
+    const { StructureService } = await import('../structure-service')
+    await expect(new StructureService().saveStructure('remote-1', [{ title: 'A', startPage: 1, endPage: 6 }])).rejects.toThrow('Save failed: 502')
+  })
+})

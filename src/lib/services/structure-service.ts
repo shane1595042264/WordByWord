@@ -23,7 +23,9 @@ export class StaleBookError extends Error {
 }
 
 /**
- * Build the message `page-strip-editor` shows in `tocError` when Process TOC fails.
+ * Build the message `page-strip-editor` shows in `tocError` when Process TOC fails, and
+ * the toast a failed structure save shows (KAN-419: a bare `Save failed: 400` never said
+ * which chapters overlap).
  *
  * The bare `AI suggest failed: ${status}` this replaces was a dead end after a 10-30s
  * wait — nothing told the user that an AI truncation is worth retrying with fewer TOC
@@ -35,12 +37,12 @@ export class StaleBookError extends Error {
  * without one gets 409 AI_KEY_REQUIRED, whose message already says to add a
  * key in Settings > AI. The admin-only 402 gate it replaced is gone.
  */
-async function describeSuggestFailure(res: Response): Promise<string> {
+async function describeFailure(res: Response, fallback: string): Promise<string> {
   const body = await res.json().catch(() => null) as { error?: { message?: unknown } } | null
   const message = body?.error?.message
   return typeof message === 'string' && message.trim()
     ? message
-    : `AI suggest failed: ${res.status}`
+    : `${fallback}: ${res.status}`
 }
 
 export class StructureService {
@@ -95,7 +97,7 @@ export class StructureService {
       const body = await res.json().catch(() => null) as { error?: string; currentUpdatedAt?: string } | null
       if (body?.error === 'STALE_BOOK') return { stale: true as const, currentUpdatedAt: body.currentUpdatedAt }
     }
-    if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+    if (!res.ok) throw new Error(await describeFailure(res, 'Save failed'))
     return { stale: false as const, data: await res.json() }
   }
 
@@ -134,7 +136,7 @@ export class StructureService {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tocPages }),
     })
-    if (!res.ok) throw new Error(await describeSuggestFailure(res))
+    if (!res.ok) throw new Error(await describeFailure(res, 'AI suggest failed'))
     return res.json()
   }
 }
