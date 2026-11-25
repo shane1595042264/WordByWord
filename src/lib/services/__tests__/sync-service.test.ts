@@ -2707,3 +2707,125 @@ describe('a partial sync stays pending (KAN-403)', () => {
     expect(pushedSections).toHaveLength(1)
   })
 })
+
+// Regression coverage for KAN-421: a local book whose remoteId the server no
+// longer returns (hard-deleted by the 30-day cleanup job) was deleted on the
+// init sync without ever asking, even with Warn before sync on.
+describe('init sync — hard-deleted book honours Warn before sync (KAN-421)', () => {
+  const realFetch = globalThis.fetch
+  type Internals = { hasInitSynced: boolean; isSyncing: boolean; token: string | null; tokenExp: number; conflictResolver: unknown }
+  const internals = () => syncService as unknown as Internals
+  const syncedAt = '2026-11-25T00:00:00.000Z'
+  const emptyServer = {
+    syncedAt,
+    serverChanges: { books: [], chapters: [], sections: [], vocabulary: [], settings: null },
+    failedEntities: { books: [], chapters: [], sections: [], vocabulary: [] },
+  }
+
+  const seedOrphanBook = async () => {
+    const now = Date.now()
+    await db.books.add({
+      id: 'local-gone',
+      title: 'Gone',
+      author: 'A',
+      totalPages: 5,
+      createdAt: now,
+      updatedAt: now,
+      remoteId: 'remote-gone',
+    } as Parameters<typeof db.books.add>[0])
+    await db.sections.add({
+      id: 'sec-gone',
+      chapterId: 'ch-gone',
+      bookId: 'local-gone',
+      title: 'Sec',
+      order: 0,
+      startPage: 1,
+      endPage: 5,
+      isRead: true,
+      readAt: now,
+      lastPageViewed: null,
+      scrollProgress: 0.5,
+      updatedAt: now,
+      extractedText: null,
+      richContent: null,
+    } as Parameters<typeof db.sections.add>[0])
+    await db.vocabulary.add({
+      id: 'v-gone',
+      word: 'gone',
+      pronunciation: '',
+      translation: '',
+      targetLanguage: '',
+      contextSentence: '',
+      explanation: null,
+      bookTitle: 'Gone',
+      sectionTitle: 'Sec',
+      pageNumber: 1,
+      bookId: 'local-gone',
+      reviewCount: 0,
+      lastReviewedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    } as Parameters<typeof db.vocabulary.add>[0])
+  }
+
+  const survivors = async () => ({
+    book: (await db.books.get('local-gone')) !== undefined,
+    section: (await db.sections.get('sec-gone')) !== undefined,
+    vocab: (await db.vocabulary.get('v-gone')) !== undefined,
+  })
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await db.delete()
+    await db.open()
+    localStorage.clear()
+    internals().token = null
+    internals().tokenExp = 0
+    internals().hasInitSynced = false
+    internals().isSyncing = false
+    installFetchMock({ status: 200, body: emptyServer })
+    await seedOrphanBook()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    localStorage.clear()
+    vi.restoreAllMocks()
+    internals().conflictResolver = null
+    internals().token = null
+    internals().tokenExp = 0
+  })
+
+  it("asks first, and 'Keep Local' keeps the book, its sections and its vocab", async () => {
+    localStorage.setItem('bbb-settings', JSON.stringify({ warnBeforeSync: true }))
+    const resolver = vi.fn(async () => 'local' as const)
+    syncService.onConflict(resolver)
+
+    await syncService.sync()
+
+    expect(resolver).toHaveBeenCalledWith({ localOnlyBooks: 1, cloudOnlyBooks: 0, cloudDeletedBooks: 0 })
+    expect(await survivors()).toEqual({ book: true, section: true, vocab: true })
+  })
+
+  it("asks first, and 'Auto' still removes the book", async () => {
+    localStorage.setItem('bbb-settings', JSON.stringify({ warnBeforeSync: true }))
+    const resolver = vi.fn(async () => 'auto' as const)
+    syncService.onConflict(resolver)
+
+    await syncService.sync()
+
+    expect(resolver).toHaveBeenCalledTimes(1)
+    expect(await survivors()).toEqual({ book: false, section: false, vocab: false })
+  })
+
+  it('with Warn before sync off, removes the book without asking', async () => {
+    const resolver = vi.fn(async () => 'local' as const)
+    syncService.onConflict(resolver)
+
+    await syncService.sync()
+
+    expect(resolver).not.toHaveBeenCalled()
+    expect(await survivors()).toEqual({ book: false, section: false, vocab: false })
+  })
+})

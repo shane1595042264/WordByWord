@@ -965,7 +965,9 @@ class SyncService {
       this.log('sync:analysis', `cloud-only: ${cloudOnlyBooks.length}, local-only: ${localOnlyBooks.length}, cloud-deleted: ${cloudDeletedBooks.length}`)
 
       // Check if we need conflict resolution
-      const hasConflict = cloudOnlyBooks.length > 0 || cloudDeletedBooks.length > 0
+      // localOnlyBooks counts too: step 1b below deletes them, and 'local' is the
+      // only thing that spares them (KAN-421).
+      const hasConflict = cloudOnlyBooks.length > 0 || cloudDeletedBooks.length > 0 || localOnlyBooks.length > 0
       let resolution: 'auto' | 'cloud' | 'local' = 'auto'
 
       if (hasConflict && this.conflictResolver) {
