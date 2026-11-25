@@ -70,7 +70,37 @@ export class BitByBitDB extends Dexie {
         if (book.completedAt === undefined) book.completedAt = null
       })
     })
+    // Index-only progress for the library grid (KAN-420): the two derived fields
+    // let getBookProgress read read/scroll state from index keys instead of
+    // deserializing every section's extractedText. Booleans and nulls are not
+    // valid IndexedDB keys, hence the numeric copies.
+    this.version(7).stores({
+      books: 'id, title, createdAt, lastReadAt, updatedAt, remoteId, jobId, completedAt',
+      chapters: 'id, bookId, order, updatedAt',
+      sections: 'id, chapterId, bookId, order, isRead, updatedAt, [bookId+progressRead+progressScroll]',
+      vocabulary: 'id, word, targetLanguage, bookTitle, createdAt, reviewCount, updatedAt, bookId',
+    }).upgrade(tx => {
+      return tx.table('sections').toCollection().modify(sec => {
+        Object.assign(sec, sectionProgressFields(sec.isRead, sec.scrollProgress))
+      })
+    })
+
+    // Keep the derived fields in step with every Dexie write — add, put, bulk*,
+    // update and modify all pass through these hooks.
+    this.sections.hook('creating', (_key, obj) => {
+      Object.assign(obj, sectionProgressFields(obj.isRead, obj.scrollProgress))
+    })
+    this.sections.hook('updating', (mods: Partial<Section>, _key, obj) => {
+      return sectionProgressFields(
+        'isRead' in mods ? mods.isRead : obj.isRead,
+        'scrollProgress' in mods ? mods.scrollProgress : obj.scrollProgress,
+      )
+    })
   }
+}
+
+export function sectionProgressFields(isRead: unknown, scrollProgress: number | null | undefined) {
+  return { progressRead: isRead ? 1 : 0, progressScroll: scrollProgress ?? 0 }
 }
 
 export const db = new BitByBitDB()

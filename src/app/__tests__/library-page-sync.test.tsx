@@ -94,7 +94,22 @@ describe('Library page — syncs triggered during an in-flight sync still run (K
     release()
     await flush()
     expect(fakeSync.realRuns).toBe(1)
-    expect(refresh).toHaveBeenCalledTimes(1)
+    // A completed sync already dispatched nibble:sync-complete, which refreshes
+    // the grid silently — Sync Now must not re-read it a second time (KAN-420).
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it('Sync Now still re-reads the library, silently, when the sync did not complete', async () => {
+    const spy = vi.spyOn(fakeSync, 'sync').mockResolvedValueOnce({ status: 'failed', reason: 'offline' })
+    try {
+      render(<HomePage />)
+      fireEvent.click(await screen.findByRole('button', { name: /sync now/i }))
+      await flush()
+      expect(refresh).toHaveBeenCalledTimes(1)
+      expect(refresh).toHaveBeenCalledWith({ silent: true })
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('control: with nothing in flight, onProcessingComplete syncs immediately', async () => {

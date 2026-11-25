@@ -15,7 +15,7 @@ export interface SectionProgress {
  * loads the whole book once) can compute the same numbers without re-reading
  * IndexedDB — the rounding has to match exactly, so there is only one copy.
  */
-export function computeSectionProgress(sections: Section[]): SectionProgress {
+export function computeSectionProgress(sections: Pick<Section, 'isRead' | 'scrollProgress'>[]): SectionProgress {
   const read = sections.filter(s => s.isRead).length
   const total = sections.length
   const percentage = total === 0 ? 0 : toProgressPercentage(
@@ -96,8 +96,33 @@ export class SectionRepository {
     await db.sections.update(id, { extractedText: text, updatedAt: Date.now() })
   }
 
+  /**
+   * Reads only the [bookId+progressRead+progressScroll] index keys, so the
+   * library grid never deserializes section text (KAN-420). The entries are
+   * re-sorted into primary-key order — the order where('bookId').toArray()
+   * returns — so the float sum, and therefore the rounding, matches exactly.
+   */
   async getBookProgress(bookId: string): Promise<SectionProgress> {
-    return computeSectionProgress(await db.sections.where('bookId').equals(bookId).toArray())
+    const { entries, total } = await db.transaction('r', db.sections, async () => {
+      const entries: Array<{ id: string; isRead: boolean; scrollProgress: number }> = []
+      await db.sections
+        .where('[bookId+progressRead+progressScroll]')
+        // [bookId] sorts before every [bookId, ...] key and [bookId, []] after
+        // them (arrays outrank numbers), so this spans exactly one book.
+        .between([bookId], [bookId, []])
+        .eachKey((key, cursor) => {
+          const [, read, scroll] = key as [string, number, number]
+          entries.push({ id: cursor.primaryKey as string, isRead: read === 1, scrollProgress: scroll })
+        })
+      return { entries, total: await db.sections.where('bookId').equals(bookId).count() }
+    })
+    // A row whose scrollProgress is not a valid key (e.g. NaN) is missing from
+    // the index; fall back to the full read so the numbers stay identical.
+    if (entries.length !== total) {
+      return computeSectionProgress(await db.sections.where('bookId').equals(bookId).toArray())
+    }
+    entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return computeSectionProgress(entries)
   }
 
   async getChapterProgress(chapterId: string): Promise<SectionProgress> {

@@ -87,4 +87,8 @@ export interface Section {
   lastPageViewed: number | null  // last page user was on within this section
   scrollProgress: number | null  // 0-100 scroll percentage in scroll mode
   updatedAt: number
+  // Derived index copies of isRead / scrollProgress, maintained by the Dexie
+  // hooks in database.ts — never set these by hand (KAN-420).
+  progressRead?: number
+  progressScroll?: number
 }

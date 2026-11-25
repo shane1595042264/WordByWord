@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { SectionRepository, computeSectionProgress } from '../section-repository'
 import { db } from '@/lib/db/database'
 import type { Book, Section } from '@/lib/db/models'
@@ -193,5 +193,62 @@ describe('SectionRepository', () => {
 
   it('should not throw when un-marking a section id that does not exist', async () => {
     await expect(repo.markAsUnread('missing-section')).resolves.toBeUndefined()
+  })
+
+  describe('getBookProgress reads index keys only (KAN-420)', () => {
+    const mk = (id: string, isRead: boolean, scrollProgress: number | null, bookId = 'b-idx'): Section => ({
+      id, chapterId: 'ch1', bookId, title: id, order: 0, startPage: 1, endPage: 2,
+      extractedText: 'x'.repeat(50), isRead, readAt: null, lastPageViewed: null,
+      scrollProgress, updatedAt: Date.now(),
+    })
+    const fullRead = async (bookId: string) =>
+      computeSectionProgress(await db.sections.where('bookId').equals(bookId).toArray())
+
+    it('matches the full-row computation, including float order and the 99% cap', async () => {
+      // 200 sections, 199 read + one at 0: the average is 99.5 -> capped at 99
+      await db.sections.bulkAdd(Array.from({ length: 200 }, (_, i) => mk(`s${String(i).padStart(3, '0')}`, i !== 117, null)))
+      await db.sections.bulkAdd([mk('z1', false, 33.333333333), mk('a1', false, 0.1), mk('m1', false, 0.2), mk('other', true, null, 'b-other')])
+      const got = await repo.getBookProgress('b-idx')
+      expect(got).toEqual(await fullRead('b-idx'))
+      expect(got.read).toBe(199)
+      expect(got.total).toBe(203)
+      expect(await repo.getBookProgress('b-other')).toEqual({ read: 1, total: 1, percentage: 100 })
+      expect(await repo.getBookProgress('missing')).toEqual({ read: 0, total: 0, percentage: 0 })
+    })
+
+    it('never deserializes section rows', async () => {
+      await db.sections.bulkAdd([mk('s1', true, null), mk('s2', false, 40)])
+      const spy = vi.spyOn(IDBIndex.prototype, 'getAll')
+      const cursorSpy = vi.spyOn(IDBIndex.prototype, 'openCursor')
+      try {
+        await repo.getBookProgress('b-idx')
+        expect(spy).not.toHaveBeenCalled()
+        expect(cursorSpy).not.toHaveBeenCalled()
+      } finally {
+        spy.mockRestore()
+        cursorSpy.mockRestore()
+      }
+    })
+
+    it('tracks markAsRead/markAsUnread, scroll updates, put and modify', async () => {
+      await db.sections.bulkAdd([mk('s1', false, null), mk('s2', false, 10), mk('s3', false, null)])
+      await repo.markAsRead('s1')
+      await db.sections.update('s2', { scrollProgress: 65, updatedAt: Date.now() })
+      // A sync pull replaces whole rows with put — the stored derived fields must follow
+      await db.sections.put({ ...mk('s3', true, 0) })
+      expect(await repo.getBookProgress('b-idx')).toEqual(await fullRead('b-idx'))
+      expect(await repo.getBookProgress('b-idx')).toEqual({ read: 2, total: 3, percentage: 88 })
+
+      await repo.markAsUnread('s3')
+      await db.sections.where('bookId').equals('b-idx').modify(sec => { if (sec.id === 's1') sec.scrollProgress = 20 })
+      expect(await repo.getBookProgress('b-idx')).toEqual(await fullRead('b-idx'))
+      await db.sections.delete('s2')
+      expect(await repo.getBookProgress('b-idx')).toEqual(await fullRead('b-idx'))
+    })
+
+    it('falls back to the full read when a row is missing from the index', async () => {
+      await db.sections.bulkAdd([mk('s1', true, null), mk('s2', false, NaN)])
+      expect(await repo.getBookProgress('b-idx')).toEqual(await fullRead('b-idx'))
+    })
   })
 })

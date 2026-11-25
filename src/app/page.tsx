@@ -56,9 +56,11 @@ export default function HomePage() {
       const { syncService } = await import('@/lib/services/sync-service')
       // sync() resolves 'skipped' while another sync is in flight — wait it out
       // so the click always runs a real sync (KAN-401).
-      await syncService.syncAfterInFlight()
+      const result = await syncService.syncAfterInFlight()
       setLastSynced(syncService.getLastSyncedAt())
-      refresh()
+      // complete/partial already fired nibble:sync-complete, which refreshes the
+      // grid in place; only a skipped/failed sync still needs a (silent) re-read.
+      if (result.status !== 'complete' && result.status !== 'partial') refresh({ silent: true })
     } catch (err) {
       console.error('Sync failed:', err)
       toast.error('Sync failed', {
