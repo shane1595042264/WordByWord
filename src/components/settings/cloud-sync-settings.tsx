@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { syncService, type CloudStatus, type SyncResult } from '@/lib/services/sync-service'
 
@@ -31,13 +31,25 @@ export function CloudSyncSettings() {
   const [confirmAction, setConfirmAction] = useState<'download' | 'upload' | null>(null)
   const [lastSynced, setLastSynced] = useState<string | null>(syncService.getLastSyncedAt())
 
+  const latestRequest = useRef(0)
+
+  // Only the first load blanks the panel. Later refreshes (every background
+  // sync fires nibble:sync-complete) keep the buttons and any open confirm on
+  // screen, and a slower older response must not overwrite a newer one (KAN-422).
   const refreshStatus = useCallback(async () => {
-    setLoading(true)
+    const request = ++latestRequest.current
     const s = await syncService.getCloudStatus()
+    if (request !== latestRequest.current) return
     setStatus(s)
     setLastSynced(syncService.getLastSyncedAt())
     setLoading(false)
   }, [])
+
+  // complete/partial already fired nibble:sync-complete, whose listener
+  // refreshes; only a skipped/failed sync still needs its own re-read.
+  const refreshUnlessSyncEventFired = (result: SyncResult) => {
+    if (result.status !== 'complete' && result.status !== 'partial') return refreshStatus()
+  }
 
   useEffect(() => {
     refreshStatus()
@@ -79,7 +91,7 @@ export function CloudSyncSettings() {
     try {
       const result = await syncService.forceUpload()
       setMessage(describeSyncResult(result, 'Upload complete. Cloud is now in sync with your local data.', 'Upload'))
-      await refreshStatus()
+      await refreshUnlessSyncEventFired(result)
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       setMessage(`Upload failed — your cloud may be out of sync. (${detail})`)
@@ -94,7 +106,7 @@ export function CloudSyncSettings() {
     try {
       const result = await syncService.syncAfterInFlight()
       setMessage(describeSyncResult(result, 'Sync complete.', 'Sync'))
-      await refreshStatus()
+      await refreshUnlessSyncEventFired(result)
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       setMessage(`Sync failed. (${detail})`)
