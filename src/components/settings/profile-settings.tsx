@@ -59,6 +59,8 @@ export function ProfileSettings() {
   }
 
   async function fetchProfile() {
+    setLoading(true)
+    setError(null)
     try {
       const token = await getToken()
       if (!token) {
@@ -198,8 +200,14 @@ export function ProfileSettings() {
     return <div className="text-sm text-muted-foreground py-4">Loading profile...</div>
   }
 
+  // Initial-load failure: nothing to show yet, so offer a Retry (mirrors admin-settings.tsx).
   if (error && !profile) {
-    return <div className="text-sm text-destructive py-4">{error}</div>
+    return (
+      <div className="py-4 space-y-3">
+        <p className="text-sm text-destructive">{error}</p>
+        <Button variant="outline" size="sm" onClick={fetchProfile}>Retry</Button>
+      </div>
+    )
   }
 
   const hasExistingImage = profile?.avatarUrl && !isEmoji(profile.avatarUrl)
