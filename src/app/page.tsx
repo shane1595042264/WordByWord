@@ -298,15 +298,24 @@ export default function HomePage() {
 
 /** "Pick up where you left off": the most recently read unfinished book. */
 function ResumeStrip({ book }: { book: BookWithProgress }) {
+  // Remember which URL failed, so a new cover after a sync (or a different book) is retried
+  const [failedCover, setFailedCover] = useState<string | null>(null)
+  const cover = book.coverImage !== failedCover ? book.coverImage : null
+
   return (
     <Link
       href={`/book/${book.id}`}
       className="group mb-10 flex items-center gap-5 rounded-xl border bg-card p-4 pr-5 transition-colors hover:border-primary/40 hover:bg-accent/40 sm:p-5"
     >
       <div className="relative aspect-[3/4] w-14 shrink-0 overflow-hidden rounded-sm bg-muted shadow-[0_6px_16px_-6px_oklch(0.22_0.04_170/0.45)] sm:w-16">
-        {book.coverImage ? (
+        {cover ? (
           // eslint-disable-next-line @next/next/no-img-element -- data URLs and remote covers
-          <img src={book.coverImage} alt="" className="h-full w-full object-cover" />
+          <img
+            src={cover}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={() => setFailedCover(cover)}
+          />
         ) : (
           <TypographicCover title={book.title} size="sm" />
         )}
